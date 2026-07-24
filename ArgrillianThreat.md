@@ -5001,7 +5001,7 @@ namespace ArgrillianThreat
 					bool medicIsMealOrConsume = IsMealOrConsumeLikeJob(pawn.CurJob);
 
 					if ((patient.Downed && (medicIsHauling || medicIsMealOrConsume) && !IsMedicineFetchJob(pawn.CurJob)) ||
-						(!patient.Downed && patientUrgent && (medicIsHauling || medicIsMealOrConsume) && !IsMedicineFetchJob(pawn.CurJob)))
+						(!patient.Downed && (patientUrgent && !patient.InBed()) && (medicIsHauling || medicIsMealOrConsume) && !IsMedicineFetchJob(pawn.CurJob)))
 					{
 						pawn.jobs?.StopAll(true);
 						ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
@@ -5012,7 +5012,7 @@ namespace ArgrillianThreat
 			// NEW: If combat medic has an urgent/downed patient but is currently hauling/meal/medicine-fetch,
 			// force an interruption so it can re-acquire Rescue/Tend instead of drifting back into loops.
 			// FIX: allow medicine-fetch to continue when it's part of an active Tend task stickiness window.
-			if (combatMedic && pawn.CurJob != null && (patient.Downed || patientUrgent))
+			if (combatMedic && pawn.CurJob != null && (patient.Downed || (patientUrgent && !patient.InBed())))
 			{
 				bool curIsMedicalForChosenPatient = ArgillianThreatPatientTuning.JobIsMedicalForPatient(pawn.CurJob, patient);
 				if (!curIsMedicalForChosenPatient)
@@ -5038,7 +5038,7 @@ namespace ArgrillianThreat
 				}
 			}
 
-			if (combatMedic && stopPatientWhenUrgent && patientUrgent && !patient.Downed && !patient.Dead)
+			if (combatMedic && stopPatientWhenUrgent && (patientUrgent && !patient.InBed()) && !patient.Downed && !patient.Dead)
 			{
 				if (pawn.CurJob != null && pawn.CurJob.def != null)
 				{
