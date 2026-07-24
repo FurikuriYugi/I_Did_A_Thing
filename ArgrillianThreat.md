@@ -3914,26 +3914,35 @@ namespace ArgrillianThreat
 
 			// Battlefield constraint:
 			// - Only consider medicine in the immediate patient area (short search).
-			// - Do NOT impose a hard medic-distance gate that can cause medicine=null and trigger far medicine-fetch routes.
+			// - Do NOT impose a hard medic-distance gate (medicine=null must not trigger far medicine-fetch routes).
 			// - Include medicine from nearby corpses (dropped/late-death timing can make forbidden unreliable).
+			//
+			// Anti-"no medicine nearby" tweak:
+			// Expand the effective radius floor a bit so tiny rounding gaps don't produce medicine=null
+			// under lag/standstill jitter, which then lets RimWorld fall back to long-range fetching.
 			IntVec3 patientCenter = patient.Position;
 
-			// Clamp radius upward slightly so we don’t fall into "no medicine nearby" due to tiny rounding gaps.
-			float searchRadius = Mathf.Max(radius, radius * 1.15f);
+			float effectiveRadius = Mathf.Max(radius, radius * 1.15f);
+			// Ensure a meaningful minimum during combat so we don’t frequently return null.
+			// (Still "immediate area": bounded, not long-range.)
+			if (effectiveRadius < 12f) effectiveRadius = 12f;
 
 			float bestDist = float.PositiveInfinity;
 			Thing best = null;
 
-			foreach (IntVec3 c in GenRadial.RadialCellsAround(patientCenter, searchRadius, true))
+			foreach (IntVec3 c in GenRadial.RadialCellsAround(patientCenter, effectiveRadius, true))
 			{
 				if (!c.InBounds(map) || c.Fogged(map)) continue;
 
+				float d = c.DistanceTo(patientCenter);
+
 				foreach (Thing t in c.GetThingList(map))
 				{
-					// Directly on the ground / in containers that are surfaced by this cell list
+					// Directly on the ground / in containers surfaced by this cell list.
+					// Intentionally do NOT filter by forbidden/unforbid state here:
+					// the goal is to allow medicine recovery even if forbidden timing is unreliable.
 					if (IsMedicineThing(t))
 					{
-						float d = c.DistanceTo(patientCenter);
 						if (d < bestDist)
 						{
 							bestDist = d;
@@ -3950,7 +3959,7 @@ namespace ArgrillianThreat
 							if (inner == null) continue;
 							if (!IsMedicineThing(inner)) continue;
 
-							float d = c.DistanceTo(patientCenter);
+							// Same rule: ignore forbidden timing here; just select something local.
 							if (d < bestDist)
 							{
 								bestDist = d;
