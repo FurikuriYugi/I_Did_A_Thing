@@ -87,28 +87,50 @@ namespace ArgrillianThreat
 
 			Map map = patient.Map;
 
-			for (int i = 0; i < map.mapPawns.AllPawnsSpawned.Count; i++)
+			// Performance: do NOT scan AllPawnsSpawned.
+			// Nearby-only: enough to answer "is anyone already doing the Tend/Rescue for this patient right now?"
+			// Keep radius small to avoid long-range / whole-map work.
+			float searchRadius = 12f;
+
+			IntVec3 center = patient.Position;
+
+			float best = float.PositiveInfinity;
+
+			// Iterate things in nearby cells and only consider pawns from those cells.
+			// (Much smaller set than map.mapPawns.AllPawnsSpawned.)
+			foreach (IntVec3 c in GenRadial.RadialCellsAround(center, searchRadius, true))
 			{
-				Pawn p = map.mapPawns.AllPawnsSpawned[i];
-				if (p == null || p.Dead) continue;
-				if (!p.Spawned || p.Map != map) continue;
-				if (p == medic) continue;
-				if (p.jobs == null || p.jobs.curJob == null) continue;
+				if (!c.InBounds(map) || c.Fogged(map)) continue;
 
-				Job cur = p.jobs.curJob;
-				if (cur == null || cur.def == null) continue;
+				float d = c.DistanceTo(center);
+				if (d > best) continue;
+				// best is not strictly required here; leaving it as a tiny pruning knob.
 
-				// Only treat REAL medical jobs as "being tended/rescued".
-				// Do NOT count hauling jobs, because that makes medics abandon medical work mid-sequence.
-				bool isMedical =
-					cur.def == JobDefOf.TendPatient ||
-					cur.def == JobDefOf.Rescue;
+				foreach (Thing t in c.GetThingList(map))
+				{
+					Pawn p = t as Pawn;
+					if (p == null) continue;
+					if (p == medic) continue;
+					if (p.Dead) continue;
+					if (!p.Spawned || p.Map != map) continue;
+					if (p.jobs == null || p.jobs.curJob == null) continue;
 
-				if (!isMedical)
-					continue;
+					Job cur = p.jobs.curJob;
+					if (cur == null || cur.def == null) continue;
 
-				if (JobTargetsIncludePawn(cur, patient))
+					bool isMedical =
+						cur.def == JobDefOf.TendPatient ||
+						cur.def == JobDefOf.Rescue;
+
+					if (!isMedical)
+						continue;
+
+					if (!JobTargetsIncludePawn(cur, patient))
+						continue;
+
+					// Return first qualifying pawn; nearby list keeps this cheap.
 					return p;
+				}
 			}
 
 			return null;
@@ -3028,33 +3050,75 @@ namespace ArgrillianThreat
 
 		private CompArgrillianThreatSettings Settings(Pawn pawn) => pawn?.GetComp<CompArgrillianThreatSettings>();
 
-		private Pawn FindNearestMedic(Pawn seeker)
+		private static class NearestMedicCache
 		{
-			if (seeker == null || seeker.Dead || seeker.Map == null) return null;
-
-			Map map = seeker.Map;
-			Pawn best = null;
-			float bestD = float.PositiveInfinity;
-
-			foreach (Pawn p in map.mapPawns.AllPawnsSpawned)
+			private struct CacheEntry
 			{
-				if (p == null || p.Dead) continue;
-				if (p.Faction != seeker.Faction) continue;
-				if (!p.Spawned || p.Map != map) continue;
-				if (p.Downed) continue;
-
-				var medicComp = p.GetComp<CompArgrillianMedicSettings>();
-				if (medicComp == null || !medicComp.isMedic) continue;
-
-				float d = seeker.Position.DistanceTo(p.Position);
-				if (d < bestD)
-				{
-					bestD = d;
-					best = p;
-				}
+				public int tick;
+				public int mapId;
+				public Pawn medic;
 			}
 
-			return best;
+			private static readonly Dictionary<int, CacheEntry> bySeekerId
+				= new Dictionary<int, CacheEntry>();
+
+			public static Pawn GetOrCompute(Pawn seeker, Func<Pawn> compute)
+			{
+				if (seeker == null || seeker.Dead || seeker.Map == null) return null;
+
+				int now = Find.TickManager.TicksGame;
+				int seekerId = seeker.thingIDNumber;
+				int mapId = seeker.Map.uniqueID;
+
+				if (bySeekerId.TryGetValue(seekerId, out CacheEntry e))
+				{
+					if (e.tick == now && e.mapId == mapId)
+						return e.medic;
+				}
+
+				Pawn result = compute();
+
+				bySeekerId[seekerId] = new CacheEntry
+				{
+					tick = now,
+					mapId = mapId,
+					medic = result
+				};
+
+				return result;
+			}
+		}
+
+		private Pawn FindNearestMedic(Pawn seeker)
+		{
+			return NearestMedicCache.GetOrCompute(seeker, () =>
+			{
+				if (seeker == null || seeker.Dead || seeker.Map == null) return null;
+
+				Map map = seeker.Map;
+				Pawn best = null;
+				float bestD = float.PositiveInfinity;
+
+				foreach (Pawn p in map.mapPawns.AllPawnsSpawned)
+				{
+					if (p == null || p.Dead) continue;
+					if (p.Faction != seeker.Faction) continue;
+					if (!p.Spawned || p.Map != map) continue;
+					if (p.Downed) continue;
+
+					var medicComp = p.GetComp<CompArgrillianMedicSettings>();
+					if (medicComp == null || !medicComp.isMedic) continue;
+
+					float d = seeker.Position.DistanceTo(p.Position);
+					if (d < bestD)
+					{
+						bestD = d;
+						best = p;
+					}
+				}
+
+				return best;
+			});
 		}
 
 		private Pawn FindBestAidTargetForCombatMedic(Pawn medic, float maxRange)
