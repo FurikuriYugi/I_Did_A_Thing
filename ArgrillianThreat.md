@@ -4742,17 +4742,18 @@ namespace ArgrillianThreat
 
 			bool combatMedic = medicComp.combatMedic;
 
-			// RELEASE FIX: if we previously locked a patient but we're no longer on Tend/Rescue for them,
-			// release the hold immediately so the patient doesn't remain stuck on a bad job+queue state.
+			// RELEASE FIX (stability): only release when we're no longer on a Tend/Rescue job at all.
+			// Relying on JobIsMedicalForPatient(job, heldPatient) can briefly go false due to target resolution/timing.
 			if (combatMedic)
 			{
 				Pawn heldPatient = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
-				bool stillMedicalForHeld =
-					pawn.CurJob != null &&
-					heldPatient != null &&
-					ArgillianThreatPatientTuning.JobIsMedicalForPatient(pawn.CurJob, heldPatient);
 
-				if (heldPatient != null && !stillMedicalForHeld)
+				bool stillOnMedicalJob =
+					pawn.CurJob != null &&
+					pawn.CurJob.def != null &&
+					(pawn.CurJob.def == JobDefOf.TendPatient || pawn.CurJob.def == JobDefOf.Rescue);
+
+				if (heldPatient != null && !stillOnMedicalJob)
 				{
 					ArgrillianMedicalState.PatientMedicHold.ReleaseForMedic(pawn);
 				}
