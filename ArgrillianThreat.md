@@ -4680,23 +4680,39 @@ namespace ArgrillianThreat
 				}
 			}
 
-			// If medic is on Rescue/Tend for someone else, don't interrupt medical commitment for the selected patient.
+			// If we're already tending/rescuing a valid *other* target, keep the commitment.
+			// (Prevents combat medics from getting stuck self-tending and then drifting into haul/work.)
 			if (combatMedic && pawn.CurJob != null && pawn.CurJob.def != null)
 			{
 				JobDef curDef = pawn.CurJob.def;
 
-				bool alreadyRescueOrTend = curDef == JobDefOf.Rescue || curDef == JobDefOf.TendPatient;
-
-				// If we're currently carrying someone, don't let combat/other overrides cancel the sequence.
-				if (combatMedic)
+				if (curDef == JobDefOf.Rescue || curDef == JobDefOf.TendPatient)
 				{
-					Pawn carried = GetCarriedPawn(pawn);
-					if (carried != null && !carried.Dead && carried.Map == pawn.Map && carried.Faction == pawn.Faction && pawn.CurJob != null)
-						return pawn.CurJob;
-				}
+					Pawn curPatient = ArgillianThreatPatientTuning.GetPatientFromJob(pawn.CurJob);
 
-				// fallthrough continues below
+					// If we can't resolve the patient from the job, still keep the commitment
+					// so we don't drift into combat/chasing mid-medical.
+					if (curPatient == null)
+						return pawn.CurJob;
+
+					if (curPatient != pawn &&
+						!curPatient.Dead &&
+						curPatient.Map == pawn.Map &&
+						curPatient.Faction == pawn.Faction)
+					{
+						LockPatientToMedic(pawn, curPatient);
+
+						if (curDef == JobDefOf.Rescue)
+							return pawn.CurJob;
+
+						if (curDef == JobDefOf.TendPatient)
+							return pawn.CurJob;
+					}
+				}
 			}
+
+			// NOTE: do not add interruption logic here based on `patient`/`patientUrgent`,
+			// because those locals are declared later in this method.
 
 			Pawn patient = null;
 
