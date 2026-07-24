@@ -1121,10 +1121,10 @@ namespace ArgrillianThreat
 		///   not when acquiring/locking the hostile.
 		/// </summary>
 		public static bool TryAcquireHostileFromExistingSystems(
-			Pawn pawn,
-			ThreatContext tctx,
-			ArgrillianThreatHostileAcquireContext acquireCtx,
-			out HostileContext hctx)
+	Pawn pawn,
+	ThreatContext tctx,
+	ArgrillianThreatHostileAcquireContext acquireCtx,
+	out HostileContext hctx)
 		{
 			hctx = default;
 
@@ -1136,6 +1136,9 @@ namespace ArgrillianThreat
 
 			if (map == null || pawn.Map != map)
 				return false;
+
+			// Read toggles once (from threat settings)
+			bool huntHumans = tctx.Settings != null && tctx.Settings.huntHumans;
 
 			// If we already have a locked hostile, prioritize continuing it.
 			Pawn hostileLockedContext = ArgrillianThreatState.CombatLock.TryGetLockedHostile(pawn);
@@ -1158,7 +1161,7 @@ namespace ArgrillianThreat
 
 			// If we didn't get a hostile from assist logic, try normal acquisition.
 			if (hostile == null)
-				hostile = FindHostileWithinRange(pawn, map, scanRange);
+				hostile = FindHostileWithinRange(pawn, map, scanRange, huntHumans);
 
 			// If still none, fall back to lock.
 			if (hostile == null)
@@ -1193,7 +1196,7 @@ namespace ArgrillianThreat
 			return true;
 		}
 
-		private static Pawn FindHostileWithinRange(Pawn pawn, Map map, float range)
+		private static Pawn FindHostileWithinRange(Pawn pawn, Map map, float range, bool huntHumans)
 		{
 			if (pawn == null || map == null)
 				return null;
@@ -1208,9 +1211,17 @@ namespace ArgrillianThreat
 
 				foreach (Thing t in c.GetThingList(map))
 				{
-					if (t is not Pawn other) continue;
-					if (other.Dead) continue;
-					if (!other.HostileTo(pawn)) continue;
+					if (t is not Pawn other)
+						continue;
+
+					if (other.Dead)
+						continue;
+
+					if (!other.HostileTo(pawn))
+						continue;
+
+					if (huntHumans && other.RaceProps != null && !other.RaceProps.Humanlike)
+						continue;
 
 					// We allow acquisition even if LOS is blocked.
 					// LOS just boosts score so pawns prefer what they can currently engage.
@@ -2400,19 +2411,27 @@ namespace ArgrillianThreat
 		}
 
 		private static Job TryMakeAttackJobIfCanHitNow(
-		Pawn pawn,
-		Pawn target,
-		bool pursueAdvance,
-		float desiredCombatDistance,
-		bool isRanged)
+			Pawn pawn,
+			Pawn target,
+			bool pursueAdvance,
+			float desiredCombatDistance,
+			bool isRanged)
 		{
 			if (pawn == null || target == null || pawn.Dead || target.Dead)
 			{
 				return null;
 			}
 
-			// NEW: ignore downed hostiles (no “finish off” behavior)
-			if (target.Downed)
+			// Finish Off toggle:
+			// OFF (default): ignore downed hostiles (current behavior).
+			// ON: allow Attack* jobs against downed hostiles.
+			bool allowFinishOff = false;
+			{
+				CompArgrillianThreatSettings s = pawn.GetComp<CompArgrillianThreatSettings>();
+				allowFinishOff = s != null && s.finishOff;
+			}
+
+			if (target.Downed && !allowFinishOff)
 			{
 				return null;
 			}
@@ -2741,6 +2760,9 @@ namespace ArgrillianThreat
 		public bool guardFellowPawns = true;
 		public bool squadMode = false;
 
+		public bool finishOff = false;
+		public bool huntHumans = false;
+
 		public override IEnumerable<Gizmo> CompGetGizmosExtra()
 		{
 			foreach (Gizmo g in base.CompGetGizmosExtra())
@@ -2765,6 +2787,20 @@ namespace ArgrillianThreat
 				"ON: keep a tighter unit and reposition together for advantage.",
 				() => squadMode,
 				() => squadMode = !squadMode
+			);
+
+			yield return ArgrillianGizmoHelpers.Toggle(
+				"Finish Off",
+				"ON: actively kill downed hostiles. OFF: ignore downed hostiles (current behavior).",
+				() => finishOff,
+				() => finishOff = !finishOff
+			);
+
+			yield return ArgrillianGizmoHelpers.Toggle(
+				"Hunt",
+				"ON: actively hunt human pawns when selecting hostile targets.",
+				() => huntHumans,
+				() => huntHumans = !huntHumans
 			);
 		}
 	}
