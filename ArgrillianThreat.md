@@ -2400,13 +2400,19 @@ namespace ArgrillianThreat
 		}
 
 		private static Job TryMakeAttackJobIfCanHitNow(
-			Pawn pawn,
-			Pawn target,
-			bool pursueAdvance,
-			float desiredCombatDistance,
-			bool isRanged)
+		Pawn pawn,
+		Pawn target,
+		bool pursueAdvance,
+		float desiredCombatDistance,
+		bool isRanged)
 		{
 			if (pawn == null || target == null || pawn.Dead || target.Dead)
+			{
+				return null;
+			}
+
+			// NEW: ignore downed hostiles (no “finish off” behavior)
+			if (target.Downed)
 			{
 				return null;
 			}
@@ -3872,11 +3878,11 @@ namespace ArgrillianThreat
 
 			// Battlefield constraint:
 			// - Only consider medicine in the immediate patient area (short search).
-			// - Do NOT impose a "medic proximity" gate that can cause medicine=null and trigger far medicine-fetch routes.
-			// - Ignore forbidden tag for dropped/late-death state (forbidden timing can be unreliable).
+			// - Do NOT impose a hard medic-distance gate that can cause medicine=null and trigger far medicine-fetch routes.
+			// - Include medicine from nearby corpses (dropped/late-death timing can make forbidden unreliable).
 			IntVec3 patientCenter = patient.Position;
 
-			// Keep search anchored to patient radius; small buffer for just-outside stacks.
+			// Clamp radius upward slightly so we don’t fall into "no medicine nearby" due to tiny rounding gaps.
 			float searchRadius = Mathf.Max(radius, radius * 1.15f);
 
 			float bestDist = float.PositiveInfinity;
@@ -3886,13 +3892,11 @@ namespace ArgrillianThreat
 			{
 				if (!c.InBounds(map) || c.Fogged(map)) continue;
 
-				// Direct things on the ground / in containers that show up here.
 				foreach (Thing t in c.GetThingList(map))
 				{
+					// Directly on the ground / in containers that are surfaced by this cell list
 					if (IsMedicineThing(t))
 					{
-						// Intentionally do NOT require reservation here.
-						// This prevents the "no medicine nearby" fallback when medicine is temporarily forbidden/unstable.
 						float d = c.DistanceTo(patientCenter);
 						if (d < bestDist)
 						{
@@ -3901,7 +3905,7 @@ namespace ArgrillianThreat
 						}
 					}
 
-					// Medicine "dropped in the immediate area" that is held by corpses.
+					// Medicine "dropped in the immediate area" held by corpses.
 					Corpse corpse = t as Corpse;
 					if (corpse != null)
 					{
@@ -3910,7 +3914,6 @@ namespace ArgrillianThreat
 							if (inner == null) continue;
 							if (!IsMedicineThing(inner)) continue;
 
-							// Intentionally do NOT require reservation here (see forbidden timing constraint).
 							float d = c.DistanceTo(patientCenter);
 							if (d < bestDist)
 							{
@@ -4894,7 +4897,15 @@ namespace ArgrillianThreat
 					bool curIsMeal = IsMealOrConsumeLikeJob(pawn.CurJob);
 					bool curIsMedicineFetch = IsMedicineFetchJob(pawn.CurJob);
 
-					if (curIsHauling || curIsMeal || (curIsMedicineFetch && !recentlyStickingToTendTask))
+					// NEW: If patient is downed, medicine-fetch MUST NOT be allowed to "continue"
+					// via recentlyStickingToTendTask stickiness; otherwise we bounce:
+					// "go get medicine" <-> "go back to patient" <-> "queued haul/eat/medicine".
+					bool shouldInterrupt =
+						curIsHauling ||
+						curIsMeal ||
+						(curIsMedicineFetch && (!patient.Downed || !recentlyStickingToTendTask));
+
+					if (shouldInterrupt)
 					{
 						pawn.jobs?.StopAll(true);
 						ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
@@ -5443,28 +5454,59 @@ namespace ArgrillianThreat
 		{
 			bool combatMedic = pawn.GetComp<CompArgrillianMedicSettings>()?.combatMedic == true;
 
-			int stableTicks = GetPatientStableTicksForTend(patient);
+			// NEW: Tend/Rescue stickiness / anti-preemption
+			// If this patient is already locked in this medic's medical pipeline (hold),
+			// then we must not block Tend/Rescue due to medic-distance gating.
+			if (combatMedic)
+			{
+				Pawn heldPatient = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
+				if (heldPatient != null && heldPatient == patient)
+				{
+					int stableTicks = GetPatientStableTicksForTend(patient);
+					int requiredStableTicks = patient.Downed ? 0 : patientStableTicksRequired;
 
-			// NEW: when patient is downed, don’t block Tend behind position-stability.
-			// Rescue often leaves the downed pawn in a transient state where stability isn't reached yet,
-			// which can cause Rescue↔Tend oscillation.
-			int requiredStableTicks = patient.Downed ? 0 : patientStableTicksRequired;
+					return IsValidTendTarget(patient, pawn) &&
+						stableTicks >= requiredStableTicks &&
+						CanReserveTendTarget(pawn, patient);
+				}
+			}
+
+			int stableTicksOuter = GetPatientStableTicksForTend(patient);
+			int requiredStableTicksOuter = patient.Downed ? 0 : patientStableTicksRequired;
 
 			if (!patient.Downed && patient.CurJob != null && patient.CurJob.def != null)
 			{
-				// NEW: if the patient is actively fleeing/chasing/attacking, don't start Tend.
 				Job j = patient.CurJob;
 
+				// Don’t start Tend if the patient is actively doing combat/mobility jobs
 				if (IsCombatAttackLikeJob(j) || IsChaseOrTacticJob(j) || IsFleeLikeJob(j) || IsHaulJob(j) || IsMealOrConsumeLikeJob(j) || j.def.defName == "ConsumeMeal")
 				{
 					return false;
 				}
 
 				if (j.def == JobDefOf.LayDown)
+				{
 					return false;
+				}
+
+				if (j.def == JobDefOf.Rescue)
+				{
+					return false;
+				}
+
+				if (!IsAllowedDownPawnJob(j))
+				{
+					return false;
+				}
+
+				// Allowed job; continue to tend checks
 			}
 
-			return pawn.Position.DistanceTo(patient.Position) <= combatTendMaxDistance && IsValidTendTarget(patient, pawn) && stableTicks >= requiredStableTicks && CanReserveTendTarget(pawn, patient);
+			// Normal (non-held) case keeps the distance gate.
+			return pawn.Position.DistanceTo(patient.Position) <= combatTendMaxDistance &&
+				IsValidTendTarget(patient, pawn) &&
+				stableTicksOuter >= requiredStableTicksOuter &&
+				CanReserveTendTarget(pawn, patient);
 		}
 
 		private struct PatientStabilityState
