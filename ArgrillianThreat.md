@@ -5157,13 +5157,13 @@ namespace ArgrillianThreat
 			Pawn heldPatient2 = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
 			if (combatMedic && pawn.CurJob != null && (patient.Downed || (patientUrgent && !patient.InBed())) && heldPatient2 == patient)
 			{
-				bool curIsMedicalForChosenPatient = ArgillianThreatPatientTuning.JobIsMedicalForPatient(pawn.CurJob, patient);
-
 				bool curIsHauling = IsHaulJob(pawn.CurJob);
 				bool curIsMealOrConsume = IsMealOrConsumeLikeJob(pawn.CurJob);
 				bool curIsMedicineFetch = IsMedicineFetchJob(pawn.CurJob);
 
-				if (!curIsMedicalForChosenPatient && (curIsMedicineFetch || curIsHauling || curIsMealOrConsume))
+				// IMPORTANT: if the medic's job is haul/meal/medicine-fetch while holding a downed patient,
+				// ALWAYS interrupt it. Do not rely on JobIsMedicalForPatient, because it can mis-classify.
+				if (curIsMedicineFetch || curIsHauling || curIsMealOrConsume)
 				{
 					pawn.jobs?.StopAll(true);
 					ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
