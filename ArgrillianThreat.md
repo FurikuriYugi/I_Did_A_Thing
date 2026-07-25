@@ -4837,15 +4837,15 @@ namespace ArgrillianThreat
 						pawn.CurJob.def != null &&
 						(pawn.CurJob.def == JobDefOf.TendPatient || pawn.CurJob.def == JobDefOf.Rescue);
 
-					// Robust en-route detection: some mods/AI use Approach/GotoToCell/JobDriver variants
-					// whose JobDef isn't strictly JobDefOf.Goto.
-					bool medicTargetsHeldPatient =
-						(pawn.CurJob != null && pawn.CurJob.targetA != null && pawn.CurJob.targetA.Thing == heldPatient) ||
-						(pawn.CurJob != null && pawn.CurJob.targetB != null && pawn.CurJob.targetB.Thing == heldPatient);
-
-					bool medicIsEnRouteToPatient =
-						medicTargetsHeldPatient ||
-						(pawn.CurJob != null && pawn.CurJob.def != null && (pawn.CurJob.def == JobDefOf.Goto || pawn.CurJob.def == JobDefOf.Wait));
+					// Robust committed detection: if the medic's current job targets the held patient,
+					// we should not release the hold even if the job def is a move/approach variant.
+					bool medicJobTargetsHeldPatient =
+						pawn.CurJob != null &&
+						(
+							(pawn.CurJob.targetA.IsValid && pawn.CurJob.targetA.Thing == heldPatient) ||
+							(pawn.CurJob.targetB.IsValid && pawn.CurJob.targetB.Thing == heldPatient) ||
+							(pawn.CurJob.targetC.IsValid && pawn.CurJob.targetC.Thing == heldPatient)
+						);
 
 					bool medicIsMedicineFetchOrHauling =
 						(pawn.CurJob != null && IsMedicineFetchJob(pawn.CurJob)) ||
@@ -4853,7 +4853,8 @@ namespace ArgrillianThreat
 						(pawn.CurJob != null && IsMealOrConsumeLikeJob(pawn.CurJob)) ||
 						(pawn.CurJob != null && pawn.CurJob.def != null && pawn.CurJob.def.defName == "ConsumeMeal");
 
-					if (!stillOnTendOrRescue && !medicIsEnRouteToPatient && !medicIsMedicineFetchOrHauling)
+					// Do not release if we are truly committed to the held patient, OR if we're still actively doing Tend/Rescue.
+					if (!stillOnTendOrRescue && !medicJobTargetsHeldPatient && !medicIsMedicineFetchOrHauling)
 					{
 						ArgrillianMedicalState.PatientMedicHold.ReleaseForMedic(pawn);
 					}
