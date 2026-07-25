@@ -1,38 +1,3 @@
-using RimWorld;
-using RimWorld.BaseGen;
-using RimWorld.IO;
-using RimWorld.Planet;
-using RimWorld.QuestGen;
-using RimWorld.SketchGen;
-using Verse;
-using Verse.AI;
-using Verse.Profile;
-using Verse.Noise;
-using Verse.Grammar;
-using Verse.AI.Group;
-using Verse.Sound;
-using Verse.Steam;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Diagnostics;
-using System.Globalization;
-using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
-using System.Runtime.Serialization;
-using System.Security;
-using System.Reflection;
-using System.Reflection.Emit;
-using UnityEngine;
-using HarmonyLib;
-using LudeonTK;
-
-namespace System.Runtime.CompilerServices
-{
-	public class IsExternalInit { }
-}
-
 namespace ArgrillianThreat
 {
 	// -----------------------------
@@ -4982,19 +4947,19 @@ namespace ArgrillianThreat
 					// Previously we only treated (downed OR not in bed) as urgent, which released the hold too early
 					// for injured-but-embedded patients (in-bed, not downed) and triggered haul/move preemption loops.
 					// If the patient is still in the urgent pipeline state, we must keep the hold.
-					// This prevents preemption into haul/move loops exactly at the moment tend/rescue eligibility appears.
+					// But ONLY if the medic is already committed to the medical pipeline.
+					// Otherwise we prevent the medic from ever switching from combat into tend/rescue.
 					float heldHpPct = heldPatient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
 
-					// FIX (tend-eligible-in-bed): previously this only treated
-					//   - downed OR not-in-bed
-					// as urgent, which misses injured-but-still-in-bed patients.
-					// That caused the medic hold to release too early and allowed haul/move arbitration to take over.
 					bool heldPatientUrgent =
 						heldPatient.Downed ||
 						!heldPatient.InBed() ||
 						heldHpPct <= 0.95f;
 
-					if (!stillOnTendOrRescue && !medicJobTargetsHeldPatient && !medicIsMedicineFetchOrHauling && !medicIsMovingToHeldPatientCell && !heldPatientUrgent)
+					// Only treat "urgent" as a reason to keep the hold when we are already on/for the medical pipeline.
+					bool committedToMedicalPipeline = stillOnTendOrRescue || medicJobTargetsHeldPatient || medicIsMovingToHeldPatientCell;
+
+					if (!stillOnTendOrRescue && !medicJobTargetsHeldPatient && !medicIsMedicineFetchOrHauling && !medicIsMovingToHeldPatientCell && (!committedToMedicalPipeline || !heldPatientUrgent))
 					{
 						ArgrillianMedicalState.PatientMedicHold.ReleaseForMedic(pawn);
 					}
