@@ -4912,14 +4912,20 @@ namespace ArgrillianThreat
 					// stop it and re-steer to the held patient instead of letting the utility layer run.
 					if (holdPatientForAntiDrift != null)
 					{
-						bool curIsHauling = IsHaulJob(pawn.CurJob) || IsMealOrConsumeLikeJob(pawn.CurJob) || IsMedicineFetchJob(pawn.CurJob);
-						if (curIsHauling)
+						string defName = pawn.CurJob.def.defName;
+
+						bool curIsHauling = IsHaulJob(pawn.CurJob) || defName != null && defName.IndexOf("haul", StringComparison.OrdinalIgnoreCase) >= 0;
+
+						bool curIsMealOrConsume = IsMealOrConsumeLikeJob(pawn.CurJob);
+						bool curIsMedicineFetch = IsMedicineFetchJob(pawn.CurJob);
+
+						bool curIsHaulOrMealOrFetch = curIsHauling || curIsMealOrConsume || curIsMedicineFetch;
+						if (curIsHaulOrMealOrFetch)
 						{
 							pawn.jobs?.StopAll(true);
 							pawn.pather?.StopDead();
 							ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
 
-							// Keep commitment stable; next Tend/Rescue selection will kick in.
 							return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, holdPatientForAntiDrift.Position);
 						}
 					}
