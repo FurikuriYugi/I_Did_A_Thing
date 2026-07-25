@@ -5033,8 +5033,22 @@ namespace ArgrillianThreat
 
 			// NEW: If combat medic has an urgent/downed patient but is currently hauling/meal/medicine-fetch,
 			// force an interruption so it can re-acquire Rescue/Tend instead of drifting back into loops.
-			// FIX: allow medicine-fetch to continue when it's part of an active Tend task stickiness window.
-			if (combatMedic && pawn.CurJob != null && (patient.Downed || (patientUrgent && !patient.InBed())) && ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn) != patient)
+			// Anti-preemption: while the patient is in the medic's assigned medical pipeline (hold == patient),
+			// medicine-fetch MUST NOT persist.
+			Pawn heldPatient2 = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
+			if (combatMedic && pawn.CurJob != null && (patient.Downed || (patientUrgent && !patient.InBed())) && heldPatient2 == patient)
+			{
+				bool curIsMedicalForChosenPatient = ArgillianThreatPatientTuning.JobIsMedicalForPatient(pawn.CurJob, patient);
+
+				if (!curIsMedicalForChosenPatient && IsMedicineFetchJob(pawn.CurJob))
+				{
+					pawn.jobs?.StopAll(true);
+					ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
+				}
+			}
+
+			// Existing drift-fix (only when we're NOT the held patient).
+			if (combatMedic && pawn.CurJob != null && (patient.Downed || (patientUrgent && !patient.InBed())) && heldPatient2 != patient)
 			{
 				bool curIsMedicalForChosenPatient = ArgillianThreatPatientTuning.JobIsMedicalForPatient(pawn.CurJob, patient);
 				if (!curIsMedicalForChosenPatient)
@@ -5044,8 +5058,6 @@ namespace ArgrillianThreat
 					bool curIsMeal = IsMealOrConsumeLikeJob(pawn.CurJob);
 					bool curIsMedicineFetch = IsMedicineFetchJob(pawn.CurJob);
 
-					// NEW: If patient is downed, medicine-fetch MUST NOT be allowed to "continue"
-					// via recentlyStickingToTendTask stickiness; otherwise we bounce:
 					// "go get medicine" <-> "go back to patient" <-> "queued haul/eat/medicine".
 					bool shouldInterrupt =
 						curIsHauling ||
