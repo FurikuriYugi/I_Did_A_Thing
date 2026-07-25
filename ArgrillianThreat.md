@@ -4980,19 +4980,29 @@ namespace ArgrillianThreat
 					// If the held patient is urgent/downed but not tend-eligible *for this medic yet*,
 					// do NOT release the hold and do NOT return null (which would allow hauling).
 					// Keep the medic in medical pipeline until eligibility becomes true.
-					if (heldPatientUrgent)
+					if (heldPatient != null)
 					{
-						// If already doing a medical job on the held patient, keep it.
+						// If we're already doing Tend/Rescue for the held patient, keep it.
 						if (pawn.CurJob != null && pawn.CurJob.def != null)
 						{
-							bool isMedical = pawn.CurJob.def == JobDefOf.TendPatient || pawn.CurJob.def == JobDefOf.Rescue;
-							if (isMedical && pawn.CurJob.targetA.IsValid && pawn.CurJob.targetA.Thing == heldPatient)
+							if (pawn.CurJob.def == JobDefOf.TendPatient || pawn.CurJob.def == JobDefOf.Rescue)
 							{
-								return pawn.CurJob;
+								// TendPatient/Rescue should target the held pawn via targetA.
+								if (pawn.CurJob.targetA.IsValid && pawn.CurJob.targetA.Thing == heldPatient)
+									return pawn.CurJob;
 							}
 						}
 
-						// Otherwise, wait briefly to prevent utility from switching into meal/haul/stockpile.
+						// Force medical job if eligible now.
+						if (canTendNow(pawn, heldPatient))
+						{
+							JobDef def = heldPatient.Downed ? JobDefOf.Rescue : JobDefOf.TendPatient;
+							return JobMaker.MakeJob(def, heldPatient);
+						}
+
+						// Not eligible yet: DO NOT release the medical hold.
+						// Returning null here allows utility to pick meal/haul/stockpile.
+						// Returning Wait keeps the medic pinned in the medical pipeline.
 						const int holdWaitTicks = 60;
 						return JobMaker.MakeJob(JobDefOf.Wait, holdWaitTicks);
 					}
