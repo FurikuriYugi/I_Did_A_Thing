@@ -1021,27 +1021,13 @@ namespace ArgrillianThreat
 				Pawn patient = FindPatientByThingID(medic.Map, patientId);
 				if (patient == null || patient.Dead) return;
 
-				// Hard break: if the current job is the queued/hold posture job, it must be interrupted.
-				// ClearQueuedJobs alone does not remove the current CurJob.
+				// IMPORTANT: releasing the hold must not hard-stop the patient's current job driver.
+				// Hard-stop (StopAll(true)) here causes job churn: patient stops being a stable tend target,
+				// and combat medics drift back into normal combat movement/haul utility behavior.
 				patient.jobs?.ClearQueuedJobs();
-				patient.jobs?.StopAll(true);
 
-				// Extra safety: if they still ended up on a stand/idle-like driver after stop,
-				// ensure we stop it too (StopAll(true) above usually covers it, but this helps edge cases).
-				if (patient.CurJob != null && patient.CurJob.def != null)
-				{
-					string defName = patient.CurJob.def.defName;
-					if (patient.CurJob.def == JobDefOf.Wait ||
-						patient.CurJob.def == JobDefOf.LayDown ||
-						defName == "StandStill" ||
-						defName == "Stand" ||
-						defName == "Idle")
-					{
-						patient.jobs?.StopAll(true);
-						patient.jobs?.ClearQueuedJobs();
-					}
-				}
-
+				// If they still have a queued hold posture job, let it expire naturally; do not StopAll(true).
+				// Ensure pathing isn't overridden into dead-stops when the hold is released.
 				patient.pather?.StopDead();
 			}
 
