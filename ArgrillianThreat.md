@@ -4729,23 +4729,34 @@ namespace ArgrillianThreat
 
 			bool combatMedic = medicComp.combatMedic;
 
-				// RELEASE FIX (stability): only release when we're no longer on a Tend/Rescue job at all.
-				// Relying on JobIsMedicalForPatient(job, heldPatient) can briefly go false due to target resolution/timing.
-				if (combatMedic)
-				{
-					Pawn heldPatient = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
-					bool holdActive = heldPatient != null;
+			// RELEASE FIX (stability): only release the hold when we are truly leaving the medic's assigned medical pipeline.
+			// Anti-preemption: medicine-fetch / haul must NOT release Tend/Rescue stickiness while the medic is committed.
+			if (combatMedic)
+			{
+				Pawn heldPatient = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
 
-					bool stillOnMedicalJob =
+				if (heldPatient != null)
+				{
+					// Still doing Tend/Rescue for the held patient => keep hold.
+					bool stillOnTendOrRescue =
 						pawn.CurJob != null &&
 						pawn.CurJob.def != null &&
 						(pawn.CurJob.def == JobDefOf.TendPatient || pawn.CurJob.def == JobDefOf.Rescue);
 
-					if (heldPatient != null && !stillOnMedicalJob)
+					// If the medic is drifting into medicine/haul while a hold is active,
+					// do NOT release the hold (downstream Tend/Rescue arbitration will interrupt and re-steer).
+					bool medicIsMedicineFetchOrHauling =
+						(pawn.CurJob != null && IsMedicineFetchJob(pawn.CurJob)) ||
+						(pawn.CurJob != null && IsHaulJob(pawn.CurJob)) ||
+						(pawn.CurJob != null && IsMealOrConsumeLikeJob(pawn.CurJob)) ||
+						(pawn.CurJob != null && pawn.CurJob.def != null && pawn.CurJob.def.defName == "ConsumeMeal");
+
+					if (!stillOnTendOrRescue && !medicIsMedicineFetchOrHauling)
 					{
 						ArgrillianMedicalState.PatientMedicHold.ReleaseForMedic(pawn);
 					}
 				}
+			}
 
 			// If we're already tending/rescuing a valid *other* target, keep the commitment.
 			// (Prevents combat medics from getting stuck self-tending and then drifting into haul/work.)
