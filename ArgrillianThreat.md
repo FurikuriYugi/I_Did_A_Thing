@@ -3970,6 +3970,7 @@ namespace ArgrillianThreat
 			// Anti-"no medicine nearby" tweak:
 			// Expand the effective radius floor a bit so tiny rounding gaps don't produce medicine=null
 			// under lag/standstill jitter, which then lets RimWorld fall back to long-range fetching.
+
 			IntVec3 patientCenter = patient.Position;
 
 			float effectiveRadius = Mathf.Max(radius, radius * 1.15f);
@@ -4733,7 +4734,7 @@ namespace ArgrillianThreat
 			if (combatMedic)
 			{
 				Pawn heldPatient = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
-				bool holdActive = heldPatient != null && heldPatient == patient;
+				bool holdActive = heldPatient != null;
 				bool stillOnMedicalJob =
 					pawn.CurJob != null &&
 					pawn.CurJob.def != null &&
@@ -4747,26 +4748,49 @@ namespace ArgrillianThreat
 
 			// If we're already tending/rescuing a valid *other* target, keep the commitment.
 			// (Prevents combat medics from getting stuck self-tending and then drifting into haul/work.)
-			if (combatMedic && pawn.CurJob != null && pawn.CurJob.def != null && !holdActive)
+			Pawn holdPatientForAntiDrift = null;
+			if (combatMedic)
 			{
-				JobDef curDef = pawn.CurJob.def;
+				holdPatientForAntiDrift = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
+			}
+			if (combatMedic && pawn.CurJob != null && pawn.CurJob.def != null)
+			{
+				bool holdActive2 = holdPatientForAntiDrift != null;
 
-				bool alreadyRescueOrTend =
-					curDef == JobDefOf.Rescue ||
-					curDef == JobDefOf.TendPatient;
-
-				bool isRelevantJobAlreadyForPatient = alreadyRescueOrTend && ArgillianThreatPatientTuning.JobIsMedicalForPatient(pawn.CurJob, patient);
-
-				if (!isRelevantJobAlreadyForPatient)
+				// Only run anti-drift if we are NOT currently holding a pipeline patient.
+				if (!holdActive2)
 				{
-					bool medicIsHauling = IsHaulJob(pawn.CurJob);
-					bool medicIsMealOrConsume = IsMealOrConsumeLikeJob(pawn.CurJob);
+					JobDef curDef = pawn.CurJob.def;
 
-					if ((patient.Downed && (medicIsHauling || medicIsMealOrConsume) && !IsMedicineFetchJob(pawn.CurJob)) ||
-						(!patient.Downed && (patientUrgent && !patient.InBed()) && (medicIsHauling || medicIsMealOrConsume) && !IsMedicineFetchJob(pawn.CurJob)))
+					bool alreadyRescueOrTend =
+						curDef == JobDefOf.Rescue ||
+						curDef == JobDefOf.TendPatient;
+
+					// Use the held patient (pipeline) if present; otherwise this block should do nothing.
+					// This avoids referencing the later `patient` local before its declaration.
+					if (holdPatientForAntiDrift != null && alreadyRescueOrTend)
 					{
-						pawn.jobs?.StopAll(true);
-						ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
+						bool isRelevantJobAlreadyForPatient =
+							alreadyRescueOrTend &&
+							ArgillianThreatPatientTuning.JobIsMedicalForPatient(pawn.CurJob, holdPatientForAntiDrift);
+
+						if (!isRelevantJobAlreadyForPatient)
+						{
+							bool medicIsHauling = IsHaulJob(pawn.CurJob);
+							bool medicIsMealOrConsume = IsMealOrConsumeLikeJob(pawn.CurJob);
+
+							// Early urgent approximation: only depend on properties available here.
+							bool heldPatientUrgentEarly =
+								holdPatientForAntiDrift.Downed ||
+								!holdPatientForAntiDrift.InBed();
+
+							if ((holdPatientForAntiDrift.Downed && (medicIsHauling || medicIsMealOrConsume) && !IsMedicineFetchJob(pawn.CurJob)) ||
+								(!holdPatientForAntiDrift.Downed && (heldPatientUrgentEarly && !holdPatientForAntiDrift.InBed()) && (medicIsHauling || medicIsMealOrConsume) && !IsMedicineFetchJob(pawn.CurJob)))
+							{
+								pawn.jobs?.StopAll(true);
+								ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
+							}
+						}
 					}
 				}
 			}
@@ -4784,7 +4808,10 @@ namespace ArgrillianThreat
 					// If we can't resolve the patient from the job, still keep the commitment
 					// so we don't drift into combat/chasing mid-medical.
 					if (curPatient == null)
+					{
 						return pawn.CurJob;
+
+					}
 
 					if (curPatient != pawn &&
 						!curPatient.Dead &&
@@ -4878,6 +4905,7 @@ namespace ArgrillianThreat
 			}
 
 			float hpPct = patient.health.summaryHealth.SummaryHealthPercent;
+
 			bool bleeding = HasBloodLossStatic(patient);
 			float bleedSeverity = BloodLossSeverityStatic(patient);
 
@@ -5089,6 +5117,7 @@ namespace ArgrillianThreat
 			if (combatMedic && MedicJobIsRescueForPatient(pawn, patient))
 				return pawn.CurJob;
 
+			// --- NEW: if patient is being handled, don't yield into waits/haul gaps ---
 			Pawn someoneElse = ArgillianThreatPatientTuning.PatientAlreadyBeingTendedOrRescuedBySomeoneElse(pawn, patient);
 			if (someoneElse != null)
 			{
@@ -5108,240 +5137,432 @@ namespace ArgrillianThreat
 
 					if (pawn.CurJob == null || curIsStandOrWait || IsNonCombatJob(pawn.CurJob))
 					{
-						Pawn hostile = FindNearestHostile(pawn, radius: 80f);
+												Pawn hostile = FindNearestHostile(pawn, radius: 80f);
 						if (hostile != null && !hostile.Dead && hostile.Map == pawn.Map && hostile.Faction != pawn.Faction)
+						{
 							return JobMaker.MakeJob(JobDefOf.AttackStatic, hostile);
+						}
+
+						pawn.jobs?.StopAll(true);
 
 						// Movement fallback so it doesn't freeze; don't lock patient since someone else owns it.
 						ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
 						IntVec3 spotFallback = FindBestTendSpot(pawn, patient, radius: 6f);
 						return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, spotFallback);
+
+						pawn.jobs?.StopAll(true);
 					}
 
-					pawn.jobs?.StopAll(true);
+					return null;
 				}
 
-				return null;
-			}
-
-			// For combat medics: if hostiles are present and we don't have an active medical job,
-			// don't yield into "wait/haul" gaps while the patient is downed/urgent.
-			if (ArgrillianMedicalState.MedicTickCache.ShouldWait(pawn, minJobSwitchCooldownTicks))
-			{
-				// HARD FIX: never allow the medic to "settle" into stand/wait due to ShouldWait
-				// while the target is downed/urgent. Under lag, just re-steer into the
-				// medical-adjacent pipeline (keep current medical job if valid, otherwise re-go).
-				if (combatMedic && (patient.Downed || patientUrgent))
+				// For combat medics: if hostiles are present and we don't have an active medical job,
+				// don't yield into "wait/haul" gaps while the patient is downed/urgent.
+				if (ArgrillianMedicalState.MedicTickCache.ShouldWait(pawn, minJobSwitchCooldownTicks))
 				{
-					if (pawn.CurJob != null && pawn.CurJob.def != null &&
-						ArgillianThreatPatientTuning.JobIsMedicalForPatient(pawn.CurJob, patient))
+					// HARD FIX: never allow the medic to "settle" into stand/wait due to ShouldWait
+					// while the target is downed/urgent. Under lag, just re-steer into the
+					// medical-adjacent pipeline (keep current medical job if valid, otherwise re-go).
+					if (combatMedic && (patient.Downed || patientUrgent))
 					{
-						return pawn.CurJob;
+						if (pawn.CurJob != null && pawn.CurJob.def != null &&
+							ArgillianThreatPatientTuning.JobIsMedicalForPatient(pawn.CurJob, patient))
+						{
+							return pawn.CurJob;
+						}
+
+						// Re-issue intent by forcing a tend-spot re-goto instead of returning null.
+						// Also lock/hold the patient so queued medicine/haul intents can't pull the medic away.
+						LockPatientToMedic(pawn, patient);
+						TryStopPatientToAllowTend(patient);
+
+						ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
+						IntVec3 spot = FindBestTendSpot(pawn, patient, radius: hostilesPresent ? 6f : 10f);
+						return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, spot);
 					}
 
-					// Re-issue intent by forcing a tend-spot re-goto instead of returning null.
-					// Also lock/hold the patient so queued medicine/haul intents can't pull the medic away.
-					LockPatientToMedic(pawn, patient);
+					// Non-medical cases: keep the original cooldown behavior.
+					if (!(combatMedic && (patient.Downed || patientUrgent) && (pawn.CurJob == null || !ArgillianThreatPatientTuning.JobIsMedicalForPatient(pawn.CurJob, patient))))
+						return null;
+				}
+
+				bool patientInterferingNow = patient.Downed && IsInterferingJobForTend(patient);
+
+				// If we can't do medical right now and hostiles are present,
+				// switch to fighting instead of letting regular jobs (like hauling) take over.
+				// NOTE: do not interrupt if we're carrying the patient.
+				if (combatMedic && hostilesPresent && !patient.Downed && !patientUrgent && !canTendNow(pawn, patient) && GetCarriedPawn(pawn) == null)
+				{
+					if (pawn.CurJob != null)
+					{
+						JobDef curDef = pawn.CurJob.def;
+						bool isTendOrRescue = curDef == JobDefOf.TendPatient || curDef == JobDefOf.Rescue;
+
+						if (!isTendOrRescue)
+							pawn.jobs?.StopAll(true);
+					}
+
+					Pawn hostile = FindNearestHostile(pawn, radius: 80f);
+					if (hostile != null && !hostile.Dead && hostile.Map == pawn.Map && hostile.Faction != pawn.Faction)
+						return JobMaker.MakeJob(JobDefOf.AttackStatic, hostile);
+
+					return null;
+				}
+
+				if (combatMedic && patient.Downed)
+				{
+					bool committed = ArgrillianMedicalState.RescueCommitCooldownCache.RecentlyCommitted(pawn, patient, combatMedicRescueAttemptCooldownTicks);
+					if (committed)
+					{
+						if (pawn.CurJob != null)
+						{
+							Pawn curPatient = ArgillianThreatPatientTuning.GetPatientFromJob(pawn.CurJob);
+
+							bool keep =
+								(pawn.CurJob.def == JobDefOf.Rescue) ||
+								(pawn.CurJob.def == JobDefOf.TendPatient) ||
+								(IsMoveLikeJob(pawn.CurJob) && curPatient == patient);
+
+							if (keep)
+								return pawn.CurJob;
+						}
+
+						pawn.jobs?.StopAll(true);
+
+						ArgrillianMedicalState.RescueCommitCooldownCache.MarkCommit(pawn, patient);
+						ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
+
+						return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, patient.Position);
+					}
+				}
+
+				// If medic already has Tend/Rescue for our chosen patient, allow your urgent stop behavior.
+				if (combatMedic && pawn.CurJob != null)
+				{
+					JobDef def = pawn.CurJob.def;
+					Pawn curPatient = ArgillianThreatPatientTuning.GetPatientFromJob(pawn.CurJob);
+
+					bool medicOnOurPatient =
+						(def == JobDefOf.TendPatient || def == JobDefOf.Rescue) &&
+						curPatient == patient;
+
+					if (medicOnOurPatient)
+					{
+						// LOCK FIX: keep the patient from running queued jobs until medic finishes.
+						LockPatientToMedic(pawn, patient);
+
+						// Keep existing targeted logic too (helps for some edge job types).
+						if (stopPatientWhenUrgent && patientUrgent)
+						{
+							if (patient.Downed)
+								TryStopPatientToAllowTend(patient);
+							else
+								TryStopPatientToAllowTendIfUrgentNonDowned(patient);
+						}
+						else if (patient.Downed && patientInterferingNow)
+						{
+							TryStopPatientToAllowTend(patient);
+						}
+
+						return pawn.CurJob;
+					}
+				}
+
+				if (patientInterferingNow)
+				{
+					// Stop patient so medic can complete tend/rescue.
 					TryStopPatientToAllowTend(patient);
+					LockPatientToMedic(pawn, patient);
 
 					ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
 					IntVec3 spot = FindBestTendSpot(pawn, patient, radius: hostilesPresent ? 6f : 10f);
 					return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, spot);
 				}
 
-				// Non-medical cases: keep the original cooldown behavior.
-				if (!(combatMedic && (patient.Downed || patientUrgent) && (pawn.CurJob == null || !ArgillianThreatPatientTuning.JobIsMedicalForPatient(pawn.CurJob, patient))))
-					return null;
-			}
+				if (combatMedic && IsInterferingJobForTend(patient) && stopPatientWhenUrgent)
+				{
+					TryStopPatientToAllowTend(patient);
+					LockPatientToMedic(pawn, patient);
 
-			bool patientInterferingNow = patient.Downed && IsInterferingJobForTend(patient);
+					ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
 
-			// If we can't do medical right now and hostiles are present,
-			// switch to fighting instead of letting regular jobs (like hauling) take over.
-			// NOTE: do not interrupt if we're carrying the patient.
-			if (combatMedic && hostilesPresent && !patient.Downed && !patientUrgent && !canTendNow(pawn, patient) && GetCarriedPawn(pawn) == null)
-			{
+					IntVec3 spot = FindBestTendSpot(pawn, patient, radius: hostilesPresent ? 6f : 10f);
+					return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, spot);
+				}
+
 				if (pawn.CurJob != null)
 				{
-					JobDef curDef = pawn.CurJob.def;
-					bool isTendOrRescue = curDef == JobDefOf.TendPatient || curDef == JobDefOf.Rescue;
+					if (pawn.CurJob.def == JobDefOf.Rescue || pawn.CurJob.def == JobDefOf.TendPatient)
+					{
+						if (!IsJobRelevantToCombatMedicUrgent(pawn.CurJob, patient))
+							return null;
+					}
 
-					if (!isTendOrRescue)
+					if (!IsJobTargetValidForPatient(pawn.CurJob, patient))
 						pawn.jobs?.StopAll(true);
 				}
 
-				Pawn hostile = FindNearestHostile(pawn, radius: 80f);
-				if (hostile != null && !hostile.Dead && hostile.Map == pawn.Map && hostile.Faction != pawn.Faction)
-					return JobMaker.MakeJob(JobDefOf.AttackStatic, hostile);
-
-				return null;
-			}
-
-			if (combatMedic && patient.Downed)
-			{
-				bool committed = ArgrillianMedicalState.RescueCommitCooldownCache.RecentlyCommitted(pawn, patient, combatMedicRescueAttemptCooldownTicks);
-				if (committed)
+				// Hard-gate: while target is downed, combat medics shouldn't drift into medicine/haul jobs.
+				// FIX: even during Tend-task stickiness, DO NOT allow medicine-fetch to keep them away from a downed patient.
+				if (combatMedic && patient.Downed && pawn.CurJob != null && pawn.CurJob.def != null)
 				{
-					if (pawn.CurJob != null)
+					bool alreadyOnMedicalForPatient =
+						(pawn.CurJob.def == JobDefOf.Rescue || pawn.CurJob.def == JobDefOf.TendPatient) &&
+						ArgillianThreatPatientTuning.JobIsMedicalForPatient(pawn.CurJob, patient);
+
+					if (!alreadyOnMedicalForPatient)
 					{
-						Pawn curPatient = ArgillianThreatPatientTuning.GetPatientFromJob(pawn.CurJob);
+						bool curIsMedicineFetch = IsMedicineFetchJob(pawn.CurJob);
+						bool curIsHaulOrGrab = IsHaulJob(pawn.CurJob) || IsMealOrConsumeLikeJob(pawn.CurJob) || pawn.CurJob.def.defName == "ConsumeMeal";
 
-						bool keep =
-							(pawn.CurJob.def == JobDefOf.Rescue) ||
-							(pawn.CurJob.def == JobDefOf.TendPatient) ||
-							(IsMoveLikeJob(pawn.CurJob) && curPatient == patient);
+						// If the medic is downed-patient-active, immediately interrupt any medicine-fetch/haul drift.
+						// This prevents: tending one target -> next downed target -> stuck hauling wood + queued medicine miles away.
+						if (curIsMedicineFetch || curIsHaulOrGrab)
+						{
+							// Keep commitment stable and stop any queued “go get medicine” loops from taking over.
+							LockPatientToMedic(pawn, patient);
+							TryStopPatientToAllowTend(patient);
 
-						if (keep)
-							return pawn.CurJob;
+							pawn.jobs?.StopAll(true);
+							ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
+
+							// Head back to the patient; next logic will choose Rescue/Tend as appropriate
+							// (downed flow does not need medicine to be fetched far away).
+							return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, patient.Position);
+						}
+					}
+				}
+
+				// Downed rescue flow
+				if (patient.Downed)
+				{
+					bool canTouch = pawn.CanReach(patient, PathEndMode.Touch, Danger.Some);
+
+					bool interferingNow = combatMedic && IsInterferingJobForTend(patient);
+
+					bool patientIsTryingToMove = (patient.CurJob != null && (IsMoveLikeJob(patient.CurJob) || IsCrawlLikeJob(patient.CurJob)));
+
+					bool patientIsRestingState = patient.CurJob != null && patient.CurJob.def != null && (patient.CurJob.def == JobDefOf.LayDown || patient.CurJob.def == JobDefOf.Wait);
+
+					int rescueRequiredStableTicks = combatMedic ? combatMedicRescueStableTicksRequired : patientStableTicksRequired;
+					int requiredStableTicksForThisAttempt = (combatMedic && (patientIsTryingToMove || patientIsRestingState)) ? 0 : rescueRequiredStableTicks;
+
+					bool stableForRescue = requiredStableTicksForThisAttempt <= 0 || ArgillianThreatPatientTuning.PatientStabilityCache.IsStableFor(patient, requiredStableTicksForThisAttempt);
+
+					bool canRescue = canTouch && ((!interferingNow) || patientIsTryingToMove) && (stableForRescue || (combatMedic && patientIsTryingToMove));
+
+					if (combatMedic && canRescue)
+					{
+						bool recentlyAttempted = ArgrillianMedicalState.RescueAttemptCooldownCache.RecentlyAttempted(
+							pawn, patient, combatMedicRescueAttemptCooldownTicks);
+
+						if (recentlyAttempted)
+						{
+							canRescue = false;
+						}
 					}
 
-					pawn.jobs?.StopAll(true);
+					// EARLY redirect (fix rescue ping-pong):
+					// If the downed patient is already in bed (typically LayDown), don't start a new Rescue job.
+					// Instead, switch to Tend so we don't bounce hospital-bed <-> home-bed via bed re-selection.
+					if (combatMedic && patient.InBed() && (patient.CurJob != null && patient.CurJob.def == JobDefOf.LayDown))
+					{
+						// If we can Tend right now, do it immediately (keeps commitment stable and avoids Rescue loops).
+						if (canTendNow(pawn, patient))
+						{
+							LockPatientToMedic(pawn, patient);
+
+							pawn.jobs?.StopAll(true);
+							ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
+							ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn);
+
+							var tendJob = JobMaker.MakeJob(JobDefOf.TendPatient, patient);
+							Thing medNow = FindBestMedicineForTend(pawn, patient, hostilesPresent ? 6f : 10f);
+							if (medNow != null)
+							{
+								tendJob.targetB = medNow;
+							}
+
+							return tendJob;
+						}
+					}
+
+					if (combatMedic && canRescue)
+					{
+						ArgrillianMedicalState.RescueCommitCooldownCache.MarkCommit(pawn, patient);
+					}
+
+					if (canRescue)
+					{
+						// lock the patient as soon as we're committing to rescue/tend
+						if (combatMedic)
+							LockPatientToMedic(pawn, patient);
+
+						Building_Bed bestBed = null;
+
+						if (combatMedic)
+						{
+							bestBed = GetCachedRescueBedForPatient(patient);
+
+							// If cached bed can't be reserved anymore, clear and recompute.
+							if (bestBed != null && !CanReserveThingForPatient(pawn, bestBed, patient))
+							{
+								bestBed = null;
+							}
+						}
+
+						if (bestBed == null)
+						{
+							bestBed = FindBestBedFor(pawn, patient);
+						}
+
+						if (bestBed == null)
+						{
+							ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
+							if (combatMedic)
+							{
+								LockPatientToMedic(pawn, patient);
+							}
+
+							return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, patient.Position);
+						}
+
+						bool canReserveBed = CanReserveThingForPatient(pawn, bestBed, patient);
+						if (canReserveBed)
+						{
+							pawn.jobs?.StopAll(true);
+
+							if (combatMedic)
+							{
+								CacheRescueBedForPatient(patient, bestBed);
+
+								// Keep patient locked even before the actual Rescue job starts.
+								LockPatientToMedic(pawn, patient);
+								TryStopPatientToAllowTend(patient);
+							}
+
+							ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
+							ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn);
+
+							ArgrillianMedicalState.RescueAttemptCooldownCache.MarkAttempt(pawn, patient);
+							ArgrillianMedicalState.RescueCommitCooldownCache.MarkCommit(pawn, patient);
+
+							var rescueJob = JobMaker.MakeJob(JobDefOf.Rescue, patient, bestBed);
+							rescueJob.count = 1;
+							return rescueJob;
+						}
+					}
+
+					ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
+
+					if (pawn.CurJob != null && IsRescueLikeJob(pawn.CurJob))
+						return pawn.CurJob;
 
 					ArgrillianMedicalState.RescueCommitCooldownCache.MarkCommit(pawn, patient);
-					ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
+
+					if (combatMedic)
+					{
+						LockPatientToMedic(pawn, patient);
+					}
 
 					return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, patient.Position);
 				}
-			}
 
-			// If medic already has Tend/Rescue for our chosen patient, allow your urgent stop behavior.
-			if (combatMedic && pawn.CurJob != null)
-			{
-				JobDef def = pawn.CurJob.def;
-				Pawn curPatient = ArgillianThreatPatientTuning.GetPatientFromJob(pawn.CurJob);
-
-				bool medicOnOurPatient =
-					(def == JobDefOf.TendPatient || def == JobDefOf.Rescue) &&
-					curPatient == patient;
-
-				if (medicOnOurPatient)
+				// Urgent tending flow
+				if (patientUrgent)
 				{
-					// LOCK FIX: keep the patient from running queued jobs until medic finishes.
-					LockPatientToMedic(pawn, patient);
-
-					// Keep existing targeted logic too (helps for some edge job types).
-					if (stopPatientWhenUrgent && patientUrgent)
-					{
-						if (patient.Downed)
-							TryStopPatientToAllowTend(patient);
-						else
-							TryStopPatientToAllowTendIfUrgentNonDowned(patient);
-					}
-					else if (patient.Downed && patientInterferingNow)
-					{
-						TryStopPatientToAllowTend(patient);
-					}
-
-					return pawn.CurJob;
-				}
-			}
-
-			if (patientInterferingNow)
-			{
-				// Stop patient so medic can complete tend/rescue.
-				TryStopPatientToAllowTend(patient);
-				LockPatientToMedic(pawn, patient);
-
-				ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
-				IntVec3 spot = FindBestTendSpot(pawn, patient, radius: hostilesPresent ? 6f : 10f);
-				return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, spot);
-			}
-
-			if (combatMedic && IsInterferingJobForTend(patient) && stopPatientWhenUrgent)
-			{
-				TryStopPatientToAllowTend(patient);
-				LockPatientToMedic(pawn, patient);
-
-				ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
-
-				IntVec3 spot = FindBestTendSpot(pawn, patient, radius: hostilesPresent ? 6f : 10f);
-				return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, spot);
-			}
-
-			if (pawn.CurJob != null)
-			{
-				if (pawn.CurJob.def == JobDefOf.Rescue || pawn.CurJob.def == JobDefOf.TendPatient)
-				{
-					if (!IsJobRelevantToCombatMedicUrgent(pawn.CurJob, patient))
-						return null;
-				}
-
-				if (!IsJobTargetValidForPatient(pawn.CurJob, patient))
-					pawn.jobs?.StopAll(true);
-			}
-
-			// Hard-gate: while target is downed, combat medics shouldn't drift into medicine/haul jobs.
-			// FIX: even during Tend-task stickiness, DO NOT allow medicine-fetch to keep them away from a downed patient.
-			// For downed patients, redirect immediately so the medic can Rescue/Tend without being pulled to home-base medicine.
-			if (combatMedic && patient.Downed && pawn.CurJob != null && pawn.CurJob.def != null)
-			{
-				bool alreadyOnMedicalForPatient =
-					(pawn.CurJob.def == JobDefOf.Rescue || pawn.CurJob.def == JobDefOf.TendPatient) &&
-					ArgillianThreatPatientTuning.JobIsMedicalForPatient(pawn.CurJob, patient);
-
-				if (!alreadyOnMedicalForPatient)
-				{
-					bool curIsMedicineFetch = IsMedicineFetchJob(pawn.CurJob);
-					bool curIsHaulOrGrab = IsHaulJob(pawn.CurJob) || IsMealOrConsumeLikeJob(pawn.CurJob) || pawn.CurJob.def.defName == "ConsumeMeal";
-
-					// If the medic is downed-patient-active, immediately interrupt any medicine-fetch/haul drift.
-					// This prevents: tending one target -> next downed target -> stuck hauling wood + queued medicine miles away.
-					if (curIsMedicineFetch || curIsHaulOrGrab)
-					{
-						// Keep commitment stable and stop any queued “go get medicine” loops from taking over.
-						LockPatientToMedic(pawn, patient);
-						TryStopPatientToAllowTend(patient);
-
-						pawn.jobs?.StopAll(true);
-						ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
-
-						// Head back to the patient; next logic will choose Rescue/Tend as appropriate
-						// (downed flow does not need medicine to be fetched far away).
-						return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, patient.Position);
-					}
-				}
-			}
-
-			// Downed rescue flow
-			if (patient.Downed)
-			{
-				bool canTouch = pawn.CanReach(patient, PathEndMode.Touch, Danger.Some);
-
-				bool interferingNow = combatMedic && IsInterferingJobForTend(patient);
-
-				bool patientIsTryingToMove = (patient.CurJob != null && (IsMoveLikeJob(patient.CurJob) || IsCrawlLikeJob(patient.CurJob)));
-
-				bool patientIsRestingState = patient.CurJob != null && patient.CurJob.def != null && (patient.CurJob.def == JobDefOf.LayDown || patient.CurJob.def == JobDefOf.Wait);
-
-				int rescueRequiredStableTicks = combatMedic ? combatMedicRescueStableTicksRequired : patientStableTicksRequired;
-				int requiredStableTicksForThisAttempt = (combatMedic && (patientIsTryingToMove || patientIsRestingState)) ? 0 : rescueRequiredStableTicks;
-
-				bool stableForRescue = requiredStableTicksForThisAttempt <= 0 || ArgillianThreatPatientTuning.PatientStabilityCache.IsStableFor(patient, requiredStableTicksForThisAttempt);
-
-				bool canRescue = canTouch && ((!interferingNow) || patientIsTryingToMove) && (stableForRescue || (combatMedic && patientIsTryingToMove));
-
-				if (combatMedic && canRescue)
-				{
-					bool recentlyAttempted = ArgrillianMedicalState.RescueAttemptCooldownCache.RecentlyAttempted(
-						pawn, patient, combatMedicRescueAttemptCooldownTicks);
-
-					if (recentlyAttempted)
-					{
-						canRescue = false;
-					}
-				}
-
-				// EARLY redirect (fix rescue ping-pong):
-				// If the downed patient is already in bed (typically LayDown), don't start a new Rescue job.
-				// Instead, switch to Tend so we don't bounce hospital-bed <-> home-bed via bed re-selection.
-				if (combatMedic && patient.InBed() && (patient.CurJob != null && patient.CurJob.def == JobDefOf.LayDown))
-				{
-					// If we can Tend right now, do it immediately (keeps commitment stable and avoids Rescue loops).
 					if (canTendNow(pawn, patient))
 					{
-						LockPatientToMedic(pawn, patient);
+						// If the patient is standing but has decided to go fetch medicine,
+						// stop that immediately so the medic can tend without "dragging" into patient-medicine pathing.
+						// (This targets the "medic gets stuck moving to injured pawn that was going to get medicine" loop.)
+						if (combatMedic && stopPatientWhenUrgent && !patient.Downed)
+						{
+							if (patient.CurJob != null && patient.CurJob.def != null && IsMedicineFetchJob(patient.CurJob))
+							{
+								TryStopPatientToAllowTend(patient);
+							}
+							else
+							{
+								TryStopPatientToAllowTendIfUrgentNonDowned(patient);
+							}
+						}
 
-						pawn.jobs?.StopAll(true);
+						// lock patient before switching to Tend
+						if (combatMedic)
+						{
+							LockPatientToMedic(pawn, patient);
+
+							int requiredStable = hostilesPresent ? Mathf.Min(patientStableTicksRequired, 6) : patientStableTicksRequired;
+
+							if (!ArgillianThreatPatientTuning.PatientStabilityCache.IsStableFor(patient, requiredStable))
+							{
+								IntVec3 spot = FindBestTendSpot(pawn, patient, radius: hostilesPresent ? 6f : 10f);
+								ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
+								return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, spot);
+							}
+
+							if (combatMedic && stopPatientWhenUrgent && !patient.Downed)
+							{
+								// Patient was already forced to stop above if it was on medicine-fetch.
+								// Keep this gate for other non-downed urgent interruptions.
+								TryStopPatientToAllowTendIfUrgentNonDowned(patient);
+							}
+
+							pawn.jobs?.StopAll(true);
+
+							ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
+							ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn);
+
+							var tendJob = JobMaker.MakeJob(JobDefOf.TendPatient, patient);
+							Thing medNow = FindBestMedicineForTend(pawn, patient, hostilesPresent ? 6f : 10f);
+							if (medNow != null)
+							{
+								tendJob.targetB = medNow;
+							}
+
+							return tendJob;
+						}
+					}
+
+					// ... keep the rest unchanged
+				}
+
+				// Non-urgent
+				if (canTendNow(pawn, patient))
+				{
+					bool recentlyStickingToTendTask2 = ArgrillianMedicalState.MedicTendTaskStickiness.RecentlyTookTendTask(pawn, tendTaskStickinessTicks);
+
+					if (patient.Downed && IsInterferingJobForTend(patient))
+					{
+						TryStopPatientToAllowTend(patient);
+
+						if (combatMedic)
+						{
+							LockPatientToMedic(pawn, patient);
+						}
+
+						ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
+						return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, patient.Position);
+					}
+
+					if (recentlyStickingToTendTask2 || !hostilesPresent || combatMedic)
+					{
+						if (combatMedic)
+						{
+							LockPatientToMedic(pawn, patient);
+						}
+
+						if (combatMedic && stopPatientWhenUrgent && !patient.Downed)
+						{
+							TryStopPatientToAllowTendIfChasingOrAttacking(patient);
+						}
+
+						if (stopPatientWhenUrgent && patient.Downed)
+						{
+							TryStopPatientToAllowTend(patient);
+						}
+
 						ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
 						ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn);
 
@@ -5356,205 +5577,22 @@ namespace ArgrillianThreat
 					}
 				}
 
-				if (combatMedic && canRescue)
-				{
-					ArgrillianMedicalState.RescueCommitCooldownCache.MarkCommit(pawn, patient);
-				}
-
-				if (canRescue)
-				{
-					// lock the patient as soon as we're committing to rescue/tend
-					if (combatMedic)
-						LockPatientToMedic(pawn, patient);
-
-					Building_Bed bestBed = null;
-
-					if (combatMedic)
-					{
-						bestBed = GetCachedRescueBedForPatient(patient);
-
-						// If cached bed can't be reserved anymore, clear and recompute.
-						if (bestBed != null && !CanReserveThingForPatient(pawn, bestBed, patient))
-						{
-							bestBed = null;
-						}
-					}
-
-					if (bestBed == null)
-					{
-						bestBed = FindBestBedFor(pawn, patient);
-					}
-
-					if (bestBed == null)
-					{
-						ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
-						if (combatMedic)
-						{
-							LockPatientToMedic(pawn, patient);
-						}
-
-						return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, patient.Position);
-					}
-
-					bool canReserveBed = CanReserveThingForPatient(pawn, bestBed, patient);
-					if (canReserveBed)
-					{
-						pawn.jobs?.StopAll(true);
-
-						if (combatMedic)
-						{
-							CacheRescueBedForPatient(patient, bestBed);
-
-							// Keep patient locked even before the actual Rescue job starts.
-							LockPatientToMedic(pawn, patient);
-							TryStopPatientToAllowTend(patient);
-						}
-
-						ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
-						ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn);
-
-						ArgrillianMedicalState.RescueAttemptCooldownCache.MarkAttempt(pawn, patient);
-						ArgrillianMedicalState.RescueCommitCooldownCache.MarkCommit(pawn, patient);
-
-						var rescueJob = JobMaker.MakeJob(JobDefOf.Rescue, patient, bestBed);
-						rescueJob.count = 1;
-						return rescueJob;
-					}
-				}
+				if (hostilesPresent && !combatMedic) return null;
 
 				ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
-
-				if (pawn.CurJob != null && IsRescueLikeJob(pawn.CurJob))
-					return pawn.CurJob;
-
-				ArgrillianMedicalState.RescueCommitCooldownCache.MarkCommit(pawn, patient);
 
 				if (combatMedic)
 				{
 					LockPatientToMedic(pawn, patient);
 				}
 
-				return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, patient.Position);
+				IntVec3 nonUrgentSpot = FindBestTendSpot(pawn, patient, radius: hostilesPresent ? 6f : 10f);
+				return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, nonUrgentSpot);
 			}
 
-			// Urgent tending flow
-			if (patientUrgent)
-			{
-				if (canTendNow(pawn, patient))
-				{
-					// If the patient is standing but has decided to go fetch medicine,
-					// stop that immediately so the medic can tend without "dragging" into patient-medicine pathing.
-					// (This targets the "medic gets stuck moving to injured pawn that was going to get medicine" loop.)
-					if (combatMedic && stopPatientWhenUrgent && !patient.Downed)
-					{
-						if (patient.CurJob != null && patient.CurJob.def != null && IsMedicineFetchJob(patient.CurJob))
-						{
-							TryStopPatientToAllowTend(patient);
-						}
-						else
-						{
-							TryStopPatientToAllowTendIfUrgentNonDowned(patient);
-						}
-					}
-
-					// lock patient before switching to Tend
-					if (combatMedic)
-						LockPatientToMedic(pawn, patient);
-
-					int requiredStable = hostilesPresent ? Mathf.Min(patientStableTicksRequired, 6) : patientStableTicksRequired;
-
-					if (!ArgillianThreatPatientTuning.PatientStabilityCache.IsStableFor(patient, requiredStable))
-					{
-						IntVec3 spot = FindBestTendSpot(pawn, patient, radius: hostilesPresent ? 6f : 10f);
-						ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
-						return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, spot);
-					}
-
-					if (combatMedic && stopPatientWhenUrgent && !patient.Downed)
-					{
-						// Patient was already forced to stop above if it was on medicine-fetch.
-						// Keep this gate for other non-downed urgent interruptions.
-						TryStopPatientToAllowTendIfUrgentNonDowned(patient);
-					}
-
-					pawn.jobs?.StopAll(true);
-
-					ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
-					ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn);
-
-					var tendJob = JobMaker.MakeJob(JobDefOf.TendPatient, patient);
-					Thing medNow = FindBestMedicineForTend(pawn, patient, hostilesPresent ? 6f : 10f);
-					if (medNow != null)
-					{
-						tendJob.targetB = medNow;
-					}
-
-					return tendJob;
-				}
-
-				// ... keep the rest unchanged
-			}
-
-			// Non-urgent
-			if (canTendNow(pawn, patient))
-			{
-				bool recentlyStickingToTendTask2 = ArgrillianMedicalState.MedicTendTaskStickiness.RecentlyTookTendTask(pawn, tendTaskStickinessTicks);
-
-				if (patient.Downed && IsInterferingJobForTend(patient))
-				{
-					TryStopPatientToAllowTend(patient);
-
-					if (combatMedic)
-					{
-						LockPatientToMedic(pawn, patient);
-					}
-
-					ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
-					return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, patient.Position);
-				}
-
-				if (recentlyStickingToTendTask2 || !hostilesPresent || combatMedic)
-				{
-					if (combatMedic)
-					{
-						LockPatientToMedic(pawn, patient);
-					}
-
-					if (combatMedic && stopPatientWhenUrgent && !patient.Downed)
-					{
-						TryStopPatientToAllowTendIfChasingOrAttacking(patient);
-					}
-
-					if (stopPatientWhenUrgent && patient.Downed)
-					{
-						TryStopPatientToAllowTend(patient);
-					}
-
-					ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
-					ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn);
-
-					var tendJob = JobMaker.MakeJob(JobDefOf.TendPatient, patient);
-					Thing medNow = FindBestMedicineForTend(pawn, patient, hostilesPresent ? 6f : 10f);
-					if (medNow != null)
-					{
-						tendJob.targetB = medNow;
-					}
-
-					return tendJob;
-				}
-			}
-
-			if (hostilesPresent && !combatMedic) return null;
-
-			ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
-
-			if (combatMedic)
-			{
-				LockPatientToMedic(pawn, patient);
-			}
-
-			IntVec3 nonUrgentSpot = FindBestTendSpot(pawn, patient, radius: hostilesPresent ? 6f : 10f);
-			return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, nonUrgentSpot);
+			// If we reach here, fall back to original end behavior.
+			// (This should normally be unreachable if the method's original logic was intact.)
+			return null;
 		}
 
 		private bool canTendNow(Pawn pawn, Pawn patient)
