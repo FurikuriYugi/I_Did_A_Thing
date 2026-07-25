@@ -1205,6 +1205,9 @@ namespace ArgrillianThreat
 			if (pawn == null || map == null)
 				return null;
 
+			CompArgrillianThreatSettings settings = pawn.GetComp<CompArgrillianThreatSettings>();
+			bool allowFinishOff = settings != null && settings.finishOff;
+
 			Pawn best = null;
 			float bestScore = float.NegativeInfinity;
 
@@ -1221,21 +1224,19 @@ namespace ArgrillianThreat
 					if (other.Dead)
 						continue;
 
+					// NEW: acquisition-level downed filter to prevent fight-mode anchors/hovering.
+					if (other.Downed && !allowFinishOff)
+						continue;
+
 					if (!other.HostileTo(pawn))
 						continue;
 
 					if (huntHumans && other.RaceProps != null && !other.RaceProps.Humanlike)
 						continue;
 
-					// We allow acquisition even if LOS is blocked.
-					// LOS just boosts score so pawns prefer what they can currently engage.
 					bool pawnSeen = GenSight.LineOfSight(other.Position, pawn.Position, map);
 					float d = other.Position.DistanceTo(pawn.Position);
 
-					// Prefer:
-					// - seen hostiles
-					// - closer hostiles
-					// - (small) tie-breaker to prefer more immediate/nearby targets
 					float score = (pawnSeen ? 150f : 50f) - d;
 
 					if (score > bestScore)
@@ -1313,6 +1314,12 @@ namespace ArgrillianThreat
 			if (victim == null || victim.Dead || map == null)
 				return null;
 
+			// Get finishOff from the *victim*'s settings proxy (victim AI uses same comp type).
+			// This method is used as “who is attacking victim”, and should also ignore downed attackers
+			// unless finishOff is enabled.
+			CompArgrillianThreatSettings settings = victim.GetComp<CompArgrillianThreatSettings>();
+			bool allowFinishOff = settings != null && settings.finishOff;
+
 			Pawn best = null;
 			float bestScore = float.NegativeInfinity;
 
@@ -1323,11 +1330,19 @@ namespace ArgrillianThreat
 
 				foreach (Thing t in c.GetThingList(map))
 				{
-					if (t is not Pawn other) continue;
-					if (other.Dead) continue;
-					if (!other.HostileTo(victim)) continue;
+					if (t is not Pawn other)
+						continue;
 
-					// Prefer seen attackers; otherwise closest attacker.
+					if (other.Dead)
+						continue;
+
+					// NEW: acquisition-level downed filter.
+					if (other.Downed && !allowFinishOff)
+						continue;
+
+					if (!other.HostileTo(victim))
+						continue;
+
 					bool victimSeen = GenSight.LineOfSight(other.Position, victim.Position, map);
 					float d = other.Position.DistanceTo(victim.Position);
 
