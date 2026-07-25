@@ -4852,7 +4852,38 @@ namespace ArgrillianThreat
 
 					// Only release if we're truly leaving the medical pipeline (no tend/rescue, no targeting held patient,
 					// and not in a recognized fetch/haul/consume job).
-					if (!stillOnTendOrRescue && !medicJobTargetsHeldPatient && !medicIsMedicineFetchOrHauling)
+					// ADD: also treat "move/approach/goto to held patient cell" as still-in-pipeline, even when targetA/targetB/targetC
+					// doesn't include the patient pawn anymore (the "queued standing waiting" case).
+					bool medicIsMovingToHeldPatientCell = false;
+					if (pawn.CurJob != null && pawn.CurJob.def != null)
+					{
+						string curDefName = pawn.CurJob.def.defName;
+						if (!string.IsNullOrEmpty(curDefName))
+							curDefName = curDefName.ToLowerInvariant();
+
+						if (pawn.CurJob.def == JobDefOf.Goto)
+						{
+							if (pawn.CurJob.targetA.IsValid && pawn.CurJob.targetA.Cell == heldPatient.Position)
+								medicIsMovingToHeldPatientCell = true;
+						}
+						else
+						{
+							if (curDefName != null)
+							{
+								if (curDefName.Contains("approach") || curDefName.Contains("move"))
+								{
+									if (pawn.CurJob.targetA.IsValid && pawn.CurJob.targetA.Cell == heldPatient.Position)
+										medicIsMovingToHeldPatientCell = true;
+									else if (pawn.CurJob.targetB.IsValid && pawn.CurJob.targetB.Cell == heldPatient.Position)
+										medicIsMovingToHeldPatientCell = true;
+									else if (pawn.CurJob.targetC.IsValid && pawn.CurJob.targetC.Cell == heldPatient.Position)
+										medicIsMovingToHeldPatientCell = true;
+								}
+							}
+						}
+					}
+
+					if (!stillOnTendOrRescue && !medicJobTargetsHeldPatient && !medicIsMedicineFetchOrHauling && !medicIsMovingToHeldPatientCell)
 					{
 						ArgrillianMedicalState.PatientMedicHold.ReleaseForMedic(pawn);
 					}
