@@ -4734,7 +4734,8 @@ namespace ArgrillianThreat
 			if (combatMedic)
 			{
 				Pawn heldPatient = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
-				bool holdActive = heldPatient != null;
+				bool holdActive = heldPatient != null && heldPatient == patient;
+
 				bool stillOnMedicalJob =
 					pawn.CurJob != null &&
 					pawn.CurJob.def != null &&
@@ -5418,7 +5419,6 @@ namespace ArgrillianThreat
 
 						if (bestBed == null)
 						{
-							ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
 							if (combatMedic)
 							{
 								LockPatientToMedic(pawn, patient);
