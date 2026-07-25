@@ -2936,6 +2936,17 @@ namespace ArgrillianThreat
 				}
 			);
 		}
+
+		public void ExposeData()
+		{
+			Scribe_Values.Look(ref isMedic, "isMedic", false);
+			Scribe_Values.Look(ref combatMedic, "combatMedic", false);
+			Scribe_Values.Look(ref assignedPawnThingID, "assignedPawnThingID", -1);
+
+			// Safety normalization: combat medic implies medic.
+			if (combatMedic)
+				isMedic = true;
+		}
 	}
 
 	// -----------------------------
