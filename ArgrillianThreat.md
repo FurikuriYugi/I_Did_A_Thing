@@ -4481,12 +4481,10 @@ namespace ArgrillianThreat
 		{
 			Map map = medic.Map;
 
-			// Finish Off toggle:
-			// OFF (default): ignore downed hostiles so they don't become movement/hover anchors.
-			bool allowFinishOff = false;
+			bool finishOff = false;
 			{
 				CompArgrillianThreatSettings s = medic.GetComp<CompArgrillianThreatSettings>();
-				allowFinishOff = s != null && s.finishOff;
+				finishOff = s != null && s.finishOff;
 			}
 
 			Pawn best = null;
@@ -4504,8 +4502,9 @@ namespace ArgrillianThreat
 					if (p.Dead) continue;
 					if (p.Faction == medic.Faction) continue;
 
-					// NEW: earlier ignore gate so downed hostiles can't become anchors for melee hover/reposition.
-					if (p.Downed && !allowFinishOff) continue;
+					// NEW: When Finish Off is false, downed hostiles must be ignored as hostile anchors
+					// so melee doesn't hover/reposition around them.
+					if (p.Downed && !finishOff) continue;
 
 					float d = medic.Position.DistanceTo(p.Position);
 					if (d < bestDist)
