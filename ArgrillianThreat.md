@@ -5446,34 +5446,25 @@ namespace ArgrillianThreat
 						pawn.jobs?.StopAll(true);
 				}
 
-				// Hard-gate: while target is downed, combat medics shouldn't drift into medicine/haul jobs.
 				// FIX: even during Tend-task stickiness, DO NOT allow medicine-fetch to keep them away from a downed patient.
+				// Hard-gate: while target is downed, combat medics shouldn't drift into medicine/haul jobs.
 				if (combatMedic && patient.Downed && pawn.CurJob != null && pawn.CurJob.def != null)
 				{
-					bool alreadyOnMedicalForPatient =
-						(pawn.CurJob.def == JobDefOf.Rescue || pawn.CurJob.def == JobDefOf.TendPatient) &&
-						ArgillianThreatPatientTuning.JobIsMedicalForPatient(pawn.CurJob, patient);
+					// If the medic is downed-patient-active, immediately interrupt any medicine-fetch/haul/consume drift.
+					// This prevents: tend/rescue -> job transition -> haul/eat -> stuck move loops.
+					bool curIsMedicineFetch = IsMedicineFetchJob(pawn.CurJob);
+					bool curIsHaulOrGrab = IsHaulJob(pawn.CurJob) || IsMealOrConsumeLikeJob(pawn.CurJob) || pawn.CurJob.def.defName == "ConsumeMeal";
 
-					if (!alreadyOnMedicalForPatient)
+					if (curIsMedicineFetch || curIsHaulOrGrab)
 					{
-						bool curIsMedicineFetch = IsMedicineFetchJob(pawn.CurJob);
-						bool curIsHaulOrGrab = IsHaulJob(pawn.CurJob) || IsMealOrConsumeLikeJob(pawn.CurJob) || pawn.CurJob.def.defName == "ConsumeMeal";
+						LockPatientToMedic(pawn, patient);
+						TryStopPatientToAllowTend(patient);
 
-						// If the medic is downed-patient-active, immediately interrupt any medicine-fetch/haul drift.
-						// This prevents: tending one target -> next downed target -> stuck hauling wood + queued medicine miles away.
-						if (curIsMedicineFetch || curIsHaulOrGrab)
-						{
-							// Keep commitment stable and stop any queued “go get medicine” loops from taking over.
-							LockPatientToMedic(pawn, patient);
-							TryStopPatientToAllowTend(patient);
+						pawn.jobs?.StopAll(true);
+						ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
 
-							pawn.jobs?.StopAll(true);
-							ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
-
-							// Head back to the patient; next logic will choose Rescue/Tend as appropriate
-							// (downed flow does not need medicine to be fetched far away).
-							return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, patient.Position);
-						}
+						// Head back to the patient; next logic will choose Rescue/Tend as appropriate.
+						return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, patient.Position);
 					}
 				}
 
