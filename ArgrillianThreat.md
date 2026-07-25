@@ -2834,10 +2834,8 @@ namespace ArgrillianThreat
 		public bool finishOff = false;
 		public bool huntHumans = false;
 
-		public void CompExposeData()
+		public void ExposeData()
 		{
-			base.CompExposeData();
-
 			Scribe_Values.Look(ref pursueAdvance, "pursueAdvance", true);
 			Scribe_Values.Look(ref guardFellowPawns, "guardFellowPawns", true);
 			Scribe_Values.Look(ref squadMode, "squadMode", false);
@@ -5761,7 +5759,7 @@ namespace ArgrillianThreat
 				// Non-urgent
 				if (canTendNow(pawn, patient))
 				{
-					bool combatMedic = pawn.GetComp<CompArgrillianMedicSettings>()?.combatMedic == true;
+					combatMedic = pawn.GetComp<CompArgrillianMedicSettings>()?.combatMedic == true;
 
 					// MEDIC FIX: if the patient became eligible, do not let the medic
 					// “stick” to an unrelated haul job (e.g., HaulToCell) and cause
