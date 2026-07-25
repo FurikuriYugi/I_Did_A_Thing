@@ -4969,76 +4969,27 @@ namespace ArgrillianThreat
 						!heldPatient.InBed() ||
 						heldHpPct <= 0.95f;
 
-					// HARD FORCE: if we have a held patient and they are tend-eligible/urgent,
-					// the medic must generate Rescue/Tend NOW instead of falling through to haul/utility.
-					if (heldPatient != null)
+					// If this medic can actually tend/rescue now, force the medical job.
+					// This prevents the utility layer from choosing haul/stockpile instead.
+					if (canTendNow(pawn, heldPatient))
 					{
-						float heldHpPct2 = heldPatient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
-
-						bool heldUrgent2 =
-							heldPatient.Downed ||
-							!heldPatient.InBed() ||
-							heldHpPct2 <= 0.95f;
-
-						if (heldUrgent2 && IsValidTendTarget(heldPatient, pawn))
-						{
-							if (heldPatient.Downed)
-							{
-								if (heldPatient.Position != pawn.Position)
-									return JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
-
-								return JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
-							}
-							else
-							{
-								if (heldPatient.Position != pawn.Position)
-									return JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
-
-								return JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
-							}
-						}
+						JobDef def = heldPatient.Downed ? JobDefOf.Rescue : JobDefOf.TendPatient;
+						return JobMaker.MakeJob(def, heldPatient);
 					}
 
-					bool committedToMedicalPipeline =
-						stillOnTendOrRescue ||
-						medicJobTargetsHeldPatient ||
-						medicIsMovingToHeldPatientCell;
-
-					// HARD FORCE / TAKEOVER:
-					// If we have a held patient and they are urgent (tend-eligible / downed), the medic MUST stay in the medical pipeline.
-					// Never return null in this window; return Tend/Rescue so haul/stockpile can't preempt.
-					bool medicIsMedicalNow =
-						pawn.CurJob != null &&
-						pawn.CurJob.def != null &&
-						(pawn.CurJob.def == JobDefOf.TendPatient || pawn.CurJob.def == JobDefOf.Rescue);
-
+					// If the held patient is urgent/downed but not tend-eligible *for this medic yet*,
+					// do NOT release the hold and do NOT return null (which would allow hauling).
+					// Keep the medic in medical pipeline until eligibility becomes true.
 					if (heldPatientUrgent)
-					{
-						// If we're not already on the medical job, force it.
-						if (!medicIsMedicalNow)
-						{
-							if (heldPatient.Downed)
-								return JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
+						return null;
 
-							return JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
-						}
-
-						// If already medical, keep as-is (no release, no null -> prevents utility from steering away).
-						return pawn.CurJob;
-					}
-					// Only release if we're truly leaving the medical pipeline (no tend/rescue, no targeting held patient,
-					// and not in a recognized fetch/haul/consume job).
-					// ADD: also treat "move/approach/goto to held patient cell" as still-in-pipeline, even when targetA/targetB/targetC
-					// doesn't include the patient pawn anymore (the "queued standing waiting" case).
+					// At this point the held patient is no longer urgent for this medic.
+					// Only then allow release (and avoid releasing if current job targets the patient).
 					if (!stillOnTendOrRescue &&
 						!medicJobTargetsHeldPatient &&
 						!medicIsMedicineFetchOrHauling &&
 						!medicIsMovingToHeldPatientCell)
 					{
-						// HARD: if the held patient is urgent (or downed), never release the hold.
-						if (heldPatientUrgent)
-							return null;
-
 						ArgrillianMedicalState.PatientMedicHold.ReleaseForMedic(pawn);
 					}
 				}
