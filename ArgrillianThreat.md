@@ -4910,6 +4910,24 @@ namespace ArgrillianThreat
 						}
 					}
 				}
+				else
+				{
+					// HOLD ACTIVE: if we accidentally drift into haul/meal/medicine-fetch,
+					// stop it and re-steer to the held patient instead of letting the utility layer run.
+					if (holdPatientForAntiDrift != null)
+					{
+						bool curIsHauling = IsHaulJob(pawn.CurJob) || IsMealOrConsumeLikeJob(pawn.CurJob) || IsMedicineFetchJob(pawn.CurJob);
+						if (curIsHauling)
+						{
+							pawn.jobs?.StopAll(true);
+							pawn.pather?.StopDead();
+							ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
+
+							// Keep commitment stable; next Tend/Rescue selection will kick in.
+							return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, holdPatientForAntiDrift.Position);
+						}
+					}
+				}
 			}
 
 			// If we're already tending/rescuing a valid *other* target, keep the commitment.
