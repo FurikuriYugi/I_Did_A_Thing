@@ -4947,9 +4947,8 @@ namespace ArgrillianThreat
 					// Previously we only treated (downed OR not in bed) as urgent, which released the hold too early
 					// for injured-but-embedded patients (in-bed, not downed) and triggered haul/move preemption loops.
 					// If the patient is still in the urgent pipeline state, we must keep the hold.
-					// But DO NOT let “urgent” block the medic from ever entering tend/rescue.
-					// Therefore: only use the urgency concept to prevent releases while the medic is already
-					// committed to the medical pipeline; otherwise, allow normal arbitration to pick up tend/rescue.
+					// But: if the held patient is downed, ALWAYS keep the hold.
+					// Otherwise the medic can drop medical commitment and utility can steer into haul/meal immediately.
 					float heldHpPct = heldPatient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
 
 					bool heldPatientUrgent =
@@ -4957,21 +4956,22 @@ namespace ArgrillianThreat
 						!heldPatient.InBed() ||
 						heldHpPct <= 0.95f;
 
-					// Only treat urgent as a “keep hold / prevent other jobs” reason when we are already committed.
+					// Only treat urgency as a “keep hold” blocker when we're already committed to the pipeline,
+					// BUT downed patients are an exception: downed => never release.
 					bool committedToMedicalPipeline =
 						stillOnTendOrRescue ||
 						medicJobTargetsHeldPatient ||
 						medicIsMovingToHeldPatientCell;
 
-					// Release only when we are leaving the medical pipeline.
-					// If the medic is NOT yet committed, don’t use urgency to block tend/rescue acquisition.
 					if (!stillOnTendOrRescue &&
 						!medicJobTargetsHeldPatient &&
 						!medicIsMedicineFetchOrHauling &&
 						!medicIsMovingToHeldPatientCell &&
 						(!committedToMedicalPipeline || !heldPatientUrgent))
 					{
-						ArgrillianMedicalState.PatientMedicHold.ReleaseForMedic(pawn);
+						// If downed, never release (hard stop against meal/haul takeover).
+						if (!heldPatient.Downed)
+							ArgrillianMedicalState.PatientMedicHold.ReleaseForMedic(pawn);
 					}
 				}
 			}
