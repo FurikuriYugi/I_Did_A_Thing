@@ -4957,8 +4957,12 @@ namespace ArgrillianThreat
 							}
 						}
 
-						// Tolerance: queued medical “stand waiting” positions often aren’t the exact patient cell.
-						medicIsMovingToHeldPatientCell = distFromTargetToHeld <= 2.0f;
+						// Tolerance: queued medical “stand waiting” positions and pathing targets
+						// often aren’t the exact patient cell. Also allow if we’re actively moving.
+						float distTolerance = 6.0f;
+						bool activelyMoving = pawn.pather != null && pawn.pather.Moving;
+
+						medicIsMovingToHeldPatientCell = distFromTargetToHeld <= distTolerance || (activelyMoving && distFromTargetToHeld <= 10.0f);
 					}
 
 					// UPDATED: if the patient is still medically urgent/tend-worthy, we must keep the hold.
