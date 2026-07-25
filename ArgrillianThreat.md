@@ -5615,7 +5615,11 @@ namespace ArgrillianThreat
 			}
 
 			// Normal (non-held) case keeps the distance gate.
-			return pawn.Position.DistanceTo(patient.Position) <= combatTendMaxDistance &&
+			// BUT for downed patients we should not require a tight positional distance;
+			// Rescue/Tend reachability is already validated by IsValidTendTarget(...).
+			bool distanceOk = patient.Downed ? true : pawn.Position.DistanceTo(patient.Position) <= combatTendMaxDistance;
+
+			return distanceOk &&
 				IsValidTendTarget(patient, pawn) &&
 				stableTicksOuter >= requiredStableTicksOuter &&
 				CanReserveTendTarget(pawn, patient);
