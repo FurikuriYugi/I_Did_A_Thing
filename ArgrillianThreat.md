@@ -5163,7 +5163,11 @@ namespace ArgrillianThreat
 			{
 				bool curIsMedicalForChosenPatient = ArgillianThreatPatientTuning.JobIsMedicalForPatient(pawn.CurJob, patient);
 
-				if (!curIsMedicalForChosenPatient && IsMedicineFetchJob(pawn.CurJob))
+				bool curIsHauling = IsHaulJob(pawn.CurJob);
+				bool curIsMealOrConsume = IsMealOrConsumeLikeJob(pawn.CurJob);
+				bool curIsMedicineFetch = IsMedicineFetchJob(pawn.CurJob);
+
+				if (!curIsMedicalForChosenPatient && (curIsMedicineFetch || curIsHauling || curIsMealOrConsume))
 				{
 					pawn.jobs?.StopAll(true);
 					ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
