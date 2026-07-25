@@ -2816,6 +2816,22 @@ namespace ArgrillianThreat
 		public bool finishOff = false;
 		public bool huntHumans = false;
 
+		public void CompPostMake()
+		{
+			//base.CompPostMake();
+		}
+
+		public void ExposeData()
+		{
+			//base.ExposeData();
+
+			Scribe_Values.Look(ref pursueAdvance, "pursueAdvance", true);
+			Scribe_Values.Look(ref guardFellowPawns, "guardFellowPawns", true);
+			Scribe_Values.Look(ref squadMode, "squadMode", false);
+			Scribe_Values.Look(ref finishOff, "finishOff", false);
+			Scribe_Values.Look(ref huntHumans, "huntHumans", false);
+		}
+
 		public override IEnumerable<Gizmo> CompGetGizmosExtra()
 		{
 			foreach (Gizmo g in base.CompGetGizmosExtra())
@@ -4876,10 +4892,14 @@ namespace ArgrillianThreat
 						if (!string.IsNullOrEmpty(curDefName))
 							curDefName = curDefName.ToLowerInvariant();
 
+						IntVec3 heldPos = heldPatient.Position;
+
+						float distFromTargetToHeld = float.PositiveInfinity;
+
 						if (pawn.CurJob.def == JobDefOf.Goto)
 						{
-							if (pawn.CurJob.targetA.IsValid && pawn.CurJob.targetA.Cell == heldPatient.Position)
-								medicIsMovingToHeldPatientCell = true;
+							if (pawn.CurJob.targetA.IsValid)
+								distFromTargetToHeld = pawn.CurJob.targetA.Cell.DistanceTo(heldPos);
 						}
 						else
 						{
@@ -4887,15 +4907,18 @@ namespace ArgrillianThreat
 							{
 								if (curDefName.Contains("approach") || curDefName.Contains("move"))
 								{
-									if (pawn.CurJob.targetA.IsValid && pawn.CurJob.targetA.Cell == heldPatient.Position)
-										medicIsMovingToHeldPatientCell = true;
-									else if (pawn.CurJob.targetB.IsValid && pawn.CurJob.targetB.Cell == heldPatient.Position)
-										medicIsMovingToHeldPatientCell = true;
-									else if (pawn.CurJob.targetC.IsValid && pawn.CurJob.targetC.Cell == heldPatient.Position)
-										medicIsMovingToHeldPatientCell = true;
+									if (pawn.CurJob.targetA.IsValid)
+										distFromTargetToHeld = pawn.CurJob.targetA.Cell.DistanceTo(heldPos);
+									else if (pawn.CurJob.targetB.IsValid)
+										distFromTargetToHeld = pawn.CurJob.targetB.Cell.DistanceTo(heldPos);
+									else if (pawn.CurJob.targetC.IsValid)
+										distFromTargetToHeld = pawn.CurJob.targetC.Cell.DistanceTo(heldPos);
 								}
 							}
 						}
+
+						// Tolerance: queued medical “stand waiting” positions often aren’t the exact patient cell.
+						medicIsMovingToHeldPatientCell = distFromTargetToHeld <= 2.0f;
 					}
 
 					if (!stillOnTendOrRescue && !medicJobTargetsHeldPatient && !medicIsMedicineFetchOrHauling && !medicIsMovingToHeldPatientCell)
