@@ -4947,8 +4947,9 @@ namespace ArgrillianThreat
 					// Previously we only treated (downed OR not in bed) as urgent, which released the hold too early
 					// for injured-but-embedded patients (in-bed, not downed) and triggered haul/move preemption loops.
 					// If the patient is still in the urgent pipeline state, we must keep the hold.
-					// But ONLY if the medic is already committed to the medical pipeline.
-					// Otherwise we prevent the medic from ever switching from combat into tend/rescue.
+					// But DO NOT let “urgent” block the medic from ever entering tend/rescue.
+					// Therefore: only use the urgency concept to prevent releases while the medic is already
+					// committed to the medical pipeline; otherwise, allow normal arbitration to pick up tend/rescue.
 					float heldHpPct = heldPatient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
 
 					bool heldPatientUrgent =
@@ -4956,10 +4957,19 @@ namespace ArgrillianThreat
 						!heldPatient.InBed() ||
 						heldHpPct <= 0.95f;
 
-					// Only treat "urgent" as a reason to keep the hold when we are already on/for the medical pipeline.
-					bool committedToMedicalPipeline = stillOnTendOrRescue || medicJobTargetsHeldPatient || medicIsMovingToHeldPatientCell;
+					// Only treat urgent as a “keep hold / prevent other jobs” reason when we are already committed.
+					bool committedToMedicalPipeline =
+						stillOnTendOrRescue ||
+						medicJobTargetsHeldPatient ||
+						medicIsMovingToHeldPatientCell;
 
-					if (!stillOnTendOrRescue && !medicJobTargetsHeldPatient && !medicIsMedicineFetchOrHauling && !medicIsMovingToHeldPatientCell && (!committedToMedicalPipeline || !heldPatientUrgent))
+					// Release only when we are leaving the medical pipeline.
+					// If the medic is NOT yet committed, don’t use urgency to block tend/rescue acquisition.
+					if (!stillOnTendOrRescue &&
+						!medicJobTargetsHeldPatient &&
+						!medicIsMedicineFetchOrHauling &&
+						!medicIsMovingToHeldPatientCell &&
+						(!committedToMedicalPipeline || !heldPatientUrgent))
 					{
 						ArgrillianMedicalState.PatientMedicHold.ReleaseForMedic(pawn);
 					}
