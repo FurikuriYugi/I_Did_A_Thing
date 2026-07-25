@@ -4832,21 +4832,28 @@ namespace ArgrillianThreat
 
 				if (heldPatient != null)
 				{
-					// Still doing Tend/Rescue for the held patient => keep hold.
 					bool stillOnTendOrRescue =
 						pawn.CurJob != null &&
 						pawn.CurJob.def != null &&
 						(pawn.CurJob.def == JobDefOf.TendPatient || pawn.CurJob.def == JobDefOf.Rescue);
 
-					// If the medic is drifting into medicine/haul while a hold is active,
-					// do NOT release the hold (downstream Tend/Rescue arbitration will interrupt and re-steer).
+					// Robust en-route detection: some mods/AI use Approach/GotoToCell/JobDriver variants
+					// whose JobDef isn't strictly JobDefOf.Goto.
+					bool medicTargetsHeldPatient =
+						(pawn.CurJob != null && pawn.CurJob.targetA != null && pawn.CurJob.targetA.Thing == heldPatient) ||
+						(pawn.CurJob != null && pawn.CurJob.targetB != null && pawn.CurJob.targetB.Thing == heldPatient);
+
+					bool medicIsEnRouteToPatient =
+						medicTargetsHeldPatient ||
+						(pawn.CurJob != null && pawn.CurJob.def != null && (pawn.CurJob.def == JobDefOf.Goto || pawn.CurJob.def == JobDefOf.Wait));
+
 					bool medicIsMedicineFetchOrHauling =
 						(pawn.CurJob != null && IsMedicineFetchJob(pawn.CurJob)) ||
 						(pawn.CurJob != null && IsHaulJob(pawn.CurJob)) ||
 						(pawn.CurJob != null && IsMealOrConsumeLikeJob(pawn.CurJob)) ||
 						(pawn.CurJob != null && pawn.CurJob.def != null && pawn.CurJob.def.defName == "ConsumeMeal");
 
-					if (!stillOnTendOrRescue && !medicIsMedicineFetchOrHauling)
+					if (!stillOnTendOrRescue && !medicIsEnRouteToPatient && !medicIsMedicineFetchOrHauling)
 					{
 						ArgrillianMedicalState.PatientMedicHold.ReleaseForMedic(pawn);
 					}
