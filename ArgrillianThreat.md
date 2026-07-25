@@ -3962,26 +3962,41 @@ namespace ArgrillianThreat
 				}
 			}
 
-			// Battlefield constraint:
-			// - Only consider medicine in the immediate patient area (short search).
-			// - Do NOT impose a hard medic-distance gate (medicine=null must not trigger far medicine-fetch routes).
-			// - Include medicine from nearby corpses (dropped/late-death timing can make forbidden unreliable).
-			//
-			// Anti-"no medicine nearby" tweak:
-			// Expand the effective radius floor a bit so tiny rounding gaps don't produce medicine=null
-			// under lag/standstill jitter, which then lets RimWorld fall back to long-range fetching.
-
 			IntVec3 patientCenter = patient.Position;
 
-			float effectiveRadius = Mathf.Max(radius, radius * 1.15f);
-			// Ensure a meaningful minimum during combat so we don’t frequently return null.
-			// (Still "immediate area": bounded, not long-range.)
-			if (effectiveRadius < 12f) effectiveRadius = 12f;
+			// Battlefield constraint:
+			// - immediate-area only
+			// - include medicine dropped/held by corpses in that area
+			// - ignore forbidden timing (corpse/body forbidden state can be unreliable under lag)
+			//
+			// Anti-"no medicine nearby" tweak:
+			// If we return null, RimWorld can fall back into longer-range medicine-fetch behavior.
+			// So we do a strictly bounded second pass if the first pass finds nothing.
+			float r1 = Mathf.Max(radius, radius * 1.15f);
+			if (r1 < 12f) r1 = 12f;
 
+			// Hard cap to keep this from becoming “long-range medicine-fetch”.
+			float rCap = 18f;
+			float r1Clamped = Mathf.Min(r1, rCap);
+
+			Thing best = FindBestLocalMedicineForTendInRadius(medic, map, patientCenter, r1Clamped);
+			if (best != null) return best;
+
+			// Second bounded pass (still immediate-ish, but more resilient to lag/rounding gaps).
+			// Keep it capped so it never becomes a long-range search.
+			float r2 = Mathf.Min(rCap, r1Clamped + 3f);
+			if (r2 > r1Clamped)
+				best = FindBestLocalMedicineForTendInRadius(medic, map, patientCenter, r2);
+
+			return best;
+		}
+
+		private Thing FindBestLocalMedicineForTendInRadius(Pawn medic, Map map, IntVec3 patientCenter, float radius)
+		{
 			float bestDist = float.PositiveInfinity;
 			Thing best = null;
 
-			foreach (IntVec3 c in GenRadial.RadialCellsAround(patientCenter, effectiveRadius, true))
+			foreach (IntVec3 c in GenRadial.RadialCellsAround(patientCenter, radius, true))
 			{
 				if (!c.InBounds(map) || c.Fogged(map)) continue;
 
