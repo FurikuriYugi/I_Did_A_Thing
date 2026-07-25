@@ -4899,130 +4899,46 @@ namespace ArgrillianThreat
 
 				if (heldPatient != null)
 				{
-					// Still doing Tend/Rescue for the held patient => keep hold.
-					bool stillOnTendOrRescue =
-						pawn.CurJob != null &&
-						pawn.CurJob.def != null &&
-						(pawn.CurJob.def == JobDefOf.TendPatient || pawn.CurJob.def == JobDefOf.Rescue);
+					// Hard invariant for combat medics:
+					// If we have a held pipeline patient, we MUST not fall through to vanilla “normal jobs”.
+					// We also MUST not release the hold inside this branch.
+					// Either we keep/continue Tend/Rescue, or we return a pinned medical Wait until canTendNow flips.
 
-					// Robust committed detection: if current job targets the held patient,
-					// we must not release even if job def is an approach/move variant.
-					bool medicJobTargetsHeldPatient =
-						pawn.CurJob != null &&
-						(
-							(pawn.CurJob.targetA.IsValid && pawn.CurJob.targetA.Thing == heldPatient) ||
-							(pawn.CurJob.targetB.IsValid && pawn.CurJob.targetB.Thing == heldPatient) ||
-							(pawn.CurJob.targetC.IsValid && pawn.CurJob.targetC.Thing == heldPatient)
-						);
-
-					bool medicIsMedicineFetchOrHauling =
-						(pawn.CurJob != null && IsMedicineFetchJob(pawn.CurJob)) ||
-						(pawn.CurJob != null && IsHaulJob(pawn.CurJob)) ||
-						(pawn.CurJob != null && IsMealOrConsumeLikeJob(pawn.CurJob)) ||
-						(pawn.CurJob != null && pawn.CurJob.def != null && pawn.CurJob.def.defName == "ConsumeMeal");
-
-					// Only release if we're truly leaving the medical pipeline (no tend/rescue, no targeting held patient,
-					// and not in a recognized fetch/haul/consume job).
-					// ADD: also treat "move/approach/goto to held patient cell" as still-in-pipeline, even when targetA/targetB/targetC
-					// doesn't include the patient pawn anymore (the "queued standing waiting" case).
-					bool medicIsMovingToHeldPatientCell = false;
+					// 1) If we’re already on Tend/Rescue targeting the held patient, keep that job.
 					if (pawn.CurJob != null && pawn.CurJob.def != null)
 					{
-						string curDefName = pawn.CurJob.def.defName;
-						if (!string.IsNullOrEmpty(curDefName))
-							curDefName = curDefName.ToLowerInvariant();
-
-						IntVec3 heldPos = heldPatient.Position;
-
-						float distFromTargetToHeld = float.PositiveInfinity;
-
-						if (pawn.CurJob.def == JobDefOf.Goto)
+						if (pawn.CurJob.def == JobDefOf.TendPatient || pawn.CurJob.def == JobDefOf.Rescue)
 						{
-							if (pawn.CurJob.targetA.IsValid)
-								distFromTargetToHeld = pawn.CurJob.targetA.Cell.DistanceTo(heldPos);
-						}
-						else
-						{
-							if (curDefName != null)
+							// Tend/Rescue should target the held pawn.
+							if (pawn.CurJob.targetA.IsValid && pawn.CurJob.targetA.Thing == heldPatient)
 							{
-								if (curDefName.Contains("approach") || curDefName.Contains("move"))
-								{
-									if (pawn.CurJob.targetA.IsValid)
-										distFromTargetToHeld = pawn.CurJob.targetA.Cell.DistanceTo(heldPos);
-									else if (pawn.CurJob.targetB.IsValid)
-										distFromTargetToHeld = pawn.CurJob.targetB.Cell.DistanceTo(heldPos);
-									else if (pawn.CurJob.targetC.IsValid)
-										distFromTargetToHeld = pawn.CurJob.targetC.Cell.DistanceTo(heldPos);
-								}
+								return pawn.CurJob;
 							}
 						}
 
-						// Tolerance: queued medical “stand waiting” positions and pathing targets
-						// often aren’t the exact patient cell. Also allow if we’re actively moving.
-						float distTolerance = 6.0f;
-						bool activelyMoving = pawn.pather != null && pawn.pather.Moving;
+						// Also protect against approach/move variants that still “belong” to this patient pipeline.
+						bool targetsHeldPatient =
+							(pawn.CurJob.targetA.IsValid && pawn.CurJob.targetA.Thing == heldPatient) ||
+							(pawn.CurJob.targetB.IsValid && pawn.CurJob.targetB.Thing == heldPatient) ||
+							(pawn.CurJob.targetC.IsValid && pawn.CurJob.targetC.Thing == heldPatient);
 
-						medicIsMovingToHeldPatientCell = distFromTargetToHeld <= distTolerance || (activelyMoving && distFromTargetToHeld <= 10.0f);
+						if (targetsHeldPatient)
+						{
+							// Keep current job rather than releasing/falling through.
+							return pawn.CurJob;
+						}
 					}
 
-					// UPDATED: if the patient is still medically urgent/tend-worthy, we must keep the hold.
-					float heldHpPct = heldPatient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
-
-					bool heldPatientUrgent =
-						heldPatient.Downed ||
-						!heldPatient.InBed() ||
-						heldHpPct <= 0.95f;
-
-					// If this medic can actually tend/rescue now, force the medical job.
-					// This prevents the utility layer from choosing haul/stockpile instead.
+					// 2) If eligible now, force Tend/Rescue immediately.
 					if (canTendNow(pawn, heldPatient))
 					{
 						JobDef def = heldPatient.Downed ? JobDefOf.Rescue : JobDefOf.TendPatient;
 						return JobMaker.MakeJob(def, heldPatient);
 					}
 
-					// If the held patient is urgent/downed but not tend-eligible *for this medic yet*,
-					// do NOT release the hold and do NOT return null (which would allow hauling).
-					// Keep the medic in medical pipeline until eligibility becomes true.
-					if (heldPatient != null)
-					{
-						// If we're already doing Tend/Rescue for the held patient, keep it.
-						if (pawn.CurJob != null && pawn.CurJob.def != null)
-						{
-							if (pawn.CurJob.def == JobDefOf.TendPatient || pawn.CurJob.def == JobDefOf.Rescue)
-							{
-								// TendPatient/Rescue should target the held pawn via targetA.
-								if (pawn.CurJob.targetA.IsValid && pawn.CurJob.targetA.Thing == heldPatient)
-									return pawn.CurJob;
-							}
-						}
-
-						// Force medical job if eligible now.
-						if (canTendNow(pawn, heldPatient))
-						{
-							JobDef def = heldPatient.Downed ? JobDefOf.Rescue : JobDefOf.TendPatient;
-							return JobMaker.MakeJob(def, heldPatient);
-						}
-
-						// Not eligible yet: DO NOT release the medical hold.
-						// Returning null here allows utility to pick meal/haul/stockpile.
-						// Returning Wait keeps the medic pinned in the medical pipeline.
-						const int holdWaitTicks = 60;
-						return JobMaker.MakeJob(JobDefOf.Wait, holdWaitTicks);
-					}
-
-					// Release only when this patient is no longer a valid tend/rescue target for THIS medic.
-					// Do NOT key off the heldPatientUrgent heuristic, because it can differ from canTendNow() eligibility.
-					bool patientStillValidTarget = IsValidTendTarget(heldPatient, pawn);
-
-					if (!stillOnTendOrRescue &&
-						!medicJobTargetsHeldPatient &&
-						!medicIsMedicineFetchOrHauling &&
-						!medicIsMovingToHeldPatientCell &&
-						!patientStillValidTarget)
-					{
-						ArgrillianMedicalState.PatientMedicHold.ReleaseForMedic(pawn);
-					}
+					// 3) Not eligible yet: pin to medical pipeline (no release; no fall-through).
+					const int holdWaitTicks = 60;
+					return JobMaker.MakeJob(JobDefOf.Wait, holdWaitTicks);
 				}
 			}
 
