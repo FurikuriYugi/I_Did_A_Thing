@@ -1021,13 +1021,9 @@ namespace ArgrillianThreat
 				Pawn patient = FindPatientByThingID(medic.Map, patientId);
 				if (patient == null || patient.Dead) return;
 
-				// IMPORTANT: releasing the hold must not hard-stop the patient's current job driver.
-				// Hard-stop (StopAll(true)) here causes job churn: patient stops being a stable tend target,
-				// and combat medics drift back into normal combat movement/haul utility behavior.
-				patient.jobs?.ClearQueuedJobs();
-
-				// If they still have a queued hold posture job, let it expire naturally; do not StopAll(true).
-				// Ensure pathing isn't overridden into dead-stops when the hold is released.
+				// IMPORTANT: releasing the hold must not disrupt the patient's current job driver.
+				// Do NOT ClearQueuedJobs(); it can break tend/rescue transitions and leave the pawn pathing/stuck.
+				// Let the normal RimWorld job system finish/transition naturally.
 				patient.pather?.StopDead();
 			}
 
