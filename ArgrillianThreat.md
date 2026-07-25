@@ -3245,8 +3245,15 @@ namespace ArgrillianThreat
 					continue;
 
 				// Avoid picking someone already being tended/rescued by someone else.
-				if (ArgillianThreatPatientTuning.PatientAlreadyBeingTendedOrRescuedBySomeoneElse(medic, p) != null)
-					continue;
+				// FIX: if the target is downed, we must be willing to take it even if
+				// the "already being tended/rescued" predicate is overly strict,
+				// otherwise medics will never enter tend/rescue and will fall through to
+				// fight -> meal -> haul behavior.
+				if (!downed)
+				{
+					if (ArgillianThreatPatientTuning.PatientAlreadyBeingTendedOrRescuedBySomeoneElse(medic, p) != null)
+						continue;
+				}
 
 				float score =
 					1000f * (downed ? 1f : 0.25f) +
