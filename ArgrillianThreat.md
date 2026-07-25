@@ -1810,16 +1810,24 @@ namespace ArgrillianThreat
 					return attackJob;
 				}
 
-				// HARD GATE: if downed and Finish Off is OFF, do not continue into
-				// squad/positioning behavior that keeps orbiting the downed target.
+				// HARD GATE FIX:
+				// FinishOff OFF => ignore downed hostiles (stop orbiting/moving around them),
+				// but DO NOT abort combat-medic logic. Medics must stay in their
+				// patient-tending flow for downed colonists.
 				if (hostile != null && hostile.Downed)
 				{
 					CompArgrillianThreatSettings comp = pawn.GetComp<CompArgrillianThreatSettings>();
 					bool finishOff = comp != null && comp.finishOff;
 
-					if (hostile != null && hostile.Downed && !finishOff)
+					if (!finishOff)
 					{
-						return null;
+						CompArgrillianMedicSettings medicComp = pawn.GetComp<CompArgrillianMedicSettings>();
+						bool combatMedic = medicComp != null && medicComp.combatMedic;
+
+						// If this pawn is a combat medic, let the medic logic continue
+						// (tending downed colonists). Otherwise, ignore downed hostiles.
+						if (!combatMedic)
+							return null;
 					}
 				}
 			}
