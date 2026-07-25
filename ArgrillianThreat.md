@@ -4832,13 +4832,14 @@ namespace ArgrillianThreat
 
 				if (heldPatient != null)
 				{
+					// Still doing Tend/Rescue for the held patient => keep hold.
 					bool stillOnTendOrRescue =
 						pawn.CurJob != null &&
 						pawn.CurJob.def != null &&
 						(pawn.CurJob.def == JobDefOf.TendPatient || pawn.CurJob.def == JobDefOf.Rescue);
 
-					// Robust committed detection: if the medic's current job targets the held patient,
-					// we should not release the hold even if the job def is a move/approach variant.
+					// Robust committed detection: if current job targets the held patient,
+					// we must not release even if job def is an approach/move variant.
 					bool medicJobTargetsHeldPatient =
 						pawn.CurJob != null &&
 						(
@@ -4853,7 +4854,8 @@ namespace ArgrillianThreat
 						(pawn.CurJob != null && IsMealOrConsumeLikeJob(pawn.CurJob)) ||
 						(pawn.CurJob != null && pawn.CurJob.def != null && pawn.CurJob.def.defName == "ConsumeMeal");
 
-					// Do not release if we are truly committed to the held patient, OR if we're still actively doing Tend/Rescue.
+					// Only release if we're truly leaving the medical pipeline (no tend/rescue, no targeting held patient,
+					// and not in a recognized fetch/haul/consume job).
 					if (!stillOnTendOrRescue && !medicJobTargetsHeldPatient && !medicIsMedicineFetchOrHauling)
 					{
 						ArgrillianMedicalState.PatientMedicHold.ReleaseForMedic(pawn);
