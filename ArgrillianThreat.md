@@ -4729,23 +4729,23 @@ namespace ArgrillianThreat
 
 			bool combatMedic = medicComp.combatMedic;
 
-			// RELEASE FIX (stability): only release when we're no longer on a Tend/Rescue job at all.
-			// Relying on JobIsMedicalForPatient(job, heldPatient) can briefly go false due to target resolution/timing.
-			if (combatMedic)
-			{
-				Pawn heldPatient = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
-				bool holdActive = heldPatient != null && heldPatient == patient;
-
-				bool stillOnMedicalJob =
-					pawn.CurJob != null &&
-					pawn.CurJob.def != null &&
-					(pawn.CurJob.def == JobDefOf.TendPatient || pawn.CurJob.def == JobDefOf.Rescue);
-
-				if (heldPatient != null && !stillOnMedicalJob)
+				// RELEASE FIX (stability): only release when we're no longer on a Tend/Rescue job at all.
+				// Relying on JobIsMedicalForPatient(job, heldPatient) can briefly go false due to target resolution/timing.
+				if (combatMedic)
 				{
-					ArgrillianMedicalState.PatientMedicHold.ReleaseForMedic(pawn);
+					Pawn heldPatient = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
+					bool holdActive = heldPatient != null;
+
+					bool stillOnMedicalJob =
+						pawn.CurJob != null &&
+						pawn.CurJob.def != null &&
+						(pawn.CurJob.def == JobDefOf.TendPatient || pawn.CurJob.def == JobDefOf.Rescue);
+
+					if (heldPatient != null && !stillOnMedicalJob)
+					{
+						ArgrillianMedicalState.PatientMedicHold.ReleaseForMedic(pawn);
+					}
 				}
-			}
 
 			// If we're already tending/rescuing a valid *other* target, keep the commitment.
 			// (Prevents combat medics from getting stuck self-tending and then drifting into haul/work.)
@@ -5125,7 +5125,6 @@ namespace ArgrillianThreat
 				if (pawn.CurJob != null && pawn.CurJob.def != JobDefOf.TendPatient && pawn.CurJob.def != JobDefOf.Rescue)
 					pawn.jobs?.StopAll(true);
 
-				// FIX: don't ever leave the medic stuck standing/waiting during hostiles.
 				// If patient is already handled, pick a non-standing behavior instead of returning null.
 				if (hostilesPresent && combatMedic)
 				{
@@ -5138,7 +5137,7 @@ namespace ArgrillianThreat
 
 					if (pawn.CurJob == null || curIsStandOrWait || IsNonCombatJob(pawn.CurJob))
 					{
-												Pawn hostile = FindNearestHostile(pawn, radius: 80f);
+						Pawn hostile = FindNearestHostile(pawn, radius: 80f);
 						if (hostile != null && !hostile.Dead && hostile.Map == pawn.Map && hostile.Faction != pawn.Faction)
 						{
 							return JobMaker.MakeJob(JobDefOf.AttackStatic, hostile);
@@ -5150,8 +5149,6 @@ namespace ArgrillianThreat
 						ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
 						IntVec3 spotFallback = FindBestTendSpot(pawn, patient, radius: 6f);
 						return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, spotFallback);
-
-						pawn.jobs?.StopAll(true);
 					}
 
 					return null;
