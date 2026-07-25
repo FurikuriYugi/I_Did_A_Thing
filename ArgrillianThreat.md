@@ -1813,10 +1813,30 @@ namespace ArgrillianThreat
 
 			if (!skipAggressiveStart)
 			{
-				// Keep ongoing attack job
+				// Keep ongoing attack job, unless FinishOff is OFF and the hostile is downed.
 				if (pawn.CurJob != null &&
 					(pawn.CurJob.def == JobDefOf.AttackMelee || pawn.CurJob.def == JobDefOf.AttackStatic))
 				{
+					if (hostile != null && hostile.Downed)
+					{
+						CompArgrillianThreatSettings comp = pawn.GetComp<CompArgrillianThreatSettings>();
+						bool finishOff = comp != null && comp.finishOff;
+
+						if (!finishOff)
+						{
+							// Do not derail combat-medic tending behavior.
+							CompArgrillianMedicSettings medicComp = pawn.GetComp<CompArgrillianMedicSettings>();
+							bool combatMedic = medicComp != null && medicComp.combatMedic;
+
+							if (!combatMedic)
+							{
+								pawn.jobs?.StopAll(true);
+								pawn.pather?.StopDead();
+								return null;
+							}
+						}
+					}
+
 					return pawn.CurJob;
 				}
 
@@ -1848,8 +1868,6 @@ namespace ArgrillianThreat
 						CompArgrillianMedicSettings medicComp = pawn.GetComp<CompArgrillianMedicSettings>();
 						bool combatMedic = medicComp != null && medicComp.combatMedic;
 
-						// If this pawn is a combat medic, let the medic logic continue
-						// (tending downed colonists). Otherwise, ignore downed hostiles.
 						if (!combatMedic)
 							return null;
 					}
@@ -2816,18 +2834,14 @@ namespace ArgrillianThreat
 		public bool finishOff = false;
 		public bool huntHumans = false;
 
-		public void CompPostMake()
-		{
-			//base.CompPostMake();
-		}
-
 		public void ExposeData()
 		{
-			//base.ExposeData();
+			base.ExposeData();
 
 			Scribe_Values.Look(ref pursueAdvance, "pursueAdvance", true);
 			Scribe_Values.Look(ref guardFellowPawns, "guardFellowPawns", true);
 			Scribe_Values.Look(ref squadMode, "squadMode", false);
+
 			Scribe_Values.Look(ref finishOff, "finishOff", false);
 			Scribe_Values.Look(ref huntHumans, "huntHumans", false);
 		}
@@ -5747,6 +5761,25 @@ namespace ArgrillianThreat
 				// Non-urgent
 				if (canTendNow(pawn, patient))
 				{
+					bool combatMedic = pawn.GetComp<CompArgrillianMedicSettings>()?.combatMedic == true;
+
+					// MEDIC FIX: if the patient became eligible, do not let the medic
+					// “stick” to an unrelated haul job (e.g., HaulToCell) and cause
+					// tend/rescue <-> drop <-> haul <-> move loops.
+					// If we’re already in a medical-tend-eligible state, immediately
+					// re-enter the medical pipeline for this patient.
+					if (combatMedic && pawn.CurJob != null && IsHaulJob(pawn.CurJob))
+					{
+						if (!ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn).Equals(patient))
+						{
+							LockPatientToMedic(pawn, patient);
+						}
+
+						pawn.jobs?.StopAll(true);
+						ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
+						ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn);
+					}
+
 					bool recentlyStickingToTendTask2 = ArgrillianMedicalState.MedicTendTaskStickiness.RecentlyTookTendTask(pawn, tendTaskStickinessTicks);
 
 					if (patient.Downed && IsInterferingJobForTend(patient))
@@ -5756,27 +5789,6 @@ namespace ArgrillianThreat
 						if (combatMedic)
 						{
 							LockPatientToMedic(pawn, patient);
-						}
-
-						ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
-						return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, patient.Position);
-					}
-
-					if (recentlyStickingToTendTask2 || !hostilesPresent || combatMedic)
-					{
-						if (combatMedic)
-						{
-							LockPatientToMedic(pawn, patient);
-						}
-
-						if (combatMedic && stopPatientWhenUrgent && !patient.Downed)
-						{
-							TryStopPatientToAllowTendIfChasingOrAttacking(patient);
-						}
-
-						if (stopPatientWhenUrgent && patient.Downed)
-						{
-							TryStopPatientToAllowTend(patient);
 						}
 
 						ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
