@@ -1780,6 +1780,19 @@ namespace ArgrillianThreat
 			ArgrillianThreatState.ModeTickCache.MarkMode(pawn, 0);
 			ArgrillianThreatState.CombatLock.MarkSeen(pawn, hostile);
 			ArgrillianThreatState.ThreatTickCache.MarkNow(pawn);
+			
+			// NEW: downed-hostile gate must apply even when skipAggressiveStart == true.
+			// Otherwise melee/positioning can still orbit the downed anchor.
+			if (!IsArgrillianMedicPawn(pawn) && hostile != null && hostile.Downed && !isRanged)
+			{
+				CompArgrillianThreatSettings comp = pawn.GetComp<CompArgrillianThreatSettings>();
+				bool finishOff = comp != null && comp.finishOff;
+
+				if (!finishOff)
+				{
+					return null;
+				}
+			}
 
 			if (ArgrillianThreatState.CombatCommit.RecentlyCommitted(pawn) &&
 				ArgrillianThreatState.CombatCommit.CommitMatchesHostile(pawn, hostile))
