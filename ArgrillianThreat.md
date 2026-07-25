@@ -4962,11 +4962,6 @@ namespace ArgrillianThreat
 					}
 
 					// UPDATED: if the patient is still medically urgent/tend-worthy, we must keep the hold.
-					// Previously we only treated (downed OR not in bed) as urgent, which released the hold too early
-					// for injured-but-embedded patients (in-bed, not downed) and triggered haul/move preemption loops.
-					// If the patient is still in the urgent pipeline state, we must keep the hold.
-					// But: if the held patient is downed, ALWAYS keep the hold.
-					// Otherwise the medic can drop medical commitment and utility can steer into haul/meal immediately.
 					float heldHpPct = heldPatient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
 
 					bool heldPatientUrgent =
@@ -4974,22 +4969,38 @@ namespace ArgrillianThreat
 						!heldPatient.InBed() ||
 						heldHpPct <= 0.95f;
 
-					// Only treat urgency as a “keep hold” blocker when we're already committed to the pipeline,
-					// BUT downed patients are an exception: downed => never release.
 					bool committedToMedicalPipeline =
 						stillOnTendOrRescue ||
 						medicJobTargetsHeldPatient ||
 						medicIsMovingToHeldPatientCell;
 
+					// HARD TAKEOVER BLOCK:
+					// If the held patient is downed, never allow the medic to drift into haul/meal jobs.
+					bool medicIsHaulingOrMealNow =
+						medicIsMedicineFetchOrHauling ||
+						IsHaulJob(pawn.CurJob) ||
+						(pawn.CurJob != null && pawn.CurJob.def == JobDefOf.Ingest);
+
+					if (heldPatient.Downed && medicIsHaulingOrMealNow)
+					{
+						// Kill the non-medical job so the rest of the pipeline can re-select Tend/Rescue.
+						pawn.jobs?.StopAll(true);
+						return null;
+					}
+					// Only release if we're truly leaving the medical pipeline (no tend/rescue, no targeting held patient,
+					// and not in a recognized fetch/haul/consume job).
+					// ADD: also treat "move/approach/goto to held patient cell" as still-in-pipeline, even when targetA/targetB/targetC
+					// doesn't include the patient pawn anymore (the "queued standing waiting" case).
 					if (!stillOnTendOrRescue &&
 						!medicJobTargetsHeldPatient &&
 						!medicIsMedicineFetchOrHauling &&
-						!medicIsMovingToHeldPatientCell &&
-						(!committedToMedicalPipeline || !heldPatientUrgent))
+						!medicIsMovingToHeldPatientCell)
 					{
-						// If downed, never release (hard stop against meal/haul takeover).
-						if (!heldPatient.Downed)
-							ArgrillianMedicalState.PatientMedicHold.ReleaseForMedic(pawn);
+						// HARD: if the held patient is urgent (or downed), never release the hold.
+						if (heldPatientUrgent)
+							return null;
+
+						ArgrillianMedicalState.PatientMedicHold.ReleaseForMedic(pawn);
 					}
 				}
 			}
