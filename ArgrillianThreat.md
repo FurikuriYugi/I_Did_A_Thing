@@ -1021,9 +1021,9 @@ namespace ArgrillianThreat
 				Pawn patient = FindPatientByThingID(medic.Map, patientId);
 				if (patient == null || patient.Dead) return;
 
-				// IMPORTANT: releasing the hold must not disrupt the patient's current job driver.
-				// Do NOT ClearQueuedJobs(); it can break tend/rescue transitions and leave the pawn pathing/stuck.
-				// Let the normal RimWorld job system finish/transition naturally.
+				// CRITICAL: do NOT ClearQueuedJobs() or StopAll here.
+				// Clearing queued jobs during tend/rescue transition can leave the patient in a half-state
+				// (getting up / stuck moving), and then the normal utility layer can steer into hauling.
 				patient.pather?.StopDead();
 			}
 
