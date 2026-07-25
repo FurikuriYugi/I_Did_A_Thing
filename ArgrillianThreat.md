@@ -5007,12 +5007,15 @@ namespace ArgrillianThreat
 						return JobMaker.MakeJob(JobDefOf.Wait, holdWaitTicks);
 					}
 
-					// At this point the held patient is no longer urgent for this medic.
-					// Only then allow release (and avoid releasing if current job targets the patient).
+					// Release only when this patient is no longer a valid tend/rescue target for THIS medic.
+					// Do NOT key off the heldPatientUrgent heuristic, because it can differ from canTendNow() eligibility.
+					bool patientStillValidTarget = IsValidTendTarget(heldPatient, pawn);
+
 					if (!stillOnTendOrRescue &&
 						!medicJobTargetsHeldPatient &&
 						!medicIsMedicineFetchOrHauling &&
-						!medicIsMovingToHeldPatientCell)
+						!medicIsMovingToHeldPatientCell &&
+						!patientStillValidTarget)
 					{
 						ArgrillianMedicalState.PatientMedicHold.ReleaseForMedic(pawn);
 					}
