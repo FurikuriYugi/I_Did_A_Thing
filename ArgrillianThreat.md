@@ -4969,6 +4969,36 @@ namespace ArgrillianThreat
 						!heldPatient.InBed() ||
 						heldHpPct <= 0.95f;
 
+					// HARD FORCE: if we have a held patient and they are tend-eligible/urgent,
+					// the medic must generate Rescue/Tend NOW instead of falling through to haul/utility.
+					if (heldPatient != null)
+					{
+						float heldHpPct2 = heldPatient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
+
+						bool heldUrgent2 =
+							heldPatient.Downed ||
+							!heldPatient.InBed() ||
+							heldHpPct2 <= 0.95f;
+
+						if (heldUrgent2 && IsValidTendTarget(heldPatient, pawn))
+						{
+							if (heldPatient.Downed)
+							{
+								if (heldPatient.Position != pawn.Position)
+									return JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
+
+								return JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
+							}
+							else
+							{
+								if (heldPatient.Position != pawn.Position)
+									return JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
+
+								return JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
+							}
+						}
+					}
+
 					bool committedToMedicalPipeline =
 						stillOnTendOrRescue ||
 						medicJobTargetsHeldPatient ||
