@@ -5521,25 +5521,32 @@ namespace ArgrillianThreat
 						pawn.jobs?.StopAll(true);
 				}
 
-				// FIX: even during Tend-task stickiness, DO NOT allow medicine-fetch to keep them away from a downed patient.
-				// Hard-gate: while target is downed, combat medics shouldn't drift into medicine/haul jobs.
-				if (combatMedic && patient.Downed && pawn.CurJob != null && pawn.CurJob.def != null)
+				// FIX: even during Tend-task stickiness, DO NOT allow medicine-fetch/haul drift to pull medics away.
+				// Extend hard-gate beyond patient.Downed: when the patient is "queued standing waiting to be tended",
+				// the medic should still be locked in the medical pipeline.
+				if (combatMedic && patient != null && pawn != null && pawn.CurJob != null && pawn.CurJob.def != null)
 				{
-					// If the medic is downed-patient-active, immediately interrupt any medicine-fetch/haul/consume drift.
-					// This prevents: tend/rescue -> job transition -> haul/eat -> stuck move loops.
-					bool curIsMedicineFetch = IsMedicineFetchJob(pawn.CurJob);
-					bool curIsHaulOrGrab = IsHaulJob(pawn.CurJob) || IsMealOrConsumeLikeJob(pawn.CurJob) || pawn.CurJob.def.defName == "ConsumeMeal";
+					Pawn held = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
+					bool isLockedToThisPatient = held == patient;
 
-					if (curIsMedicineFetch || curIsHaulOrGrab)
+					// Keep medical pipeline locked if we're already committed to this patient.
+					if (isLockedToThisPatient)
 					{
-						LockPatientToMedic(pawn, patient);
-						TryStopPatientToAllowTend(patient);
+						bool curIsMedicineFetch = IsMedicineFetchJob(pawn.CurJob);
+						bool curIsHaulOrGrab = IsHaulJob(pawn.CurJob) || IsMealOrConsumeLikeJob(pawn.CurJob) || pawn.CurJob.def.defName == "ConsumeMeal";
 
-						pawn.jobs?.StopAll(true);
-						ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
+						// If any non-medical logistics job is active, interrupt immediately and return to the patient.
+						if (curIsMedicineFetch || curIsHaulOrGrab)
+						{
+							LockPatientToMedic(pawn, patient);
+							TryStopPatientToAllowTend(patient);
 
-						// Head back to the patient; next logic will choose Rescue/Tend as appropriate.
-						return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, patient.Position);
+							pawn.jobs?.StopAll(true);
+							ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
+
+							// Re-enter medical pipeline positioning; next tick selection should pick Tend/Rescue.
+							return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, patient.Position);
+						}
 					}
 				}
 
