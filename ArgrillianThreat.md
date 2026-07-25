@@ -5004,18 +5004,27 @@ namespace ArgrillianThreat
 						medicJobTargetsHeldPatient ||
 						medicIsMovingToHeldPatientCell;
 
-					// HARD TAKEOVER BLOCK:
-					// If the held patient is downed, never allow the medic to drift into haul/meal jobs.
-					bool medicIsHaulingOrMealNow =
-						medicIsMedicineFetchOrHauling ||
-						IsHaulJob(pawn.CurJob) ||
-						(pawn.CurJob != null && pawn.CurJob.def == JobDefOf.Ingest);
+					// HARD FORCE / TAKEOVER:
+					// If we have a held patient and they are urgent (tend-eligible / downed), the medic MUST stay in the medical pipeline.
+					// Never return null in this window; return Tend/Rescue so haul/stockpile can't preempt.
+					bool medicIsMedicalNow =
+						pawn.CurJob != null &&
+						pawn.CurJob.def != null &&
+						(pawn.CurJob.def == JobDefOf.TendPatient || pawn.CurJob.def == JobDefOf.Rescue);
 
-					if (heldPatient.Downed && medicIsHaulingOrMealNow)
+					if (heldPatientUrgent)
 					{
-						// Kill the non-medical job so the rest of the pipeline can re-select Tend/Rescue.
-						pawn.jobs?.StopAll(true);
-						return null;
+						// If we're not already on the medical job, force it.
+						if (!medicIsMedicalNow)
+						{
+							if (heldPatient.Downed)
+								return JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
+
+							return JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
+						}
+
+						// If already medical, keep as-is (no release, no null -> prevents utility from steering away).
+						return pawn.CurJob;
 					}
 					// Only release if we're truly leaving the medical pipeline (no tend/rescue, no targeting held patient,
 					// and not in a recognized fetch/haul/consume job).
