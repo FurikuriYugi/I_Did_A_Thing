@@ -1809,6 +1809,19 @@ namespace ArgrillianThreat
 					ArgrillianThreatState.ThreatTickCache.MarkNow(pawn);
 					return attackJob;
 				}
+
+				// HARD GATE: if downed and Finish Off is OFF, do not continue into
+				// squad/positioning behavior that keeps orbiting the downed target.
+				if (hostile != null && hostile.Downed)
+				{
+					CompArgrillianThreatSettings comp = pawn.GetComp<CompArgrillianThreatSettings>();
+					bool finishOff = comp != null && comp.finishOff;
+
+					if (hostile != null && hostile.Downed && !finishOff)
+					{
+						return null;
+					}
+				}
 			}
 
 			// -------- Squad handling (unchanged from your provided block) --------
