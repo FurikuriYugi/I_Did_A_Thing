@@ -2834,9 +2834,9 @@ namespace ArgrillianThreat
 		public bool finishOff = false;
 		public bool huntHumans = false;
 
-		public void ExposeData()
+		public void CompExposeData()
 		{
-			base.ExposeData();
+			base.CompExposeData();
 
 			Scribe_Values.Look(ref pursueAdvance, "pursueAdvance", true);
 			Scribe_Values.Look(ref guardFellowPawns, "guardFellowPawns", true);
