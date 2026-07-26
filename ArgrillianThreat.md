@@ -5135,32 +5135,80 @@ namespace ArgrillianThreat
 					heldPatient.pather?.StopDead();
 					heldPatient.jobs?.ClearQueuedJobs();
 
-					// Interrupt the patient's current job:
-					// - If it's non-attack: always interrupt.
-					// - If it's attack/shoot/ranged: only interrupt once we can actually start Tend/Rescue now.
-					if (heldPatient.CurJob != null && heldPatient.CurJob.def != null)
+					// IMPORTANT: we do NOT force-start an attack job here.
+					// If an enemy is already in range, RimWorld’s attack/shoot behavior will execute
+					// without needing chase/move.
+
+					bool isHeldPatientOnCombatJob =
+						heldPatient.CurJob != null &&
+						heldPatient.CurJob.def != null &&
+						(
+							heldPatient.CurJob.def == JobDefOf.AttackMelee ||
+							heldPatient.CurJob.def == JobDefOf.AttackStatic ||
+							(heldPatient.CurJob.def.defName != null && (
+								heldPatient.CurJob.def.defName.IndexOf("attack", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+								heldPatient.CurJob.def.defName.IndexOf("shoot", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+								heldPatient.CurJob.def.defName.IndexOf("range", System.StringComparison.OrdinalIgnoreCase) >= 0
+							))
+						);
+
+					// If the patient is in a combat job, only interrupt when they would need to
+					// move (i.e., their current hostile target is NOT in range).
+					// This keeps “shooting/attacking in-range” allowed while still preventing movement derailment.
+					if (isHeldPatientOnCombatJob)
 					{
-						JobDef d = heldPatient.CurJob.def;
+						// Try to infer current hostile target from the active job.
+						LocalTargetInfo jobTarget =
+							(heldPatient.CurJob.targetA.IsValid) ? heldPatient.CurJob.targetA :
+							(heldPatient.CurJob.targetB.IsValid) ? heldPatient.CurJob.targetB :
+							(LocalTargetInfo) LocalTargetInfo.Invalid;
 
-						bool isAttackOrShoot =
-							d == JobDefOf.AttackMelee ||
-							d == JobDefOf.AttackStatic ||
-							(d.defName != null && (
-								d.defName.IndexOf("attack", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
-								d.defName.IndexOf("shoot", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
-								d.defName.IndexOf("range", System.StringComparison.OrdinalIgnoreCase) >= 0
-							));
-
-						if (!isAttackOrShoot)
+						if (jobTarget.IsValid && jobTarget.Thing != null)
 						{
+							float distSqr = heldPatient.Position.DistanceToSquared(jobTarget.Cell);
+
+							// Approximate reach: melee uses adjacency; ranged uses current attack verb range when possible.
+							float maxDistSqr = 0.0f;
+
+							if (heldPatient.CurJob.def == JobDefOf.AttackMelee)
+							{
+								maxDistSqr = 2.25f; // ~1.5 tiles; melee-ish
+							}
+							else
+							{
+								Verb attackVerb = null;
+								if (jobTarget.Thing != null)
+								{
+									// RimWorld 1.6 signature requires: TryGetAttackVerb(Thing target, bool allowIndirectFire, bool allowMelee)
+									// Using (true, true) lets the verb resolve for both melee and ranged weapons.
+									attackVerb = heldPatient.TryGetAttackVerb(jobTarget.Thing, true, true);
+								}
+
+								float reach = (attackVerb != null && attackVerb.verbProps != null) ? attackVerb.verbProps.range : 0f;
+
+								// If we can't compute reach, be conservative and prevent movement derailment.
+								if (reach > 0f)
+									maxDistSqr = (reach * reach) + 0.25f;
+								else
+									maxDistSqr = 0.0f;
+							}
+
+							bool targetInRangeNow = (maxDistSqr > 0.0f) ? (distSqr <= maxDistSqr) : false;
+
+							// If NOT in range, interrupt so the patient can't path/chase while medic is held.
+							if (!targetInRangeNow)
+								heldPatient.jobs.EndCurrentJob(JobCondition.InterruptForced);
+						}
+						else
+						{
+							// No valid target info -> safest behavior: interrupt so patient can't wander.
 							heldPatient.jobs.EndCurrentJob(JobCondition.InterruptForced);
 						}
-						else if (canTouchNow)
-						{
-							// Critical: if we can start Tend/Rescue now, cancel the patient's combat job
-							// so RimWorld doesn't keep them on offense while the medic is ready.
-							heldPatient.jobs.EndCurrentJob(JobCondition.InterruptForced);
-						}
+					}
+					else
+					{
+						// Non-combat (haul/wait/flee/etc.) should be interrupted immediately to keep tend exclusive.
+						heldPatient.jobs.EndCurrentJob(JobCondition.InterruptForced);
 					}
 
 					// IMPORTANT: we do NOT force-start an attack job here.
@@ -5201,8 +5249,7 @@ namespace ArgrillianThreat
 					}
 				}
 
-				// After lock arbitration, attempt Tend/Rescue. We only leave medical pipeline when done
-				// (tended/rescued) because we never fall through to non-medical jobs while heldPatient != null.
+				// After lock arbitration, attempt Tend/Rescue.
 				if (canTendNow(pawn, heldPatient))
 				{
 					// Only at tend-start: hard-stop patient drift so tend/rescue completion isn't blocked.
@@ -5223,9 +5270,10 @@ namespace ArgrillianThreat
 
 				// Not eligible yet:
 				// Keep the medic in the medical pipeline without tend/rescue,
-				// but DO NOT just Wait (it leaves medic unreachable and causes the patient to keep fighting).
-				// Instead, move toward a valid "touch" cell near the patient so CanReach(...Touch...) becomes true.
-				return ArgrillianGotoHelper.MakeGotoWithNoChurn( pawn, FindBestTendSpot(pawn, heldPatient, combatTendMaxDistance)
+				// but DO NOT just Wait.
+				return ArgrillianGotoHelper.MakeGotoWithNoChurn(
+					pawn,
+					FindBestTendSpot(pawn, heldPatient, combatTendMaxDistance)
 				);
 			}
 
