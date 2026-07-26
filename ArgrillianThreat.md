@@ -4970,7 +4970,7 @@ namespace ArgrillianThreat
 				// but do NOT stop/kick the patient.
 				return JobMaker.MakeJob(JobDefOf.Wait, 60);
 			}
-			return null;
+			return JobMaker.MakeJob(JobDefOf.Wait, 60);
 		}
 
 		private bool TryGetRescueBedForPatient(Pawn medic, Pawn patient, out Building_Bed bed)
