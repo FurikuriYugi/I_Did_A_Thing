@@ -1830,7 +1830,7 @@ namespace ArgrillianThreat
 
 							if (!combatMedic)
 							{
-								pawn.jobs?.StopAll(true);
+								pawn.jobs?.StopAll(true); 
 								pawn.pather?.StopDead();
 								return null;
 							}
@@ -4977,7 +4977,11 @@ namespace ArgrillianThreat
 							if ((holdPatientForAntiDrift.Downed && (medicIsHauling || medicIsMealOrConsume) && !IsMedicineFetchJob(pawn.CurJob)) ||
 								(!holdPatientForAntiDrift.Downed && (heldPatientUrgentEarly) && (medicIsHauling || medicIsMealOrConsume) && !IsMedicineFetchJob(pawn.CurJob)))
 							{
-								pawn.jobs?.StopAll(true);
+								pawn.pather?.StopDead();
+
+								// Don’t StopAll(true) here; it destabilizes tend/rescue ↔ haul/meal/job arbitration.
+								// We only prevent further movement drift so the medical job can take over cleanly.
+								pawn.jobs?.ClearQueuedJobs();
 								ArgrillianMedicalState.MedicTickCache.MarkNow(pawn);
 							}
 						}
