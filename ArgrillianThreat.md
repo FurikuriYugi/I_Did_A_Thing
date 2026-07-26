@@ -2960,7 +2960,7 @@ namespace ArgrillianThreat
 			// We don't aggressively remove from Lists (cheaper). Lookups will skip stale pawns/IDs.
 		}
 
-		private static List<Pawn> GetCombatMedics(Map map)
+		internal static List<Pawn> GetCombatMedics(Map map)
 		{
 			if (map == null) return null;
 
@@ -3013,7 +3013,6 @@ namespace ArgrillianThreat
 					// Turning medic on registers this pawn.
 					if (isMedic)
 					{
-						combatMedic = combatMedic; // keep current combatMedic value
 						if (parent is Pawn pawn) RegisterMedic(pawn);
 					}
 					else
@@ -4341,7 +4340,7 @@ namespace ArgrillianThreat
 					// Avoid map-wide scans. Confirm medic id via cached combat medics only.
 					if (medicId >= 0)
 					{
-						var combatMedics = GetCombatMedics(map);
+						var combatMedics = CompArgrillianMedicSettings.GetCombatMedics(map);
 						if (combatMedics != null)
 						{
 							for (int i = 0; i < combatMedics.Count; i++)
@@ -4363,7 +4362,7 @@ namespace ArgrillianThreat
 			// Refresh: iterate only cached combat medics on this map (no AllPawnsSpawned / no spawnedThings).
 			Pawn found = null;
 
-			var combatMedics2 = GetCombatMedics(map);
+			var combatMedics2 = CompArgrillianMedicSettings.GetCombatMedics(map);
 			if (combatMedics2 != null && combatMedics2.Count > 0)
 			{
 				for (int i = 0; i < combatMedics2.Count; i++)
