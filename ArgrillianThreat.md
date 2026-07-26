@@ -4966,12 +4966,24 @@ namespace ArgrillianThreat
 				}
 			}
 
-			if (candidate == null)
-				return null;
+			if (candidate == null) return null;
 
 			LockPatientToMedic(pawn, candidate);
 
-			// After locking, the next tick should re-enter the heldPatient path above.
+			// Immediately commit to the medical pipeline job to prevent the utility layer
+			// from steering into normal jobs during the transition tick(s).
+			if (canTendNow(pawn, candidate))
+			{
+				return JobMaker.MakeJob(JobDefOf.TendPatient, candidate);
+			}
+
+			if (candidate.Downed)
+			{
+				Building_Bed bed;
+				if (TryGetRescueBedForPatient(pawn, candidate, out bed))
+					return JobMaker.MakeJob(JobDefOf.Rescue, candidate, bed);
+			}
+
 			return JobMaker.MakeJob(JobDefOf.Wait, 5);
 		}
 
