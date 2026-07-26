@@ -1008,6 +1008,7 @@ namespace ArgrillianThreat
 				medicByPatient[patientId] = medicId;
 			}
 
+			// IMPORTANT: replace the body of your existing "ReleaseForMedic" (or equivalent) with this logic.
 			public static void ReleaseForMedic(Pawn medic)
 			{
 				if (medic == null) return;
@@ -1016,6 +1017,7 @@ namespace ArgrillianThreat
 				if (!patientByMedic.TryGetValue(medicId, out int patientId)) return;
 
 				patientByMedic.Remove(medicId);
+
 				medicByPatient.Remove(patientId);
 
 				Pawn patient = FindPatientByThingID(medic.Map, patientId);
@@ -2274,8 +2276,10 @@ namespace ArgrillianThreat
 					Pawn patient = pawn.CurJob.targetA.Pawn;
 					if (patient != null && !patient.Dead && patient.Spawned && patient.Map == pawn.Map)
 					{
-						// Condition: still in the "being tended by Argrillian medic" relationship.
-						bool patientStillBoundToMedic = IsBeingTendedByArgrillianMedic(patient);
+						// Use your authoritative hold mapping instead of IsBeingTendedByArgrillianMedic(),
+						// which may be out of sync with PatientMedicHold.
+						Pawn held = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
+						bool patientStillBoundToMedic = held == patient;
 
 						// Rescue is for downed/unable patients.
 						if (def == JobDefOf.Rescue)
