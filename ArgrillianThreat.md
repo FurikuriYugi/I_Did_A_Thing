@@ -4856,6 +4856,8 @@ namespace ArgrillianThreat
 		// This prevents "patient keeps attacking/hauling/moving" so the medic can actually complete tending/rescue.
 		// -------------------- PATCH 1: LockPatientToMedic --------------------
 		// This prevents the "wiggle/standing/hauling loop" without breaking the tend/rescue pipeline.
+		// This prevents "patient keeps attacking/hauling/moving" so the medic can actually complete tending/rescue.
+		// Non-destructive: do NOT StopAll(true) and do NOT inject Wait jobs (they destabilize job arbitration during the transition).
 		private static void LockPatientToMedic(Pawn medic, Pawn patient)
 		{
 			if (patient == null || patient.Dead) return;
@@ -4866,12 +4868,11 @@ namespace ArgrillianThreat
 			// Stop movement so they don't keep trying to flee/turn/position mid-tend.
 			patient.pather?.StopDead();
 
-			// IMPORTANT:
-			// Do NOT StopAll(true) here and do NOT inject a Wait job with EnqueueFirst.
-			// Those can destabilize the job arbitration moment when the patient flips
-			// between "injured" and "downed", leading to haul/meal/move fallthrough loops.
+			// Intentionally no:
+			// - patient.jobs?.StopAll(true)
+			// - injected JobDefOf.Wait / queue-fronting
 			//
-			// The medical job giver should be the one that selects Tend/Rescue jobs when eligible.
+			// The medic job giver should be the authority that selects Tend/Rescue when eligible.
 		}
 
 		// (Existing class continues below)
