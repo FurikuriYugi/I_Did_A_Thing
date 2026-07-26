@@ -2884,7 +2884,6 @@ namespace ArgrillianThreat
 		public bool finishOff = false;
 		public bool huntHumans = false;
 
-		private static bool loggedFinishOffTogglesOnce;
 		private static bool loggedThreatSettingsGizmosOnce;
 
 		public void ExposeData()
@@ -2901,11 +2900,6 @@ namespace ArgrillianThreat
 		{
 			var sw = new System.Diagnostics.Stopwatch();
 			sw.Start();
-
-			if (!loggedThreatSettingsGizmosOnce)
-			{
-				// Intentionally no-op: we only want to avoid extra formatting allocations.
-			}
 
 			try
 			{
@@ -2956,11 +2950,6 @@ namespace ArgrillianThreat
 				{
 					loggedThreatSettingsGizmosOnce = true;
 					Log.Message($"[ArgrillianThreat] CompGetGizmosExtra(ThreatSettings) slow: {sw.Elapsed.TotalMilliseconds:0.00} ms parent={(parent != null ? parent.ToString() : "null")}");
-				}
-
-				if (!loggedFinishOffTogglesOnce)
-				{
-					// No extra per-tick logging; toggle cost will be captured through Gizmos creation timing.
 				}
 			}
 		}
