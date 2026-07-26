@@ -1635,7 +1635,7 @@ namespace ArgrillianThreat
 			Pawn med = nearestMedic;
 			if (med == null)
 			{
-				med = FindNearestMedic(pawn, map, patientRetreatPreferMedicRadius, requireCombatMedicOrEither: false);
+				med = FindNearestMedic(pawn);
 			}
 
 			float safeDistance = patientRetreatSafeDistanceFromHostile;
