@@ -3610,16 +3610,6 @@ namespace ArgrillianThreat
 			return v.normalized;
 		}
 
-		private bool PatientRecentlyStableForTendOverride(Pawn patient)
-		{
-			if (patient == null || patient.Dead) return false;
-
-			// Keep this intentionally simple: if they are moving, let combat/tend finish tug-of-war.
-			if (patient.pather != null && patient.pather.Moving) return false;
-
-			return true;
-		}
-
 		protected override Job TryGiveJob(Pawn pawn)
 		{
 			// Medic gating: non-combat medics don't do threat response.
@@ -3633,16 +3623,6 @@ namespace ArgrillianThreat
 			if (pawn.Downed) return null;
 
 			var map = pawn.Map;
-
-			// TEND OVERRIDE
-			Pawn assignedMedic = FindAssignedCombatMedicForPatient(pawn);
-			if (assignedMedic != null)
-			{
-				if (PatientRecentlyStableForTendOverride(pawn))
-				{
-					return null; // let medic AI and Tend/Rescue jobs control this pawn
-				}
-			}
 
 			if (!ArgrillianThreatHelpers.TryBuildContext(pawn, out ThreatContext tctx))
 				return null;
@@ -5045,6 +5025,16 @@ namespace ArgrillianThreat
 			return j.def.defName.IndexOf("crawl", StringComparison.OrdinalIgnoreCase) >= 0;
 		}
 
+		private bool PatientRecentlyStableForTendOverride(Pawn patient)
+		{
+			if (patient == null || patient.Dead) return false;
+
+			// Keep this intentionally simple: if they are moving, let combat/tend finish tug-of-war.
+			if (patient.pather != null && patient.pather.Moving) return false;
+
+			return true;
+		}
+
 		// NEW: keep the patient from starting/continuing other jobs while a combat medic is committing to Rescue/Tend.
 		// This prevents "patient keeps attacking/hauling/moving" so the medic can actually complete tending/rescue.
 		// -------------------- PATCH 1: LockPatientToMedic --------------------
@@ -5103,17 +5093,20 @@ namespace ArgrillianThreat
 					pawn.CurJob.def != null &&
 					(pawn.CurJob.def == JobDefOf.TendPatient || pawn.CurJob.def == JobDefOf.Rescue);
 
-				// Attack-only enforcement DURING Tend/Rescue.
-				// Melee: only attack if an enemy is in range (no move/chase).
-				// Ranged: only shoot if an enemy is within shoot range (no move/chase).
+				// When we are in/approaching Tend/Rescue, prevent the patient from continuing
+				// their combat job while we’re able to start tending (fixes "medic stuck +
+				// patient keeps fighting").
+				bool canTouchNow = canTendNow(pawn, heldPatient);
+
 				if (medicIsActiveMedical)
 				{
 					// Stop movement drift + prevent job-queue switching.
 					heldPatient.pather?.StopDead();
 					heldPatient.jobs?.ClearQueuedJobs();
 
-					// If the patient is currently on a non-attack job, interrupt it.
-					// This keeps them from Rest/Move/Chase/Haul loops while being tended.
+					// Interrupt the patient's current job:
+					// - If it's non-attack: always interrupt.
+					// - If it's attack/shoot/ranged: only interrupt once we can actually start Tend/Rescue now.
 					if (heldPatient.CurJob != null && heldPatient.CurJob.def != null)
 					{
 						JobDef d = heldPatient.CurJob.def;
@@ -5128,7 +5121,15 @@ namespace ArgrillianThreat
 							));
 
 						if (!isAttackOrShoot)
+						{
 							heldPatient.jobs.EndCurrentJob(JobCondition.InterruptForced);
+						}
+						else if (canTouchNow)
+						{
+							// Critical: if we can start Tend/Rescue now, cancel the patient's combat job
+							// so RimWorld doesn't keep them on offense while the medic is ready.
+							heldPatient.jobs.EndCurrentJob(JobCondition.InterruptForced);
+						}
 					}
 
 					// IMPORTANT: we do NOT force-start an attack job here.
@@ -5143,6 +5144,7 @@ namespace ArgrillianThreat
 				if (!canTendNow(pawn, heldPatient))
 				{
 					Pawn bestCandidate = FindBestPatient(pawn);
+
 					if (bestCandidate != null && bestCandidate != heldPatient)
 					{
 						// Prefer downed over merely-injured.
