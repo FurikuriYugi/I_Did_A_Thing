@@ -4940,28 +4940,55 @@ namespace ArgrillianThreat
 
 			foreach (Pawn other in pawn.Map.mapPawns.AllPawnsSpawned)
 			{
-				if (other == null || other == pawn)
+				if (other == null || other == pawn) continue;
+
+				if (!other.Spawned || other.Dead) continue;
+
+				if (!other.RaceProps.Humanlike) continue;
+
+				// Only own-faction tend/rescue
+				if (pawn.HostileTo(other)) continue;
+
+				// IMPORTANT: do NOT require canTendNow(...) here.
+				// When the patient is "about to" become eligible (stability transition tick),
+				// requiring canTendNow can cause this JobGiver to return null for that tick,
+				// allowing normal job arbitration to take over (hauling/moving/etc).
+				float hpPct = other.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
+				if (hpPct > 0.95f) continue;
+
+				bool bleeding = HasBloodLossStatic(other);
+				bool serious = hpPct <= treatBelowHealthPercent;
+
+				// Must be either downed, bleeding, or serious-enough
+				if (!bleeding && !serious && !other.Downed) continue;
+
+				// Distance gate (but don't use stability/tick-gates here)
+				float distSqr = (other.Position - pawn.Position).LengthHorizontalSquared;
+				float maxDist = combatTendMaxDistance;
+				if (distSqr > (maxDist * maxDist))
 					continue;
 
-				if (!other.Spawned || other.Dead)
+				// Reservation gate: we still must be able to reserve for the tend pipeline.
+				if (!CanReserveThingForPatient(pawn, other, other))
 					continue;
 
-				if (!other.RaceProps.Humanlike)
+				// If this patient is already being tended/rescued by someone else, skip.
+				if (!CanReserveTendTarget(pawn, other))
 					continue;
 
-				if (!pawn.HostileTo(other))
+				// Optional: If the patient is already in tend/rescue, we can still lock/keep pinned.
+				// This prevents "lose hold for one tick" behavior.
+				if (candidate == null)
 				{
-					if (canTendNow(pawn, other))
+					candidate = other;
+				}
+				else
+				{
+					float dCand = (candidate.Position - pawn.Position).LengthHorizontalSquared;
+					float dNew = (other.Position - pawn.Position).LengthHorizontalSquared;
+					if (dNew < dCand)
 					{
-						if (candidate == null)
-							candidate = other;
-						else
-						{
-							float dCand = (candidate.Position - pawn.Position).LengthHorizontalSquared;
-							float dNew = (other.Position - pawn.Position).LengthHorizontalSquared;
-							if (dNew < dCand)
-								candidate = other;
-						}
+						candidate = other;
 					}
 				}
 			}
@@ -4970,20 +4997,7 @@ namespace ArgrillianThreat
 
 			LockPatientToMedic(pawn, candidate);
 
-			// Immediately commit to the medical pipeline job to prevent the utility layer
-			// from steering into normal jobs during the transition tick(s).
-			if (canTendNow(pawn, candidate))
-			{
-				return JobMaker.MakeJob(JobDefOf.TendPatient, candidate);
-			}
-
-			if (candidate.Downed)
-			{
-				Building_Bed bed;
-				if (TryGetRescueBedForPatient(pawn, candidate, out bed))
-					return JobMaker.MakeJob(JobDefOf.Rescue, candidate, bed);
-			}
-
+			// After locking, the next tick should re-enter the heldPatient path above.
 			return JobMaker.MakeJob(JobDefOf.Wait, 5);
 		}
 
