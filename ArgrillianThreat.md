@@ -4854,6 +4854,8 @@ namespace ArgrillianThreat
 
 		// NEW: keep the patient from starting/continuing other jobs while a combat medic is committing to Rescue/Tend.
 		// This prevents "patient keeps attacking/hauling/moving" so the medic can actually complete tending/rescue.
+		// -------------------- PATCH 1: LockPatientToMedic --------------------
+		// This prevents the "wiggle/standing/hauling loop" without breaking the tend/rescue pipeline.
 		private static void LockPatientToMedic(Pawn medic, Pawn patient)
 		{
 			if (patient == null || patient.Dead) return;
@@ -4864,24 +4866,16 @@ namespace ArgrillianThreat
 			// Stop movement so they don't keep trying to flee/turn/position mid-tend.
 			patient.pather?.StopDead();
 
-			// IMPORTANT FIX: clear queued non-medical jobs during active tend/rescue.
-			// This prevents the patient from running hauling/wearing/etc. while the medic is tending.
-			patient.jobs?.StopAll(true);
-
-			// Force a safe “hold” so the patient can't resume queued work while locked.
-			var holdJob = JobMaker.MakeJob(JobDefOf.Wait, patient.Position);
-
-			// RELEASE RELIABILITY FIX:
-			// You previously used a massive expiry (600000), which can leave patients stuck
-			// if ReleaseForMedic isn't called immediately after Tend finishes.
-			// Keep this bounded so the patient recovers quickly even in edge cases.
-			holdJob.expiryInterval = 600; // ~50 seconds at 60 ticks/sec? (in-game ticks); tweak if needed.
-
-			// Put the hold at the front so it takes over immediately.
-			patient.jobs?.jobQueue?.EnqueueFirst(holdJob);
+			// IMPORTANT:
+			// Do NOT StopAll(true) here and do NOT inject a Wait job with EnqueueFirst.
+			// Those can destabilize the job arbitration moment when the patient flips
+			// between "injured" and "downed", leading to haul/meal/move fallthrough loops.
+			//
+			// The medical job giver should be the one that selects Tend/Rescue jobs when eligible.
 		}
 
 		// (Existing class continues below)
+		// This method is broken and needs to be recreated it is left here for refrence only
 		protected override Job TryGiveJob(Pawn pawn)
 		{
 			if (pawn == null || pawn.Dead || pawn.Map == null) return null;
