@@ -1634,7 +1634,9 @@ namespace ArgrillianThreat
 
 			Pawn med = nearestMedic;
 			if (med == null)
+			{
 				med = FindNearestMedic(pawn, map, patientRetreatPreferMedicRadius, requireCombatMedicOrEither: false);
+			}
 
 			float safeDistance = patientRetreatSafeDistanceFromHostile;
 
@@ -5203,7 +5205,7 @@ namespace ArgrillianThreat
 				// Keep the medic in the medical pipeline without tend/rescue,
 				// but DO NOT just Wait (it leaves medic unreachable and causes the patient to keep fighting).
 				// Instead, move toward the patient to make CanReach(...Touch...) become true.
-				return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
+				return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, FindBestTendSpot(pawn, heldPatient, radius: combatTendMaxDistance));
 			}
 
 			return JobMaker.MakeJob(JobDefOf.Wait, 60);
