@@ -2878,10 +2878,14 @@ namespace ArgrillianThreat
 	{
 		public bool pursueAdvance = true;
 		public bool guardFellowPawns = true;
+
 		public bool squadMode = false;
 
 		public bool finishOff = false;
 		public bool huntHumans = false;
+
+		private static bool loggedFinishOffTogglesOnce;
+		private static bool loggedThreatSettingsGizmosOnce;
 
 		public void ExposeData()
 		{
@@ -2895,43 +2899,70 @@ namespace ArgrillianThreat
 
 		public override IEnumerable<Gizmo> CompGetGizmosExtra()
 		{
-			foreach (Gizmo g in base.CompGetGizmosExtra())
-				yield return g;
+			var sw = new System.Diagnostics.Stopwatch();
+			sw.Start();
 
-			yield return ArgrillianGizmoHelpers.Toggle(
-				"Pursue/Advance",
-				"ON: advance/flank/seek firing positions. OFF: take cover/hold until close enough, then pop out.",
-				() => pursueAdvance,
-				() => pursueAdvance = !pursueAdvance
-			);
+			if (!loggedThreatSettingsGizmosOnce)
+			{
+				// Intentionally no-op: we only want to avoid extra formatting allocations.
+			}
 
-			yield return ArgrillianGizmoHelpers.Toggle(
-				"Guard fellow pawns",
-				"ON: assist allies under attack and help them regorge.",
-				() => guardFellowPawns,
-				() => guardFellowPawns = !guardFellowPawns
-			);
+			try
+			{
+				foreach (Gizmo g in base.CompGetGizmosExtra())
+					yield return g;
 
-			yield return ArgrillianGizmoHelpers.Toggle(
-				"Squad mode",
-				"ON: keep a tighter unit and reposition together for advantage.",
-				() => squadMode,
-				() => squadMode = !squadMode
-			);
+				yield return ArgrillianGizmoHelpers.Toggle(
+					"Pursue/Advance",
+					"ON: advance/flank/seek firing positions. OFF: take cover/hold until close enough, then pop out.",
+					() => pursueAdvance,
+					() => pursueAdvance = !pursueAdvance
+				);
 
-			yield return ArgrillianGizmoHelpers.Toggle(
-				"Finish Off",
-				"ON: actively kill downed hostiles. OFF: ignore downed hostiles (current behavior).",
-				() => finishOff,
-				() => finishOff = !finishOff
-			);
+				yield return ArgrillianGizmoHelpers.Toggle(
+					"Guard fellow pawns",
+					"ON: assist allies under attack and help them regorge.",
+					() => guardFellowPawns,
+					() => guardFellowPawns = !guardFellowPawns
+				);
 
-			yield return ArgrillianGizmoHelpers.Toggle(
-				"Hunt",
-				"ON: actively hunt human pawns when selecting hostile targets.",
-				() => huntHumans,
-				() => huntHumans = !huntHumans
-			);
+				yield return ArgrillianGizmoHelpers.Toggle(
+					"Squad mode",
+					"ON: keep a tighter unit and reposition together for advantage.",
+					() => squadMode,
+					() => squadMode = !squadMode
+				);
+
+				yield return ArgrillianGizmoHelpers.Toggle(
+					"Finish Off",
+					"ON: actively kill downed hostiles. OFF: ignore downed hostiles (current behavior).",
+					() => finishOff,
+					() => finishOff = !finishOff
+				);
+
+				yield return ArgrillianGizmoHelpers.Toggle(
+					"Hunt",
+					"ON: actively hunt human pawns when selecting hostile targets.",
+					() => huntHumans,
+					() => huntHumans = !huntHumans
+				);
+			}
+			finally
+			{
+				sw.Stop();
+
+				const double thresholdMs = 5.0;
+				if (!loggedThreatSettingsGizmosOnce && sw.Elapsed.TotalMilliseconds >= thresholdMs)
+				{
+					loggedThreatSettingsGizmosOnce = true;
+					Log.Message($"[ArgrillianThreat] CompGetGizmosExtra(ThreatSettings) slow: {sw.Elapsed.TotalMilliseconds:0.00} ms parent={(parent != null ? parent.ToString() : "null")}");
+				}
+
+				if (!loggedFinishOffTogglesOnce)
+				{
+					// No extra per-tick logging; toggle cost will be captured through Gizmos creation timing.
+				}
+			}
 		}
 	}
 
@@ -2954,6 +2985,8 @@ namespace ArgrillianThreat
 
 		private static readonly Dictionary<int, List<Pawn>> medicsByMapId = new Dictionary<int, List<Pawn>>();
 		private static readonly Dictionary<int, HashSet<int>> medicIdsByMapId = new Dictionary<int, HashSet<int>>();
+
+		private static bool loggedMedicGizmosOnce;
 
 		private static void EnsureMapBuckets(int mapId)
 		{
@@ -3044,57 +3077,75 @@ namespace ArgrillianThreat
 
 		public override IEnumerable<Gizmo> CompGetGizmosExtra()
 		{
-			foreach (Gizmo g in base.CompGetGizmosExtra())
-				yield return g;
+			var sw = new System.Diagnostics.Stopwatch();
+			sw.Start();
 
-			yield return ArgrillianGizmoHelpers.Toggle(
-				"Medic",
-				"ON: this pawn will triage/tend/haul injured allies.",
-				() => isMedic,
-				() =>
-				{
-					isMedic = !isMedic;
+			try
+			{
+				foreach (Gizmo g in base.CompGetGizmosExtra())
+					yield return g;
 
-					// Turning medic on registers this pawn.
-					if (isMedic)
+				yield return ArgrillianGizmoHelpers.Toggle(
+					"Medic",
+					"ON: this pawn will triage/tend/haul injured allies.",
+					() => isMedic,
+					() =>
 					{
-						if (parent is Pawn pawn) RegisterMedic(pawn);
-					}
-					else
-					{
-						combatMedic = false;
-						assignedPawnThingID = -1;
-						if (parent is Pawn pawn) UnregisterMedic(pawn);
-					}
-				}
-			);
+						isMedic = !isMedic;
 
-			yield return ArgrillianGizmoHelpers.Toggle(
-				"Combat medic",
-				"ON: protects patient by taking cover out of line of sight and only attacks when enemies are very close to the patient.",
-				() => combatMedic,
-				() =>
-				{
-					combatMedic = !combatMedic;
-
-					// combat medic implies medic.
-					if (combatMedic)
-						isMedic = true;
-
-					// If this pawn is already on the map, update the relevant registration.
-					if (parent is Pawn pawn)
-					{
-						if (combatMedic)
-							RegisterMedic(pawn);
+						// Turning medic on registers this pawn.
+						if (isMedic)
+						{
+							if (parent is Pawn pawn) RegisterMedic(pawn);
+						}
 						else
-							UnregisterMedic(pawn);
+						{
+							combatMedic = false;
+							assignedPawnThingID = -1;
+							if (parent is Pawn pawn) UnregisterMedic(pawn);
+						}
 					}
+				);
 
-					// If toggling combat medic off, unassign it.
-					if (!combatMedic)
-						assignedPawnThingID = -1;
+				yield return ArgrillianGizmoHelpers.Toggle(
+					"Combat medic",
+					"ON: protects patient by taking cover out of line of sight and only attacks when enemies are very close to the patient.",
+					() => combatMedic,
+					() =>
+					{
+						combatMedic = !combatMedic;
+
+						// combat medic implies medic.
+						if (combatMedic)
+							isMedic = true;
+
+						// If this pawn is already on the map, update the relevant registration.
+						if (parent is Pawn pawn)
+						{
+							if (combatMedic)
+								RegisterMedic(pawn);
+							else
+								UnregisterMedic(pawn);
+						}
+
+						// If toggling combat medic off, unassign it.
+						if (!combatMedic)
+							assignedPawnThingID = -1;
+					}
+				);
+			}
+			finally
+			{
+				sw.Stop();
+
+				// Player.log only if slow (no spam). Threshold tuned for menu/startup lag.
+				const double thresholdMs = 5.0;
+				if (!loggedMedicGizmosOnce && sw.Elapsed.TotalMilliseconds >= thresholdMs)
+				{
+					loggedMedicGizmosOnce = true;
+					Log.Message($"[ArgrillianThreat] CompGetGizmosExtra(MedicSettings) slow: {sw.Elapsed.TotalMilliseconds:0.00} ms parent={(parent != null ? parent.ToString() : "null")}");
 				}
-			);
+			}
 		}
 
 		public void ExposeData()
