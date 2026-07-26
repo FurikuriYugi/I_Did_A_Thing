@@ -4894,8 +4894,8 @@ namespace ArgrillianThreat
 			Pawn heldPatient = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
 			if (heldPatient != null)
 			{
-				// Hard pin the medic to the medical pipeline.
-				// This prevents queued hauling/meal/move jobs from re-appearing while we wait for Tend/Rescue eligibility transitions.
+				// Hard pin this combat medic to the medical pipeline.
+				// Prevent queued haul/meal/move/drop jobs from reappearing and causing tend↔haul loops.
 				pawn.jobs?.ClearQueuedJobs();
 				pawn.pather?.StopDead();
 
@@ -4917,18 +4917,14 @@ namespace ArgrillianThreat
 				// Tend-first arbitration:
 				// - If tend is eligible right now, stabilize via TendPatient (never jump straight to Rescue).
 				if (canTendNow(pawn, heldPatient))
-				{
 					return JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
-				}
 
 				// - If tend is NOT eligible anymore and the patient is downed, switch to Rescue (with a bed).
 				if (heldPatient.Downed)
 				{
 					Building_Bed bed;
 					if (TryGetRescueBedForPatient(pawn, heldPatient, out bed))
-					{
 						return JobMaker.MakeJob(JobDefOf.Rescue, heldPatient, bed);
-					}
 
 					// No bed -> never start a broken Rescue; keep pinned to medical pipeline.
 					return JobMaker.MakeJob(JobDefOf.Wait, 60);
