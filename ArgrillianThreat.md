@@ -5032,9 +5032,8 @@ namespace ArgrillianThreat
 		{
 			bool combatMedic = pawn.GetComp<CompArgrillianMedicSettings>()?.combatMedic == true;
 
-			// NEW: Tend/Rescue stickiness / anti-preemption
-			// If this patient is already locked in this medic's medical pipeline (hold),
-			// then we must not block Tend/Rescue due to stability/tick gating.
+			// Held patient invariant: if this patient is locked into this medic's medical pipeline,
+			// tend/rescue eligibility should NOT be blocked by the patient's current combat job.
 			if (combatMedic)
 			{
 				Pawn heldPatient = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
@@ -5051,6 +5050,7 @@ namespace ArgrillianThreat
 				}
 			}
 
+			// Normal (not-held) case keeps the stricter checks you already had.
 			int stableTicksOuter = GetPatientStableTicksForTend(patient);
 			int requiredStableTicksOuter = patient.Downed ? 0 : patientStableTicksRequired;
 
@@ -5058,7 +5058,7 @@ namespace ArgrillianThreat
 			{
 				Job j = patient.CurJob;
 
-				// Don’t start Tend if the patient is actively doing combat/mobility jobs
+				// Don’t start Tend if the patient is actively doing combat/mobility jobs (only in normal case).
 				if (IsCombatAttackLikeJob(j) || IsChaseOrTacticJob(j) || IsFleeLikeJob(j) || IsHaulJob(j) || IsMealOrConsumeLikeJob(j) || j.def.defName == "ConsumeMeal")
 				{
 					return false;
@@ -5078,13 +5078,8 @@ namespace ArgrillianThreat
 				{
 					return false;
 				}
-
-				// Allowed job; continue to tend checks
 			}
 
-			// Normal (non-held) case keeps the distance gate.
-			// BUT for downed patients we should not require a tight positional distance;
-			// Rescue/Tend reachability is already validated by IsValidTendTarget(...).
 			bool distanceOk = patient.Downed ? true : pawn.Position.DistanceTo(patient.Position) <= combatTendMaxDistance;
 
 			return distanceOk &&
