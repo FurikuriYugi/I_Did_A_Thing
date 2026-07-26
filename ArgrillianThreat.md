@@ -3632,13 +3632,21 @@ namespace ArgrillianThreat
 				int now = Find.TickManager != null ? Find.TickManager.TicksGame : 0;
 				if (now - lastTick <= medicCacheTtlTicks)
 				{
+					// Avoid map-wide scans. Confirm medic id via cached combat medics only.
 					if (medicId >= 0)
 					{
-						// Only confirm using stored medic id (no full-map scan).
-						foreach (Thing t in map.spawnedThings)
+						var combatMedics = GetCombatMedics(map);
+						if (combatMedics != null)
 						{
-							if (t != null && t.thingIDNumber == medicId)
-								return t as Pawn;
+							for (int i = 0; i < combatMedics.Count; i++)
+							{
+								Pawn medic = combatMedics[i];
+								if (medic == null || medic.Dead) continue;
+								if (!medic.Spawned || medic.Map != map) continue;
+
+								if (medic.thingIDNumber == medicId)
+									return medic;
+							}
 						}
 					}
 
@@ -3646,15 +3654,15 @@ namespace ArgrillianThreat
 				}
 			}
 
-			// Refresh: iterate only cached combat medics on this map (no AllPawnsSpawned).
+			// Refresh: iterate only cached combat medics on this map (no AllPawnsSpawned / no spawnedThings).
 			Pawn found = null;
 
-			var combatMedics = GetCombatMedics(map);
-			if (combatMedics != null && combatMedics.Count > 0)
+			var combatMedics2 = GetCombatMedics(map);
+			if (combatMedics2 != null && combatMedics2.Count > 0)
 			{
-				for (int i = 0; i < combatMedics.Count; i++)
+				for (int i = 0; i < combatMedics2.Count; i++)
 				{
-					Pawn medic = combatMedics[i];
+					Pawn medic = combatMedics2[i];
 					if (medic == null || medic.Dead) continue;
 					if (!medic.Spawned || medic.Map != map) continue;
 					if (patient.Faction != null && medic.Faction != patient.Faction) continue;
