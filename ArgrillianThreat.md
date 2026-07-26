@@ -5273,11 +5273,11 @@ namespace ArgrillianThreat
 				// but DO NOT just Wait.
 				IntVec3 tendSpot = FindBestTendSpot(pawn, heldPatient, combatTendMaxDistance);
 
-				// Fallback: if spot is invalid/unusable, keep medic moving toward
-				// something deterministic (their current position is still better than
-				// feeding an invalid cell into GotoWithNoChurn).
+				// Fallback: avoid feeding an invalid/unreachable cell into Goto (causes idle/standing).
 				if (!tendSpot.IsValid)
+				{
 					tendSpot = pawn.Position;
+				}
 
 				return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, tendSpot);
 			}
