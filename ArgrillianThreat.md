@@ -4890,7 +4890,6 @@ namespace ArgrillianThreat
 			if (heldPatient != null)
 			{
 				// Hard pin this combat medic to the medical pipeline.
-				// Prevent queued haul/meal/move/drop jobs from reappearing and causing tend↔haul loops.
 				pawn.jobs?.ClearQueuedJobs();
 				pawn.pather?.StopDead();
 
@@ -4910,16 +4909,51 @@ namespace ArgrillianThreat
 				}
 
 				// Tend-first arbitration:
-				// - If tend is eligible right now, stabilize via TendPatient (never jump straight to Rescue).
+				// - If tend is eligible right now, stop just before starting Tend/Rescue.
 				if (canTendNow(pawn, heldPatient))
+				{
+					// NEW: stop the patient only when we're about to actually start tending.
+					heldPatient.pather?.StopDead();
+
+					if (heldPatient.CurJob != null && heldPatient.CurJob.def != null)
+					{
+						JobDef curDef = heldPatient.CurJob.def;
+
+						// If they are mid-non-medical movement/combat, interrupt so Tend can proceed cleanly.
+						bool isMedical =
+							curDef == JobDefOf.TendPatient ||
+							curDef == JobDefOf.Rescue;
+
+						if (!isMedical)
+							heldPatient.jobs?.EndCurrentJob(JobCondition.InterruptForced);
+					}
+
 					return JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
+				}
 
 				// - If tend is NOT eligible anymore and the patient is downed, switch to Rescue (with a bed).
 				if (heldPatient.Downed)
 				{
 					Building_Bed bed;
 					if (TryGetRescueBedForPatient(pawn, heldPatient, out bed))
+					{
+						// NEW: also stop just before starting Rescue.
+						heldPatient.pather?.StopDead();
+
+						if (heldPatient.CurJob != null && heldPatient.CurJob.def != null)
+						{
+							JobDef curDef = heldPatient.CurJob.def;
+
+							bool isMedical =
+								curDef == JobDefOf.TendPatient ||
+								curDef == JobDefOf.Rescue;
+
+							if (!isMedical)
+								heldPatient.jobs?.EndCurrentJob(JobCondition.InterruptForced);
+						}
+
 						return JobMaker.MakeJob(JobDefOf.Rescue, heldPatient, bed);
+					}
 
 					// No bed -> never start a broken Rescue; keep pinned to medical pipeline.
 					return JobMaker.MakeJob(JobDefOf.Wait, 60);
