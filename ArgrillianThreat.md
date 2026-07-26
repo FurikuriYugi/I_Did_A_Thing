@@ -4912,16 +4912,27 @@ namespace ArgrillianThreat
 					}
 				}
 
-				// If the patient is now eligible, stay in the medical pipeline.
-				// Combat-medic rule: tend first to stabilize; only rescue when tend is no longer eligible.
+				// Tend-first arbitration:
+				// - If tend is eligible right now, stabilize via TendPatient (never jump straight to Rescue).
 				if (canTendNow(pawn, heldPatient))
 				{
-					// Even when downed, "eligible" means we can stabilize/tend; do NOT jump to Rescue yet.
 					return JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
 				}
 
-				// Still not eligible: keep the medic pinned to the medical pipeline until we can tend or until your
-				// other logic explicitly decides it’s time to rescue.
+				// - If tend is NOT eligible anymore and the patient is downed, switch to Rescue (with a bed).
+				if (heldPatient.Downed)
+				{
+					Building_Bed bed = FindBestBedFor(pawn, heldPatient);
+					if (TryGetRescueBedForPatient(heldPatient, out bed) && bed != null)
+					{
+						return JobMaker.MakeJob(JobDefOf.Rescue, heldPatient, bed);
+					}
+
+					// No bed -> never start a broken Rescue; keep pinned to medical pipeline.
+					return JobMaker.MakeJob(JobDefOf.Wait, 60);
+				}
+
+				// - Otherwise, keep pinned until the patient becomes tend-eligible again.
 				return JobMaker.MakeJob(JobDefOf.Wait, 60);
 			}
 
@@ -4960,7 +4971,6 @@ namespace ArgrillianThreat
 			if (candidate == null)
 				return null;
 
-			// Lock the pipeline patient to this medic (non-destructive lock per our earlier changes).
 			LockPatientToMedic(pawn, candidate);
 
 			// After locking, the next tick should re-enter the heldPatient path above.
@@ -4974,8 +4984,7 @@ namespace ArgrillianThreat
 				return false;
 
 			Map map = patient.Map;
-			if (pawn == null || !pawn.Spawned || pawn.Map != map)
-				return false;
+			if (pawn == null || !pawn.Spawned || pawn.Map != map) return false;
 
 			// Prefer cached bed if still valid.
 			Building_Bed cached = GetCachedRescueBedForPatient(patient);
