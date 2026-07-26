@@ -4874,7 +4874,6 @@ namespace ArgrillianThreat
 			// We only hard-stop them right before Tend/Rescue starts, inside the heldPatient branch.
 		}
 
-		// (Existing class continues below)
 		protected override Job TryGiveJob(Pawn pawn)
 		{
 			if (pawn == null || pawn.Map == null) return null;
@@ -4892,6 +4891,11 @@ namespace ArgrillianThreat
 				// Hard pin this combat medic to the medical pipeline.
 				pawn.jobs?.ClearQueuedJobs();
 				pawn.pather?.StopDead();
+
+				// Critical: keep the patient from switching into normal utility jobs
+				// (haul/meal/move/etc) while we are waiting for tend eligibility.
+				// Do NOT stop movement here; allow them to keep repositioning/cover logic.
+				heldPatient.jobs?.ClearQueuedJobs();
 
 				// If we’re already on Tend/Rescue, keep targeting the held patient.
 				if (pawn.CurJob != null && pawn.CurJob.def != null)
@@ -4989,7 +4993,8 @@ namespace ArgrillianThreat
 				bool serious = hpPct <= treatBelowHealthPercent;
 
 				// Must be either downed, bleeding, or serious-enough
-				if (!bleeding && !serious && !other.Downed) continue;
+				if (!bleeding && !serious && !other.Downed)
+					continue;
 
 				// Distance gate (but don't use stability/tick-gates here)
 				float distSqr = (other.Position - pawn.Position).LengthHorizontalSquared;
@@ -5005,8 +5010,6 @@ namespace ArgrillianThreat
 				if (!CanReserveTendTarget(pawn, other))
 					continue;
 
-				// Optional: If the patient is already in tend/rescue, we can still lock/keep pinned.
-				// This prevents "lose hold for one tick" behavior.
 				if (candidate == null)
 				{
 					candidate = other;
@@ -5016,9 +5019,7 @@ namespace ArgrillianThreat
 					float dCand = (candidate.Position - pawn.Position).LengthHorizontalSquared;
 					float dNew = (other.Position - pawn.Position).LengthHorizontalSquared;
 					if (dNew < dCand)
-					{
 						candidate = other;
-					}
 				}
 			}
 
