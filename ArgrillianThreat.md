@@ -3416,30 +3416,35 @@ namespace ArgrillianThreat
 		private static int HostileMotionMaxEntries = 4096;
 		private static int HostileMotionEntryTtlTicks = 900;
 
+		private static readonly List<(int attackerId, int hostileId, int mapId)> HostileMotionPruneBuffer =
+		new List<(int, int, int)>();
+
 		private static HostileMotionSample UpdateAndGetMotion(Pawn attacker, Pawn hostile)
 		{
 			if (attacker == null || hostile == null || attacker.Map == null || hostile.Map == null)
 				return default;
 
-			int tick = Find.TickManager?.TicksGame ?? 0;
+			int tick = Find.TickManager != null ? Find.TickManager.TicksGame : 0;
 
-			// Very lightweight pruning to avoid unbounded dictionary growth.
+			// Very lightweight pruning to prevent unbounded dictionary growth.
 			if (HostileMotion.Count > HostileMotionMaxEntries)
 			{
 				HostileMotion.Clear();
 			}
 			else if (HostileMotion.Count > (HostileMotionMaxEntries * 0.75f))
 			{
-				// TTL-prune occasionally when near the cap.
-				var removeKeys = new List<(int, int, int)>();
+				// TTL-prune occasionally when near the cap (no per-call allocation).
+				HostileMotionPruneBuffer.Clear();
+
 				foreach (var kvp in HostileMotion)
 				{
 					if (!kvp.Value.initialized) continue;
 					if (tick - kvp.Value.lastTick > HostileMotionEntryTtlTicks)
-						removeKeys.Add(kvp.Key);
+						HostileMotionPruneBuffer.Add(kvp.Key);
 				}
-				for (int i = 0; i < removeKeys.Count; i++)
-					HostileMotion.Remove(removeKeys[i]);
+
+				for (int i = 0; i < HostileMotionPruneBuffer.Count; i++)
+					HostileMotion.Remove(HostileMotionPruneBuffer[i]);
 			}
 
 			var key = (attacker.thingIDNumber, hostile.thingIDNumber, attacker.Map.uniqueID);
@@ -3473,27 +3478,69 @@ namespace ArgrillianThreat
 			return v.normalized;
 		}
 
-		private Pawn FindAssignedCombatMedicForPatient(Pawn patient)
-		{
-			if (patient == null || patient.Dead || patient.Map == null) return null;
+		private static readonly Dictionary<int, int> medicThingIdByPatientId = new Dictionary<int, int>();
+		private static readonly Dictionary<int, int> medicCacheLastTickByPatientId = new Dictionary<int, int>();
+		private static int medicCacheTtlTicks = 250; // ~4 sec at 60 ticks/sec
 
-			var map = patient.Map;
+		private static Pawn FindAssignedCombatMedicForPatient(Pawn patient)
+		{
+			if (patient == null || patient.Dead || patient.Map == null)
+				return null;
+
+			Map map = patient.Map;
+			int patientId = patient.thingIDNumber;
+
+			// Fast path: cached mapping if still fresh.
+			if (medicThingIdByPatientId.TryGetValue(patientId, out int medicId))
+			{
+				int lastTick = 0;
+				medicCacheLastTickByPatientId.TryGetValue(patientId, out lastTick);
+
+				int now = Find.TickManager != null ? Find.TickManager.TicksGame : 0;
+				if (now - lastTick <= medicCacheTtlTicks)
+				{
+					if (medicId >= 0)
+					{
+						// Avoid AllPawnsSpawned scan on cache hits.
+						foreach (Thing t in map.spawnedThings)
+						{
+							if (t != null && t.thingIDNumber == medicId)
+								return t as Pawn;
+						}
+					}
+
+					// Cached id is stale/gone; fall through to slow path refresh.
+				}
+			}
+
+			// Slow path: scan only when cache is missing/stale.
+			Pawn found = null;
 
 			foreach (Pawn p in map.mapPawns.AllPawnsSpawned)
 			{
-				if (p == null || p.Dead) continue;
-				if (!p.Spawned || p.Map != map) continue;
-				if (patient.Faction == null || p.Faction == null) continue;
-				if (p.Faction != patient.Faction) continue;
+				if (p == null || p.Dead || !p.Spawned || p.Map != map)
+					continue;
+
+				if (p.Faction == null || patient.Faction == null || p.Faction != patient.Faction)
+					continue;
 
 				var medicComp = p.GetComp<CompArgrillianMedicSettings>();
-				if (medicComp == null || !medicComp.isMedic || !medicComp.combatMedic) continue;
+				if (medicComp == null || !medicComp.isMedic || !medicComp.combatMedic)
+					continue;
 
-				if (medicComp.AssignedPawn == patient)
-					return p;
+				// You confirmed public int assignedPawnThingID.
+				if (medicComp.assignedPawnThingID == patientId || medicComp.AssignedPawn == patient)
+				{
+					found = p;
+					break;
+				}
 			}
 
-			return null;
+			// Update cache (cache null as -1 to prevent repeated scans within TTL).
+			medicThingIdByPatientId[patientId] = found != null ? found.thingIDNumber : -1;
+			medicCacheLastTickByPatientId[patientId] = Find.TickManager != null ? Find.TickManager.TicksGame : 0;
+
+			return found;
 		}
 
 		private bool PatientRecentlyStableForTendOverride(Pawn patient)
