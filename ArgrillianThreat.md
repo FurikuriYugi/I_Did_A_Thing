@@ -4804,15 +4804,31 @@ namespace ArgrillianThreat
 
 		private bool HostilesPresentForMedic(Pawn medic)
 		{
-			if (medic?.Map == null) return false;
+			if (medic == null || medic.Map == null) return false;
 
-			foreach (Pawn p in medic.Map.mapPawns.AllPawnsSpawned)
+			Map map = medic.Map;
+			float searchRadius = 35f;
+
+			IntVec3 center = medic.Position;
+
+			foreach (IntVec3 c in GenRadial.RadialCellsAround(center, searchRadius, true))
 			{
-				if (p == null || p.Dead) continue;
-				if (p.Faction == null || medic.Faction == null) continue;
-				if (p.Faction == medic.Faction) continue;
+				if (!c.InBounds(map) || c.Fogged(map)) continue;
 
-				if (p.HostileTo(medic)) return true;
+				// Nearby-only: avoid map-wide pawn scans.
+				List<Thing> things = c.GetThingList(map);
+				for (int i = 0; i < things.Count; i++)
+				{
+					Thing t = things[i];
+					Pawn p = t as Pawn;
+					if (p == null || p.Dead) continue;
+
+					if (medic.Faction == null || p.Faction == null) continue;
+					if (p.Faction == medic.Faction) continue;
+					if (p == medic) continue;
+
+					if (p.HostileTo(medic)) return true;
+				}
 			}
 
 			return false;
