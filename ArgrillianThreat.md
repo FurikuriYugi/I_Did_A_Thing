@@ -4894,6 +4894,11 @@ namespace ArgrillianThreat
 			Pawn heldPatient = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
 			if (heldPatient != null)
 			{
+				// Hard pin the medic to the medical pipeline.
+				// This prevents queued hauling/meal/move jobs from re-appearing while we wait for Tend/Rescue eligibility transitions.
+				pawn.jobs?.ClearQueuedJobs();
+				pawn.pather?.StopDead();
+
 				// If we’re already on Tend/Rescue, keep targeting the held patient.
 				if (pawn.CurJob != null && pawn.CurJob.def != null)
 				{
