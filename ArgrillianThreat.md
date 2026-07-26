@@ -5056,7 +5056,11 @@ namespace ArgrillianThreat
 			{
 				Pawn heldPatient = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
 
-				bool holdActive = heldPatient != null && heldPatient == patient;
+				bool holdActive =
+					heldPatient != null &&
+					patient != null &&
+					heldPatient.thingIDNumber == patient.thingIDNumber;
+
 				if (holdActive)
 				{
 					return IsValidTendTarget(patient, pawn) &&
