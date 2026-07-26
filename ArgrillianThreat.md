@@ -4880,7 +4880,6 @@ namespace ArgrillianThreat
 		}
 
 		// (Existing class continues below)
-		// This method is broken and needs to be recreated it is left here for refrence only
 		protected override Job TryGiveJob(Pawn pawn)
 		{
 			if (pawn == null || pawn.Map == null)
@@ -4913,57 +4912,46 @@ namespace ArgrillianThreat
 					}
 				}
 
-				// If the patient is now eligible, stay in the medical pipeline (no release -> no fallthrough).
+				// If the patient is now eligible, stay in the medical pipeline.
+				// Combat-medic rule: tend first to stabilize; only rescue when tend is no longer eligible.
 				if (canTendNow(pawn, heldPatient))
 				{
-					JobDef def = heldPatient.Downed ? JobDefOf.Rescue : JobDefOf.TendPatient;
-					return JobMaker.MakeJob(def, heldPatient);
+					// Even when downed, "eligible" means we can stabilize/tend; do NOT jump to Rescue yet.
+					return JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
 				}
 
-				// Still not eligible: pin ourselves to the medical pipeline until eligibility occurs.
-				// Critical: do NOT release hold here.
+				// Still not eligible: keep the medic pinned to the medical pipeline until we can tend or until your
+				// other logic explicitly decides it’s time to rescue.
 				return JobMaker.MakeJob(JobDefOf.Wait, 60);
 			}
 
 			// No held patient: do the arbitration entry-point for medical pipeline.
-			// Find/lock the next eligible injured ally patient (retreating allies concept lives in your existing helpers).
 			// We intentionally do not queue/allow hauling/meal/move jobs until we successfully lock a patient.
 			Pawn candidate = null;
 
-			// Prefer using the same candidate-selection logic your project already uses.
-			// If your class has an existing method for selecting the retreating/tendable ally, call it here.
-			// (Keeping this small and localized to avoid signature drift in other helpers.)
+			foreach (Pawn other in pawn.Map.mapPawns.AllPawnsSpawned)
 			{
-				// Typical RimWorld pattern: scan nearby pawns; your project likely already has a filter helper.
-				// Since the repo is authoritative, keep this as the minimal “safe” acquisition stub:
-				// if you already have a method, replace this block with the project’s exact call.
-				foreach (Pawn other in pawn.Map.mapPawns.AllPawnsSpawned)
+				if (other == null || other == pawn)
+					continue;
+
+				if (!other.Spawned || other.Dead)
+					continue;
+
+				if (!other.RaceProps.Humanlike)
+					continue;
+
+				if (!pawn.HostileTo(other))
 				{
-					if (other == null || other == pawn)
-						continue;
-
-					if (!other.Spawned || other.Dead)
-						continue;
-
-					// Must be an ally and wounded enough to matter for your pipeline.
-					if (!other.RaceProps.Humanlike)
-						continue;
-
-					if (!pawn.HostileTo(other))
+					if (canTendNow(pawn, other))
 					{
-						// Use your project’s eligibility gate.
-						if (canTendNow(pawn, other))
+						if (candidate == null)
+							candidate = other;
+						else
 						{
-							// Keep the closest eligible target if your canTendNow doesn’t already encode distance.
-							if (candidate == null)
+							float dCand = (candidate.Position - pawn.Position).LengthHorizontalSquared;
+							float dNew = (other.Position - pawn.Position).LengthHorizontalSquared;
+							if (dNew < dCand)
 								candidate = other;
-							else
-							{
-								float dCand = (candidate.Position - pawn.Position).LengthHorizontalSquared;
-								float dNew = (other.Position - pawn.Position).LengthHorizontalSquared;
-								if (dNew < dCand)
-									candidate = other;
-							}
 						}
 					}
 				}
@@ -4976,8 +4964,60 @@ namespace ArgrillianThreat
 			LockPatientToMedic(pawn, candidate);
 
 			// After locking, the next tick should re-enter the heldPatient path above.
-			// We return a wait to avoid immediate job churn within the same tick.
 			return JobMaker.MakeJob(JobDefOf.Wait, 5);
+		}
+
+		private bool TryGetRescueBedForPatient(Pawn patient, out Building_Bed bed)
+		{
+			bed = null;
+			if (patient == null || patient.Dead || patient.Map == null)
+				return false;
+
+			Map map = patient.Map;
+			if (pawn == null || !pawn.Spawned || pawn.Map != map)
+				return false;
+
+			// Prefer cached bed if still valid.
+			Building_Bed cached = GetCachedRescueBedForPatient(patient);
+			if (cached != null)
+			{
+				bed = cached;
+				return CanReserveThingForPatient(pawn, cached, patient);
+			}
+
+			// Otherwise find nearest valid, reservable bed.
+			Building_Bed best = null;
+			float bestDist = float.PositiveInfinity;
+
+			foreach (Thing t in map.listerBuildings.AllBuildings)
+			{
+				Building_Bed b = t as Building_Bed;
+				if (b == null) continue;
+				if (!b.Spawned || b.Destroyed) continue;
+				if (b.Map != map) continue;
+
+				// Rough scoping: don’t scan forever.
+				float dist = b.Position.DistanceToSquared(patient.Position);
+				if (dist > (hospitalBedMaxDist * hospitalBedMaxDist))
+					continue;
+
+				// Reservation check: either we can reserve or the patient is already reserved by someone consistent.
+				if (!CanReserveThingForPatient(pawn, b, patient))
+					continue;
+
+				if (dist < bestDist)
+				{
+					bestDist = dist;
+					best = b;
+				}
+			}
+
+			if (best == null)
+				return false;
+
+			CacheRescueBedForPatient(patient, best);
+			bed = best;
+			return true;
 		}
 
 		private bool canTendNow(Pawn pawn, Pawn patient)
