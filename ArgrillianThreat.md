@@ -3410,11 +3410,50 @@ namespace ArgrillianThreat
 
 		// NOTE: This cache is used only to smooth GetDesiredCombatDistance.
 		// We prune aggressively to prevent unbounded growth on long-running saves.
+		// Replace/add near the HostileMotion fields
+
 		private static readonly Dictionary<(int attackerId, int hostileId, int mapId), HostileMotionSample> HostileMotion =
 			new Dictionary<(int, int, int), HostileMotionSample>();
 
+		private static readonly List<(int, int, int)> HostileMotionRemoveKeysBuffer = new List<(int, int, int)>(64);
+
 		private static int HostileMotionMaxEntries = 4096;
 		private static int HostileMotionEntryTtlTicks = 900;
+
+		private static void HostileMotionPruneIfNeeded(int tick)
+		{
+			// Fast path: no pruning needed.
+			int count = HostileMotion.Count;
+			if (count <= HostileMotionMaxEntries * 0.75f)
+			{
+				if (count <= HostileMotionMaxEntries)
+					return;
+
+				// If it can ever be > max without hitting the 0.75 branch, we still clear.
+				if (count <= HostileMotionMaxEntries) return;
+			}
+
+			if (count > HostileMotionMaxEntries)
+			{
+				HostileMotion.Clear();
+				return;
+			}
+
+			// TTL prune (allocation-free)
+			HostileMotionRemoveKeysBuffer.Clear();
+
+			for (var it = HostileMotion.GetEnumerator(); it.MoveNext();)
+			{
+				var kvp = it.Current;
+				if (!kvp.Value.initialized) continue;
+
+				if (tick - kvp.Value.lastTick > HostileMotionEntryTtlTicks)
+					HostileMotionRemoveKeysBuffer.Add(kvp.Key);
+			}
+
+			for (int i = 0; i < HostileMotionRemoveKeysBuffer.Count; i++)
+				HostileMotion.Remove(HostileMotionRemoveKeysBuffer[i]);
+		}
 
 		private static readonly List<(int attackerId, int hostileId, int mapId)> HostileMotionPruneBuffer =
 		new List<(int, int, int)>();
@@ -3426,26 +3465,8 @@ namespace ArgrillianThreat
 
 			int tick = Find.TickManager != null ? Find.TickManager.TicksGame : 0;
 
-			// Very lightweight pruning to prevent unbounded dictionary growth.
-			if (HostileMotion.Count > HostileMotionMaxEntries)
-			{
-				HostileMotion.Clear();
-			}
-			else if (HostileMotion.Count > (HostileMotionMaxEntries * 0.75f))
-			{
-				// TTL-prune occasionally when near the cap (no per-call allocation).
-				HostileMotionPruneBuffer.Clear();
-
-				foreach (var kvp in HostileMotion)
-				{
-					if (!kvp.Value.initialized) continue;
-					if (tick - kvp.Value.lastTick > HostileMotionEntryTtlTicks)
-						HostileMotionPruneBuffer.Add(kvp.Key);
-				}
-
-				for (int i = 0; i < HostileMotionPruneBuffer.Count; i++)
-					HostileMotion.Remove(HostileMotionPruneBuffer[i]);
-			}
+			// Very lightweight pruning to avoid unbounded dictionary growth.
+			HostileMotionPruneIfNeeded(tick);
 
 			var key = (attacker.thingIDNumber, hostile.thingIDNumber, attacker.Map.uniqueID);
 
