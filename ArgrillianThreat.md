@@ -2904,6 +2904,94 @@ namespace ArgrillianThreat
 		public bool combatMedic = false;
 		public int assignedPawnThingID = -1;
 
+		private static readonly Dictionary<int, List<Pawn>> combatMedicsByMapId = new Dictionary<int, List<Pawn>>();
+		private static readonly Dictionary<int, HashSet<int>> combatMedicIdsByMapId = new Dictionary<int, HashSet<int>>();
+
+		private static readonly Dictionary<int, List<Pawn>> medicsByMapId = new Dictionary<int, List<Pawn>>();
+		private static readonly Dictionary<int, HashSet<int>> medicIdsByMapId = new Dictionary<int, HashSet<int>>();
+
+		private static void EnsureMapBuckets(int mapId)
+		{
+			if (!combatMedicsByMapId.TryGetValue(mapId, out var _))
+				combatMedicsByMapId[mapId] = new List<Pawn>(8);
+			if (!combatMedicIdsByMapId.TryGetValue(mapId, out var _))
+				combatMedicIdsByMapId[mapId] = new HashSet<int>();
+
+			if (!medicsByMapId.TryGetValue(mapId, out var _))
+				medicsByMapId[mapId] = new List<Pawn>(8);
+			if (!medicIdsByMapId.TryGetValue(mapId, out var _))
+				medicIdsByMapId[mapId] = new HashSet<int>();
+		}
+
+		private static void RegisterMedic(Pawn pawn)
+		{
+			if (pawn == null || pawn.Dead || pawn.Map == null) return;
+
+			int mapId = pawn.Map.uniqueID;
+			EnsureMapBuckets(mapId);
+
+			int medicId = pawn.thingIDNumber;
+
+			// General medic list
+			if (medicIdsByMapId[mapId].Add(medicId))
+				medicsByMapId[mapId].Add(pawn);
+
+			// Combat medic list
+			var comp = pawn.GetComp<CompArgrillianMedicSettings>();
+			if (comp != null && comp.combatMedic)
+			{
+				if (combatMedicIdsByMapId[mapId].Add(medicId))
+					combatMedicsByMapId[mapId].Add(pawn);
+			}
+		}
+
+		private static void UnregisterMedic(Pawn pawn)
+		{
+			if (pawn == null || pawn.Dead || pawn.Map == null) return;
+
+			int mapId = pawn.Map.uniqueID;
+			EnsureMapBuckets(mapId);
+
+			int medicId = pawn.thingIDNumber;
+
+			medicIdsByMapId[mapId].Remove(medicId);
+			combatMedicIdsByMapId[mapId].Remove(medicId);
+
+			// We don't aggressively remove from Lists (cheaper). Lookups will skip stale pawns/IDs.
+		}
+
+		private static List<Pawn> GetCombatMedics(Map map)
+		{
+			if (map == null) return null;
+
+			int mapId = map.uniqueID;
+			if (!combatMedicsByMapId.TryGetValue(mapId, out var list)) return null;
+			if (!combatMedicIdsByMapId.TryGetValue(mapId, out var ids)) return null;
+
+			// Prune lazily to keep the list from accumulating dead/stale entries.
+			// This avoids AllPawnsSpawned scans.
+			for (int i = list.Count - 1; i >= 0; i--)
+			{
+				var p = list[i];
+				if (p == null || p.Dead || p.Map != map)
+				{
+					list.RemoveAt(i);
+					continue;
+				}
+
+				int pid = p.thingIDNumber;
+				var comp = p.GetComp<CompArgrillianMedicSettings>();
+				bool stillCombat = comp != null && comp.isMedic && comp.combatMedic;
+
+				if (!ids.Contains(pid) || !stillCombat)
+				{
+					list.RemoveAt(i);
+				}
+			}
+
+			return list;
+		}
+
 		public Pawn AssignedPawn
 		{
 			get => ArgrillianGizmoHelpers.FindAlivePawnByThingID(parent, assignedPawnThingID);
@@ -2921,10 +3009,18 @@ namespace ArgrillianThreat
 				() =>
 				{
 					isMedic = !isMedic;
-					if (!isMedic)
+
+					// Turning medic on registers this pawn.
+					if (isMedic)
+					{
+						combatMedic = combatMedic; // keep current combatMedic value
+						if (parent is Pawn pawn) RegisterMedic(pawn);
+					}
+					else
 					{
 						combatMedic = false;
 						assignedPawnThingID = -1;
+						if (parent is Pawn pawn) UnregisterMedic(pawn);
 					}
 				}
 			);
@@ -2936,7 +3032,23 @@ namespace ArgrillianThreat
 				() =>
 				{
 					combatMedic = !combatMedic;
-					if (combatMedic) isMedic = true;
+
+					// combat medic implies medic.
+					if (combatMedic)
+						isMedic = true;
+
+					// If this pawn is already on the map, update the relevant registration.
+					if (parent is Pawn pawn)
+					{
+						if (combatMedic)
+							RegisterMedic(pawn);
+						else
+							UnregisterMedic(pawn);
+					}
+
+					// If toggling combat medic off, unassign it.
+					if (!combatMedic)
+						assignedPawnThingID = -1;
 				}
 			);
 		}
@@ -3522,7 +3634,7 @@ namespace ArgrillianThreat
 				{
 					if (medicId >= 0)
 					{
-						// Avoid AllPawnsSpawned scan on cache hits.
+						// Only confirm using stored medic id (no full-map scan).
 						foreach (Thing t in map.spawnedThings)
 						{
 							if (t != null && t.thingIDNumber == medicId)
@@ -3530,34 +3642,36 @@ namespace ArgrillianThreat
 						}
 					}
 
-					// Cached id is stale/gone; fall through to slow path refresh.
+					// Cached id stale/gone => fall through to refresh.
 				}
 			}
 
-			// Slow path: scan only when cache is missing/stale.
+			// Refresh: iterate only cached combat medics on this map (no AllPawnsSpawned).
 			Pawn found = null;
 
-			foreach (Pawn p in map.mapPawns.AllPawnsSpawned)
+			var combatMedics = GetCombatMedics(map);
+			if (combatMedics != null && combatMedics.Count > 0)
 			{
-				if (p == null || p.Dead || !p.Spawned || p.Map != map)
-					continue;
-
-				if (p.Faction == null || patient.Faction == null || p.Faction != patient.Faction)
-					continue;
-
-				var medicComp = p.GetComp<CompArgrillianMedicSettings>();
-				if (medicComp == null || !medicComp.isMedic || !medicComp.combatMedic)
-					continue;
-
-				// You confirmed public int assignedPawnThingID.
-				if (medicComp.assignedPawnThingID == patientId || medicComp.AssignedPawn == patient)
+				for (int i = 0; i < combatMedics.Count; i++)
 				{
-					found = p;
-					break;
+					Pawn medic = combatMedics[i];
+					if (medic == null || medic.Dead) continue;
+					if (!medic.Spawned || medic.Map != map) continue;
+					if (patient.Faction != null && medic.Faction != patient.Faction) continue;
+
+					var medicComp = medic.GetComp<CompArgrillianMedicSettings>();
+					if (medicComp == null || !medicComp.isMedic || !medicComp.combatMedic) continue;
+
+					// assignment is already stored on the medic
+					if (medicComp.assignedPawnThingID == patientId)
+					{
+						found = medic;
+						break;
+					}
 				}
 			}
 
-			// Update cache (cache null as -1 to prevent repeated scans within TTL).
+			// Update cache (cache null as -1 to avoid repeated refresh within TTL).
 			medicThingIdByPatientId[patientId] = found != null ? found.thingIDNumber : -1;
 			medicCacheLastTickByPatientId[patientId] = Find.TickManager != null ? Find.TickManager.TicksGame : 0;
 
