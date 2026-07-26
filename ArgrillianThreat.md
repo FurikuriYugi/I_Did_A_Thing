@@ -3611,81 +3611,6 @@ namespace ArgrillianThreat
 			return v.normalized;
 		}
 
-		private static readonly Dictionary<int, int> medicThingIdByPatientId = new Dictionary<int, int>();
-		private static readonly Dictionary<int, int> medicCacheLastTickByPatientId = new Dictionary<int, int>();
-		private static int medicCacheTtlTicks = 250; // ~4 sec at 60 ticks/sec
-
-		private static Pawn FindAssignedCombatMedicForPatient(Pawn patient)
-		{
-			if (patient == null || patient.Dead || patient.Map == null)
-				return null;
-
-			Map map = patient.Map;
-			int patientId = patient.thingIDNumber;
-
-			// Fast path: cached mapping if still fresh.
-			if (medicThingIdByPatientId.TryGetValue(patientId, out int medicId))
-			{
-				int lastTick = 0;
-				medicCacheLastTickByPatientId.TryGetValue(patientId, out lastTick);
-
-				int now = Find.TickManager != null ? Find.TickManager.TicksGame : 0;
-				if (now - lastTick <= medicCacheTtlTicks)
-				{
-					// Avoid map-wide scans. Confirm medic id via cached combat medics only.
-					if (medicId >= 0)
-					{
-						var combatMedics = GetCombatMedics(map);
-						if (combatMedics != null)
-						{
-							for (int i = 0; i < combatMedics.Count; i++)
-							{
-								Pawn medic = combatMedics[i];
-								if (medic == null || medic.Dead) continue;
-								if (!medic.Spawned || medic.Map != map) continue;
-
-								if (medic.thingIDNumber == medicId)
-									return medic;
-							}
-						}
-					}
-
-					// Cached id stale/gone => fall through to refresh.
-				}
-			}
-
-			// Refresh: iterate only cached combat medics on this map (no AllPawnsSpawned / no spawnedThings).
-			Pawn found = null;
-
-			var combatMedics2 = GetCombatMedics(map);
-			if (combatMedics2 != null && combatMedics2.Count > 0)
-			{
-				for (int i = 0; i < combatMedics2.Count; i++)
-				{
-					Pawn medic = combatMedics2[i];
-					if (medic == null || medic.Dead) continue;
-					if (!medic.Spawned || medic.Map != map) continue;
-					if (patient.Faction != null && medic.Faction != patient.Faction) continue;
-
-					var medicComp = medic.GetComp<CompArgrillianMedicSettings>();
-					if (medicComp == null || !medicComp.isMedic || !medicComp.combatMedic) continue;
-
-					// assignment is already stored on the medic
-					if (medicComp.assignedPawnThingID == patientId)
-					{
-						found = medic;
-						break;
-					}
-				}
-			}
-
-			// Update cache (cache null as -1 to avoid repeated refresh within TTL).
-			medicThingIdByPatientId[patientId] = found != null ? found.thingIDNumber : -1;
-			medicCacheLastTickByPatientId[patientId] = Find.TickManager != null ? Find.TickManager.TicksGame : 0;
-
-			return found;
-		}
-
 		private bool PatientRecentlyStableForTendOverride(Pawn patient)
 		{
 			if (patient == null || patient.Dead) return false;
@@ -4390,6 +4315,81 @@ namespace ArgrillianThreat
 			if (j.targetC.IsValid && j.targetC.Thing != null && IsMedicineThing(j.targetC.Thing)) return true;
 
 			return false;
+		}
+
+		private static readonly Dictionary<int, int> medicThingIdByPatientId = new Dictionary<int, int>();
+		private static readonly Dictionary<int, int> medicCacheLastTickByPatientId = new Dictionary<int, int>();
+		private static int medicCacheTtlTicks = 250; // ~4 sec at 60 ticks/sec
+
+		private static Pawn FindAssignedCombatMedicForPatient(Pawn patient)
+		{
+			if (patient == null || patient.Dead || patient.Map == null)
+				return null;
+
+			Map map = patient.Map;
+			int patientId = patient.thingIDNumber;
+
+			// Fast path: cached mapping if still fresh.
+			if (medicThingIdByPatientId.TryGetValue(patientId, out int medicId))
+			{
+				int lastTick = 0;
+				medicCacheLastTickByPatientId.TryGetValue(patientId, out lastTick);
+
+				int now = Find.TickManager != null ? Find.TickManager.TicksGame : 0;
+				if (now - lastTick <= medicCacheTtlTicks)
+				{
+					// Avoid map-wide scans. Confirm medic id via cached combat medics only.
+					if (medicId >= 0)
+					{
+						var combatMedics = GetCombatMedics(map);
+						if (combatMedics != null)
+						{
+							for (int i = 0; i < combatMedics.Count; i++)
+							{
+								Pawn medic = combatMedics[i];
+								if (medic == null || medic.Dead) continue;
+								if (!medic.Spawned || medic.Map != map) continue;
+
+								if (medic.thingIDNumber == medicId)
+									return medic;
+							}
+						}
+					}
+
+					// Cached id stale/gone => fall through to refresh.
+				}
+			}
+
+			// Refresh: iterate only cached combat medics on this map (no AllPawnsSpawned / no spawnedThings).
+			Pawn found = null;
+
+			var combatMedics2 = GetCombatMedics(map);
+			if (combatMedics2 != null && combatMedics2.Count > 0)
+			{
+				for (int i = 0; i < combatMedics2.Count; i++)
+				{
+					Pawn medic = combatMedics2[i];
+					if (medic == null || medic.Dead) continue;
+					if (!medic.Spawned || medic.Map != map) continue;
+					if (patient.Faction != null && medic.Faction != patient.Faction) continue;
+
+					var medicComp = medic.GetComp<CompArgrillianMedicSettings>();
+					if (medicComp == null || !medicComp.isMedic || !medicComp.combatMedic) continue;
+
+					// assignment is already stored on the medic
+					if (medicComp.assignedPawnThingID == patientId)
+					{
+						found = medic;
+						break;
+					}
+				}
+			}
+
+			// Update cache (cache null as -1 to avoid repeated refresh within TTL).
+			medicThingIdByPatientId[patientId] = found != null ? found.thingIDNumber : -1;
+			medicCacheLastTickByPatientId[patientId] = Find.TickManager != null ? Find.TickManager.TicksGame : 0;
+
+			return found;
 		}
 
 		private static bool IsValidTendTarget(Pawn patient, Pawn medic)
