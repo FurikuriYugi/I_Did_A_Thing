@@ -4916,7 +4916,7 @@ namespace ArgrillianThreat
 
 				// Attack-only enforcement DURING Tend/Rescue.
 				// Melee: only attack if an enemy is in range (no move/chase).
-				// Ranged: only shoot if an enemy is in shoot range (no move/chase).
+				// Ranged: only shoot if an enemy is within shoot range (no move/chase).
 				if (medicIsActiveMedical)
 				{
 					// Stop movement drift + prevent job-queue switching.
@@ -4932,18 +4932,19 @@ namespace ArgrillianThreat
 						bool isAttackOrShoot =
 							d == JobDefOf.AttackMelee ||
 							d == JobDefOf.AttackStatic ||
-							d.defName != null && (
-								d.defName.IndexOf("attack", StringComparison.OrdinalIgnoreCase) >= 0 ||
-								d.defName.IndexOf("shoot", StringComparison.OrdinalIgnoreCase) >= 0 ||
-								d.defName.IndexOf("range", StringComparison.OrdinalIgnoreCase) >= 0
-							);
+							(d.defName != null && (
+								d.defName.IndexOf("attack", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+								d.defName.IndexOf("shoot", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+								d.defName.IndexOf("range", System.StringComparison.OrdinalIgnoreCase) >= 0
+							));
 
 						if (!isAttackOrShoot)
 							heldPatient.jobs.EndCurrentJob(JobCondition.InterruptForced);
 					}
 
 					// IMPORTANT: we do NOT force-start an attack job here.
-					// If an enemy is already in range, RimWorld’s attack/shoot behavior will execute without needing chase/move.
+					// If an enemy is already in range, RimWorld’s attack/shoot behavior will execute
+					// without needing chase/move.
 				}
 
 				// Tend-first arbitration.
@@ -4966,10 +4967,14 @@ namespace ArgrillianThreat
 					}
 				}
 
-				// Not eligible yet: keep the medic in the medical pipeline (no haul/meal/move),
-				// but do NOT stop/kick the patient.
-				return JobMaker.MakeJob(JobDefOf.Wait, 60);
+				// Not eligible yet:
+				// Keep the medic in the medical pipeline without tend/rescue,
+				// but DO NOT just Wait (it leaves medic unreachable and causes the patient to keep fighting).
+				// Instead, move toward the patient to make CanReach(...Touch...) become true.
+				// This should avoid tend/rescue <-> drop/haul/move loops because we stay inside the heldPatient branch.
+				return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
 			}
+
 			return JobMaker.MakeJob(JobDefOf.Wait, 60);
 		}
 
