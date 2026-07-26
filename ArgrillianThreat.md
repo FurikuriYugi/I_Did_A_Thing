@@ -5204,8 +5204,8 @@ namespace ArgrillianThreat
 				// Not eligible yet:
 				// Keep the medic in the medical pipeline without tend/rescue,
 				// but DO NOT just Wait (it leaves medic unreachable and causes the patient to keep fighting).
-				// Instead, move toward the patient to make CanReach(...Touch...) become true.
-				return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, FindBestTendSpot(pawn, heldPatient, radius: combatTendMaxDistance));
+				// Instead, move toward a valid "touch" cell near the patient so CanReach(...ClosestTouch...) becomes true.
+				return JobMaker.MakeJob(JobDefOf.Goto, FindBestTendSpot(pawn, heldPatient, combatTendMaxDistance));
 			}
 
 			return JobMaker.MakeJob(JobDefOf.Wait, 60);
