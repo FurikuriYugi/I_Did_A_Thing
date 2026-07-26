@@ -4947,12 +4947,44 @@ namespace ArgrillianThreat
 					// without needing chase/move.
 				}
 
-				// Tend-first arbitration.
+				// Tend-first arbitration:
+				// If the currently held patient is NOT the most serious eligible target,
+				// release and re-lock onto the best patient. This prevents “held patient not actually
+				// top-priority -> medic drifts to next jobs / battles” behavior.
+				if (!canTendNow(pawn, heldPatient))
+				{
+					Pawn bestCandidate = FindBestPatient(pawn);
+					if (bestCandidate != null && bestCandidate != heldPatient)
+					{
+						// Prefer downed over merely-injured.
+						if (bestCandidate.Downed && !heldPatient.Downed)
+						{
+							ArgrillianMedicalState.PatientMedicHold.ReleaseForMedic(pawn);
+							ArgrillianMedicalState.PatientMedicHold.Lock(pawn, bestCandidate);
+							heldPatient = bestCandidate;
+						}
+						else
+						{
+							// Otherwise prefer lower HP% (more serious) if both are eligible candidates.
+							float heldHpPct = heldPatient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
+							float candHpPct = bestCandidate.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
+
+							if (candHpPct < heldHpPct)
+							{
+								ArgrillianMedicalState.PatientMedicHold.ReleaseForMedic(pawn);
+								ArgrillianMedicalState.PatientMedicHold.Lock(pawn, bestCandidate);
+								heldPatient = bestCandidate;
+							}
+						}
+					}
+				}
+
+				// After lock arbitration, attempt Tend/Rescue. We only leave medical pipeline when done
+				// (tended/rescued) because we never fall through to non-medical jobs while heldPatient != null.
 				if (canTendNow(pawn, heldPatient))
 				{
 					// Only at tend-start: hard-stop patient drift so tend/rescue completion isn't blocked.
 					heldPatient.pather?.StopDead();
-
 					return JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
 				}
 
@@ -4971,7 +5003,6 @@ namespace ArgrillianThreat
 				// Keep the medic in the medical pipeline without tend/rescue,
 				// but DO NOT just Wait (it leaves medic unreachable and causes the patient to keep fighting).
 				// Instead, move toward the patient to make CanReach(...Touch...) become true.
-				// This should avoid tend/rescue <-> drop/haul/move loops because we stay inside the heldPatient branch.
 				return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
 			}
 
