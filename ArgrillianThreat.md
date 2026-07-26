@@ -5048,18 +5048,15 @@ namespace ArgrillianThreat
 
 			// NEW: Tend/Rescue stickiness / anti-preemption
 			// If this patient is already locked in this medic's medical pipeline (hold),
-			// then we must not block Tend/Rescue due to medic-distance gating.
+			// then we must not block Tend/Rescue due to stability/tick gating.
 			if (combatMedic)
 			{
 				Pawn heldPatient = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
-				bool holdActive = heldPatient != null && heldPatient == patient;
-				if (heldPatient != null && heldPatient == patient)
-				{
-					int stableTicks = GetPatientStableTicksForTend(patient);
-					int requiredStableTicks = patient.Downed ? 0 : patientStableTicksRequired;
 
+				bool holdActive = heldPatient != null && heldPatient == patient;
+				if (holdActive)
+				{
 					return IsValidTendTarget(patient, pawn) &&
-						stableTicks >= requiredStableTicks &&
 						CanReserveTendTarget(pawn, patient);
 				}
 			}
