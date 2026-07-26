@@ -4889,51 +4889,8 @@ namespace ArgrillianThreat
 			Pawn heldPatient = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
 			if (heldPatient != null)
 			{
-				// If medic is actively tending/rescuing, patient becomes "attack-only".
-				bool medicIsDoingMedical =
-					pawn.CurJob != null &&
-					pawn.CurJob.def != null &&
-					(pawn.CurJob.def == JobDefOf.TendPatient || pawn.CurJob.def == JobDefOf.Rescue);
-
-				if (medicIsDoingMedical)
-				{
-					// Prevent any movement/queue-driven behavior during tend/rescue.
-					heldPatient.jobs?.ClearQueuedJobs();
-					heldPatient.pather?.StopDead();
-
-					// If patient is NOT already on an attack job, hard-cancel whatever else they were doing
-					// (including rest/move/chase), so they cannot switch into non-combat jobs.
-					if (heldPatient.CurJob == null || heldPatient.CurJob.def == null)
-					{
-						// Nothing to cancel, but ensure no queued jobs.
-					}
-					else
-					{
-						JobDef d = heldPatient.CurJob.def;
-
-						bool isAttackOnlyJob =
-							(d == JobDefOf.AttackMelee) ||
-							(d == JobDefOf.AttackStatic) ||
-							(d.defName != null && (d.defName.Contains("Attack") || d.defName.Contains("Shoot")));
-
-						// If it's not an attack-style job, end it so the pawn can't resume move/chase/rest.
-						if (!isAttackOnlyJob)
-						{
-							heldPatient.jobs.EndCurrentJob(JobCondition.InterruptForced);
-						}
-					}
-
-					// If patient is already on an attack job, we leave it alone.
-					// RimWorld will only successfully attack when an enemy is actually in range,
-					// and since we stopped movement, they won't chase/move to reach targets.
-				}
-				else
-				{
-					// While the medic is holding but NOT actively tending/rescuing yet,
-					// we do not disrupt combat behavior (the patient can attack for safety).
-				}
-
-				// If the medic is on Tend/Rescue but it is no longer valid, abort so arbitration can re-acquire later.
+				// If we are already on Tend/Rescue but tend is no longer valid/eligible,
+				// cancel the medical job so the medic can re-attempt later.
 				if (pawn.CurJob != null && pawn.CurJob.def != null)
 				{
 					if (pawn.CurJob.def == JobDefOf.TendPatient)
@@ -4952,15 +4909,53 @@ namespace ArgrillianThreat
 					}
 				}
 
-				// Tend-first arbitration (medical pipeline takes priority).
+				bool medicIsActiveMedical =
+					pawn.CurJob != null &&
+					pawn.CurJob.def != null &&
+					(pawn.CurJob.def == JobDefOf.TendPatient || pawn.CurJob.def == JobDefOf.Rescue);
+
+				// Attack-only enforcement DURING Tend/Rescue.
+				// Melee: only attack if an enemy is in range (no move/chase).
+				// Ranged: only shoot if an enemy is in shoot range (no move/chase).
+				if (medicIsActiveMedical)
+				{
+					// Stop movement drift + prevent job-queue switching.
+					heldPatient.pather?.StopDead();
+					heldPatient.jobs?.ClearQueuedJobs();
+
+					// If the patient is currently on a non-attack job, interrupt it.
+					// This keeps them from Rest/Move/Chase/Haul loops while being tended.
+					if (heldPatient.CurJob != null && heldPatient.CurJob.def != null)
+					{
+						JobDef d = heldPatient.CurJob.def;
+
+						bool isAttackOrShoot =
+							d == JobDefOf.AttackMelee ||
+							d == JobDefOf.AttackStatic ||
+							d.defName != null && (
+								d.defName.IndexOf("attack", StringComparison.OrdinalIgnoreCase) >= 0 ||
+								d.defName.IndexOf("shoot", StringComparison.OrdinalIgnoreCase) >= 0 ||
+								d.defName.IndexOf("range", StringComparison.OrdinalIgnoreCase) >= 0
+							);
+
+						if (!isAttackOrShoot)
+							heldPatient.jobs.EndCurrentJob(JobCondition.InterruptForced);
+					}
+
+					// IMPORTANT: we do NOT force-start an attack job here.
+					// If an enemy is already in range, RimWorld’s attack/shoot behavior will execute without needing chase/move.
+				}
+
+				// Tend-first arbitration.
 				if (canTendNow(pawn, heldPatient))
 				{
-					// Only right before Tend starts: hard-stop patient drift so Tend starts cleanly.
+					// Only at tend-start: hard-stop patient drift so tend/rescue completion isn't blocked.
 					heldPatient.pather?.StopDead();
+
 					return JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
 				}
 
-				// Rescue if downed and bed available.
+				// If downed and a bed exists, try Rescue.
 				if (heldPatient.Downed)
 				{
 					Building_Bed bed;
@@ -4971,8 +4966,8 @@ namespace ArgrillianThreat
 					}
 				}
 
-				// Not eligible yet: keep the medic in the medical pipeline (no haul/meal/move).
-				// Do NOT prevent patient combat while medic is NOT actively tending yet.
+				// Not eligible yet: keep the medic in the medical pipeline (no haul/meal/move),
+				// but do NOT stop/kick the patient.
 				return JobMaker.MakeJob(JobDefOf.Wait, 60);
 			}
 		}
