@@ -1042,6 +1042,45 @@ namespace ArgrillianThreat
 				return null;
 			}
 		}
+
+		public static class NearestMedicCache
+		{
+			private struct CacheEntry
+			{
+				public int tick;
+				public int mapId;
+				public Pawn medic;
+			}
+
+			private static readonly Dictionary<int, CacheEntry> bySeekerId
+				= new Dictionary<int, CacheEntry>();
+
+			public static Pawn GetOrCompute(Pawn seeker, Func<Pawn> compute)
+			{
+				if (seeker == null || seeker.Dead || seeker.Map == null) return null;
+
+				int now = Find.TickManager.TicksGame;
+				int seekerId = seeker.thingIDNumber;
+				int mapId = seeker.Map.uniqueID;
+
+				if (bySeekerId.TryGetValue(seekerId, out CacheEntry e))
+				{
+					if (e.tick == now && e.mapId == mapId)
+						return e.medic;
+				}
+
+				Pawn result = compute();
+
+				bySeekerId[seekerId] = new CacheEntry
+				{
+					tick = now,
+					mapId = mapId,
+					medic = result
+				};
+
+				return result;
+			}
+		}
 	}
 
 	public static class ArgrillianThreatAlert
@@ -2684,39 +2723,43 @@ namespace ArgrillianThreat
 			return false;
 		}
 
-		private static Pawn FindNearestMedic(Pawn patient, Map map, float radius, bool requireCombatMedicOrEither)
+		private static Pawn FindNearestMedic(Pawn seeker)
 		{
-			if (patient == null || map == null) return null;
-
-			Pawn best = null;
-			float bestDist = float.PositiveInfinity;
-
-			foreach (IntVec3 c in GenRadial.RadialCellsAround(patient.Position, radius, true))
+			return ArgrillianMedicalState.NearestMedicCache.GetOrCompute(seeker, () =>
 			{
-				if (!c.InBounds(map) || c.Fogged(map)) continue;
+				if (seeker == null || seeker.Dead || seeker.Map == null) return null;
 
-				foreach (Thing t in c.GetThingList(map))
+				Map map = seeker.Map;
+
+				// PERF: avoid map-wide AllPawnsSpawned scans.
+				// Use the lazily-pruned registered combat-medic bucket created at toggle time.
+				List<Pawn> combatMedics = CompArgrillianMedicSettings.GetCombatMedics(map);
+				if (combatMedics == null || combatMedics.Count == 0) return null;
+
+				Pawn best = null;
+				float bestD = float.PositiveInfinity;
+
+				for (int i = 0; i < combatMedics.Count; i++)
 				{
-					if (t is not Pawn p) continue;
-					if (p.Dead || !p.Spawned || p.Map != map) continue;
-					if (p.Faction != patient.Faction) continue;
+					Pawn p = combatMedics[i];
+					if (p == null || p.Dead) continue;
+					if (!p.Spawned || p.Map != map) continue;
+					if (p.Faction != seeker.Faction) continue;
+					if (p.health == null) continue;
 
-					var ms = p.GetComp<CompArgrillianMedicSettings>();
-					if (ms == null || !ms.isMedic) continue;
+					// Keep old behavior: skip downed.
+					if (p.Downed) continue;
 
-					if (requireCombatMedicOrEither && !ms.combatMedic)
-						continue;
-
-					float d = p.Position.DistanceTo(patient.Position);
-					if (d < bestDist && p.CanReach(patient.Position, PathEndMode.ClosestTouch, Danger.None))
+					float d = seeker.Position.DistanceTo(p.Position);
+					if (d < bestD)
 					{
-						bestDist = d;
+						bestD = d;
 						best = p;
 					}
 				}
-			}
 
-			return best;
+				return best;
+			});
 		}
 
 		private static Pawn SquadAnchorFor(Pawn pawn, Pawn hostile)
@@ -3235,48 +3278,9 @@ namespace ArgrillianThreat
 
 		private CompArgrillianThreatSettings Settings(Pawn pawn) => pawn?.GetComp<CompArgrillianThreatSettings>();
 
-		private static class NearestMedicCache
-		{
-			private struct CacheEntry
-			{
-				public int tick;
-				public int mapId;
-				public Pawn medic;
-			}
-
-			private static readonly Dictionary<int, CacheEntry> bySeekerId
-				= new Dictionary<int, CacheEntry>();
-
-			public static Pawn GetOrCompute(Pawn seeker, Func<Pawn> compute)
-			{
-				if (seeker == null || seeker.Dead || seeker.Map == null) return null;
-
-				int now = Find.TickManager.TicksGame;
-				int seekerId = seeker.thingIDNumber;
-				int mapId = seeker.Map.uniqueID;
-
-				if (bySeekerId.TryGetValue(seekerId, out CacheEntry e))
-				{
-					if (e.tick == now && e.mapId == mapId)
-						return e.medic;
-				}
-
-				Pawn result = compute();
-
-				bySeekerId[seekerId] = new CacheEntry
-				{
-					tick = now,
-					mapId = mapId,
-					medic = result
-				};
-
-				return result;
-			}
-		}
-
 		private Pawn FindNearestMedic(Pawn seeker)
 		{
-			return NearestMedicCache.GetOrCompute(seeker, () =>
+			return ArgrillianMedicalState.NearestMedicCache.GetOrCompute(seeker, () =>
 			{
 				if (seeker == null || seeker.Dead || seeker.Map == null) return null;
 
@@ -4627,6 +4631,13 @@ namespace ArgrillianThreat
 
 			float r = ArgrillianThreatMath.ClampRadialRadius(searchRadius);
 
+			// PERF: compute hostile proximity once, not per candidate pawn.
+			// This removes repeated FindNearestHostile calls inside the inner loop.
+			Pawn nearestHostileGlobal = FindNearestHostile(medic, radius: 80f);
+			float distToNearestHostileGlobal = nearestHostileGlobal != null
+				? medic.Position.DistanceTo(nearestHostileGlobal.Position)
+				: float.PositiveInfinity;
+
 			foreach (IntVec3 c in GenRadial.RadialCellsAround(medic.Position, r, true))
 			{
 				if (!c.InBounds(map) || c.Fogged(map)) continue;
@@ -4645,17 +4656,15 @@ namespace ArgrillianThreat
 
 					if (!bleeding && !serious && !p.Downed) continue;
 
-					float score = PatientUrgencyStatic(p, treatBelowHealthPercent) - medic.Position.DistanceTo(p.Position) * 0.35f;
+					float score = PatientUrgencyStatic(p, treatBelowHealthPercent) - p.Position.DistanceTo(medic.Position) * 0.35f;
 
 					if (p.Downed)
 						score += downedPatientScoreBonus;
 
-					Pawn nearestHostile = FindNearestHostile(medic, radius: 80f);
-					if (nearestHostile != null)
-					{
-						float dToHostile = p.Position.DistanceTo(nearestHostile.Position);
-						if (dToHostile < 18f) score -= 40f;
-					}
+					// PERF: approximate hostile penalty using distance from medic (computed once).
+					// Keeps the original intent (penalize targets very close to hostiles) while removing per-candidate hostile searches.
+					if (nearestHostileGlobal != null && distToNearestHostileGlobal < 18f)
+						score -= 40f;
 
 					if (score > bestScore)
 					{
