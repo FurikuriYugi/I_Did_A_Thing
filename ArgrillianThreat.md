@@ -3287,18 +3287,25 @@ namespace ArgrillianThreat
 				if (seeker == null || seeker.Dead || seeker.Map == null) return null;
 
 				Map map = seeker.Map;
+
+				// PERF: avoid map-wide AllPawnsSpawned scans.
+				// Use registered combat medics created/maintained at toggle time.
+				List<Pawn> combatMedics = CompArgrillianMedicSettings.GetCombatMedics(map);
+				if (combatMedics == null || combatMedics.Count == 0) return null;
+
 				Pawn best = null;
 				float bestD = float.PositiveInfinity;
 
-				foreach (Pawn p in map.mapPawns.AllPawnsSpawned)
+				for (int i = 0; i < combatMedics.Count; i++)
 				{
+					Pawn p = combatMedics[i];
 					if (p == null || p.Dead) continue;
-					if (p.Faction != seeker.Faction) continue;
 					if (!p.Spawned || p.Map != map) continue;
-					if (p.Downed) continue;
+					if (p.Faction != seeker.Faction) continue;
+					if (p.health == null) continue;
 
-					var medicComp = p.GetComp<CompArgrillianMedicSettings>();
-					if (medicComp == null || !medicComp.isMedic) continue;
+					// Keep old behavior: skip downed.
+					if (p.Downed) continue;
 
 					float d = seeker.Position.DistanceTo(p.Position);
 					if (d < bestD)
