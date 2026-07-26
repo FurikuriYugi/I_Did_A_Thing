@@ -5195,9 +5195,24 @@ namespace ArgrillianThreat
 
 							bool targetInRangeNow = (maxDistSqr > 0.0f) ? (distSqr <= maxDistSqr) : false;
 
-							// If NOT in range, interrupt so the patient can't path/chase while medic is held.
+							// Rule: patient may attack/shoot while in range, but MUST NOT move (no chasing/advancing).
+							bool patientIsMoving = heldPatient.pather != null && heldPatient.pather.Moving;
+
 							if (!targetInRangeNow)
+							{
+								// Not in range -> stop advancing/chasing so tend can proceed.
 								heldPatient.jobs.EndCurrentJob(JobCondition.InterruptForced);
+							}
+							else
+							{
+								// In range -> allow combat, but remove drift/pathing that would derail tending.
+								// Stop movement and clear queued jobs only; do NOT EndCurrentJob for combat.
+								if (patientIsMoving)
+								{
+									heldPatient.pather?.StopDead();
+									heldPatient.jobs?.ClearQueuedJobs();
+								}
+							}
 						}
 						else
 						{
