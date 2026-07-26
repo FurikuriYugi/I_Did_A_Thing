@@ -4919,8 +4919,8 @@ namespace ArgrillianThreat
 				// - If tend is NOT eligible anymore and the patient is downed, switch to Rescue (with a bed).
 				if (heldPatient.Downed)
 				{
-					Building_Bed bed = FindBestBedFor(pawn, heldPatient);
-					if (TryGetRescueBedForPatient(heldPatient, out bed) && bed != null)
+					Building_Bed bed;
+					if (TryGetRescueBedForPatient(pawn, heldPatient, out bed))
 					{
 						return JobMaker.MakeJob(JobDefOf.Rescue, heldPatient, bed);
 					}
