@@ -4882,15 +4882,12 @@ namespace ArgrillianThreat
 		// (Existing class continues below)
 		protected override Job TryGiveJob(Pawn pawn)
 		{
-			if (pawn == null || pawn.Map == null)
-				return null;
+			if (pawn == null || pawn.Map == null) return null;
 
 			var medicComp = pawn.GetComp<CompArgrillianMedicSettings>();
-			if (medicComp == null || !medicComp.isMedic)
-				return null;
+			if (medicComp == null || !medicComp.isMedic) return null;
 
-			if (!medicComp.combatMedic)
-				return null;
+			if (!medicComp.combatMedic) return null;
 
 			// Invariant: once this combat medic is tied to a medical pipeline patient,
 			// we must not fall through into haul/meal/move/drop job selection.
@@ -4977,41 +4974,44 @@ namespace ArgrillianThreat
 			return JobMaker.MakeJob(JobDefOf.Wait, 5);
 		}
 
-		private bool TryGetRescueBedForPatient(Pawn patient, out Building_Bed bed)
+		private bool TryGetRescueBedForPatient(Pawn medic, Pawn patient, out Building_Bed bed)
 		{
 			bed = null;
-			if (patient == null || patient.Dead || patient.Map == null)
+			if (medic == null || patient == null)
+				return false;
+			if (medic.Map == null || patient.Map == null)
+				return false;
+			if (medic.Map != patient.Map)
+				return false;
+			if (patient.Dead || medic.Dead)
+				return false;
+			if (!medic.Spawned || !patient.Spawned)
 				return false;
 
-			Map map = patient.Map;
-			if (pawn == null || !pawn.Spawned || pawn.Map != map) return false;
+			Map map = medic.Map;
 
 			// Prefer cached bed if still valid.
 			Building_Bed cached = GetCachedRescueBedForPatient(patient);
 			if (cached != null)
 			{
 				bed = cached;
-				return CanReserveThingForPatient(pawn, cached, patient);
+				return CanReserveThingForPatient(medic, cached, patient);
 			}
 
-			// Otherwise find nearest valid, reservable bed.
 			Building_Bed best = null;
 			float bestDist = float.PositiveInfinity;
 
-			foreach (Thing t in map.listerBuildings.AllBuildings)
+			foreach (var b in map.listerBuildings.AllBuildingsColonistOfClass<Building_Bed>())
 			{
-				Building_Bed b = t as Building_Bed;
 				if (b == null) continue;
-				if (!b.Spawned || b.Destroyed) continue;
+				if (b.Destroyed || !b.Spawned) continue;
 				if (b.Map != map) continue;
 
-				// Rough scoping: don’t scan forever.
 				float dist = b.Position.DistanceToSquared(patient.Position);
 				if (dist > (hospitalBedMaxDist * hospitalBedMaxDist))
 					continue;
 
-				// Reservation check: either we can reserve or the patient is already reserved by someone consistent.
-				if (!CanReserveThingForPatient(pawn, b, patient))
+				if (!CanReserveThingForPatient(medic, b, patient))
 					continue;
 
 				if (dist < bestDist)
