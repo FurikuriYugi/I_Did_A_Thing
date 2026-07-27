@@ -674,6 +674,17 @@ namespace ArgrillianThreat
 				public byte source;
 			}
 
+			public static void ClearIfHostileMatches(Pawn p, int hostileId)
+			{
+				if (p == null) return;
+				if (hostileId < 0) return;
+
+				if (!byPawnId.TryGetValue(p.thingIDNumber, out var a)) return;
+				if (a.hostileId != hostileId) return;
+
+				byPawnId.Remove(p.thingIDNumber);
+			}
+
 			private static readonly Dictionary<int, Awareness> byPawnId = new Dictionary<int, Awareness>();
 			private static int lastNow = -1;
 			private static int Now => Find.TickManager.TicksGame;
@@ -1907,6 +1918,153 @@ namespace ArgrillianThreat
 
 		// ---- temp helper buffer to avoid changing too much structure yet ----
 		private static readonly List<Pawn> recipientsBufferClearOrder = new List<Pawn>(64);
+
+		// ----------------------------
+		// Hostile "call" lifecycle (event/edge based)
+		// ----------------------------
+
+		// Edge coalescing to avoid per-tick spam. Keyed by (callerPawnId, hostileThingId).
+		private static readonly Dictionary<int, int> hostileLastPublishTick = new Dictionary<int, int>();
+		private const int HostileEdgePublishCoalesceTicks = 15;
+
+		private static int HostileEdgeKey(int callerPawnId, int hostileThingId)
+		{
+			unchecked
+			{
+				return (callerPawnId * 397) ^ hostileThingId;
+			}
+		}
+
+		private static bool CanPublishHostileEdge(int edgeKey)
+		{
+			int now = Find.TickManager.TicksGame;
+
+			if (hostileLastPublishTick.TryGetValue(edgeKey, out int lastTick))
+			{
+				if (now - lastTick <= HostileEdgePublishCoalesceTicks)
+					return false;
+			}
+
+			hostileLastPublishTick[edgeKey] = now;
+			return true;
+		}
+
+		private static void BroadcastSharedInvestigate(
+			Pawn source,
+			IntVec3 lastKnownCell,
+			int hostileId,
+			float allyRadius,
+			bool squadOnly)
+		{
+			if (source == null) return;
+			if (source.Map == null) return;
+
+			MapCache cache = GetOrCreate(source.Map);
+			if (cache == null) return;
+
+			PruneRecipients(cache, source.Map);
+
+			for (int i = 0; i < cache.recipients.Count; i++)
+			{
+				Pawn p = cache.recipients[i];
+				if (p == null) continue;
+				if (p.Dead || !p.Spawned) continue;
+				if (p.Map != source.Map) continue;
+				if (p == source) continue;
+
+				if (p.Faction != source.Faction) continue;
+
+				if (squadOnly)
+				{
+					CompArgrillianThreatSettings ts = p.GetComp<CompArgrillianThreatSettings>();
+					if (ts == null || ts.squadMode != true) continue;
+				}
+
+				if (allyRadius < 0f) allyRadius = 0f;
+				if (p.Position.DistanceTo(source.Position) > allyRadius) continue;
+
+				// Don’t downgrade high-alert combatants; don’t spam already-investigating pawns.
+				if (ArgrillianThreatState.AwarenessCache.IsHighAlert(p) ||
+					ArgrillianThreatState.AwarenessCache.IsSharedInvestigate(p))
+					continue;
+
+				ArgrillianThreatState.AwarenessCache.MarkShared(p, lastKnownCell, hostileId);
+			}
+		}
+
+		// Called when a pawn has direct LOS/confirmation this tick: "I see a hostile at this location".
+		public static void NotifyPawnSeesHostile(Pawn caller, Pawn hostile, IntVec3 lastKnownCell)
+		{
+			if (caller == null || hostile == null) return;
+			if (caller.Dead || hostile.Dead) return;
+			if (caller.Map == null || hostile.Map == null) return;
+			if (caller.Map != hostile.Map) return;
+
+			int edgeKey = HostileEdgeKey(caller.thingIDNumber, hostile.thingIDNumber);
+			if (!CanPublishHostileEdge(edgeKey)) return;
+
+			// Reuse existing awareness sharing semantics:
+			// - direct caller is handled by the existing AwarenessCache.MarkDirect in JobGiver flow
+			// - others get shared investigate via BroadcastSharedAwareness (if your code treats LOS share as investigate)
+			// If you want "seen" to be high-alert instead, change BroadcastSharedAwareness call to a direct setter for recipients.
+			BroadcastSharedAwareness(
+				source: caller,
+				hostile: hostile,
+				allyRadius: 30f,
+				squadOnly: true
+			);
+		}
+
+		// Called when a pawn loses LOS but hostile isn’t dead: "lost sight; last known is X".
+		public static void NotifyPawnLostSightOfHostile(Pawn caller, Pawn hostile, IntVec3 lastKnownCell)
+		{
+			if (caller == null || hostile == null) return;
+			if (caller.Dead) return;
+			if (hostile.Dead) return;
+			if (caller.Map == null || hostile.Map == null) return;
+			if (caller.Map != hostile.Map) return;
+
+			int edgeKey = HostileEdgeKey(caller.thingIDNumber, hostile.thingIDNumber);
+			if (!CanPublishHostileEdge(edgeKey)) return;
+
+			int hostileId = hostile.thingIDNumber;
+			BroadcastSharedInvestigate(
+				source: caller,
+				lastKnownCell: lastKnownCell,
+				hostileId: hostileId,
+				allyRadius: 30f,
+				squadOnly: true
+			);
+		}
+
+		// Called when hostile is eliminated / despawned / leaves map: cancel investigate/high-alert for that hostile id.
+		public static void NotifyPawnHostileEliminated(Pawn caller, Pawn hostile)
+		{
+			if (caller == null || hostile == null) return;
+			if (caller.Map == null || hostile.Map == null) return;
+			if (caller.Map != hostile.Map) return;
+
+			int hostileId = hostile.thingIDNumber;
+
+			MapCache cache = GetOrCreate(caller.Map);
+			if (cache == null) return;
+
+			PruneRecipients(cache, caller.Map);
+
+			for (int i = 0; i < cache.recipients.Count; i++)
+			{
+				Pawn p = cache.recipients[i];
+				if (p == null) continue;
+				if (p.Dead || !p.Spawned) continue;
+				if (p.Map != caller.Map) continue;
+				if (p.Faction != caller.Faction) continue;
+
+				ArgrillianThreatState.AwarenessCache.ClearIfHostileMatches(p, hostileId);
+			}
+
+			// Also clear caller’s own awareness if it points at that hostile id.
+			ArgrillianThreatState.AwarenessCache.ClearIfHostileMatches(caller, hostileId);
+		}
 	}
 
 	public readonly struct ArgrillianThreatHostileAcquireContext
@@ -4639,6 +4797,8 @@ namespace ArgrillianThreat
 				else
 				{
 					bool hasLOS = GenSight.LineOfSight(pawn.Position, hostile.Position, map);
+
+					
 
 					// Edge publish:
 					// - Seen => tell alert system
