@@ -25,9 +25,8 @@ namespace ArgrillianThreat
 			if (thingID < 0) return null;
 			if (parent?.Map == null) return null;
 
-			return parent.Map.listerThings.AllThings
-				.OfType<Pawn>()
-				.FirstOrDefault(p => p.thingIDNumber == thingID && !p.Dead);
+			// Use the alert system cache as the authority (no map-wide scanning).
+			return ArgrillianAlertSystem.TryGetPatientFromCachedCall(parent.Map, thingID);
 		}
 	}
 
