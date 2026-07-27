@@ -1222,6 +1222,17 @@ namespace ArgrillianThreat
 			return cache;
 		}
 
+		public static bool IsPatientHeldByAnyMedic(Map map, int patientId)
+		{
+			if (map == null) return false;
+			if (patientId < 0) return false;
+
+			// PatientCall cache pruning happens inside TryGetPatientCallEntry,
+			// but held-map pruning is lightweight and only done on updates elsewhere.
+			// Here we only need the current reservation state.
+			return medicIdByPatientId.TryGetValue(patientId, out int _);
+		}
+
 		private static PatientCallSeverity ComputePatientSeverity(Pawn patient)
 		{
 			if (patient == null) return PatientCallSeverity.Downed;
