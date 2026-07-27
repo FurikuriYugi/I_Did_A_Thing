@@ -3228,41 +3228,38 @@ namespace ArgrillianThreat
 
 		public static Pawn FindNearestMedic(Pawn seeker)
 		{
-			return ArgrillianMedicalState.NearestMedicCache.GetOrCompute(seeker, () =>
+			if (seeker == null || seeker.Dead || seeker.Map == null) return null;
+
+			Map map = seeker.Map;
+
+			// PERF: avoid map-wide AllPawnsSpawned scans.
+			// Use the lazily-pruned registered combat-medic bucket created at toggle time.
+			List<Pawn> combatMedics = CompArgrillianMedicSettings.GetCombatMedics(map);
+			if (combatMedics == null || combatMedics.Count == 0) return null;
+
+			Pawn best = null;
+			float bestD = float.PositiveInfinity;
+
+			for (int i = 0; i < combatMedics.Count; i++)
 			{
-				if (seeker == null || seeker.Dead || seeker.Map == null) return null;
+				Pawn p = combatMedics[i];
+				if (p == null || p.Dead) continue;
+				if (!p.Spawned || p.Map != map) continue;
+				if (p.Faction != seeker.Faction) continue;
+				if (p.health == null) continue;
 
-				Map map = seeker.Map;
+				// Keep old behavior: skip downed.
+				if (p.Downed) continue;
 
-				// PERF: avoid map-wide AllPawnsSpawned scans.
-				// Use the lazily-pruned registered combat-medic bucket created at toggle time.
-				List<Pawn> combatMedics = CompArgrillianMedicSettings.GetCombatMedics(map);
-				if (combatMedics == null || combatMedics.Count == 0) return null;
-
-				Pawn best = null;
-				float bestD = float.PositiveInfinity;
-
-				for (int i = 0; i < combatMedics.Count; i++)
+				float d = seeker.Position.DistanceTo(p.Position);
+				if (d < bestD)
 				{
-					Pawn p = combatMedics[i];
-					if (p == null || p.Dead) continue;
-					if (!p.Spawned || p.Map != map) continue;
-					if (p.Faction != seeker.Faction) continue;
-					if (p.health == null) continue;
-
-					// Keep old behavior: skip downed.
-					if (p.Downed) continue;
-
-					float d = seeker.Position.DistanceTo(p.Position);
-					if (d < bestD)
-					{
-						bestD = d;
-						best = p;
-					}
+					bestD = d;
+					best = p;
 				}
+			}
 
-				return best;
-			});
+			return best;
 		}
 
 		private static Pawn SquadAnchorFor(Pawn pawn, Pawn hostile)
@@ -5111,6 +5108,49 @@ namespace ArgrillianThreat
 				{
 					bestScore = score;
 					best = bed;
+				}
+			}
+
+			return best;
+		}
+
+		private Pawn FindNearestHostile(Pawn medic, float radius = 80f)
+		{
+			if (medic == null || medic.Dead) return null;
+			if (medic.Map == null) return null;
+
+			Map map = medic.Map;
+
+			Pawn best = null;
+			float bestD = float.PositiveInfinity;
+
+			IntVec3 center = medic.Position;
+
+			foreach (IntVec3 c in GenRadial.RadialCellsAround(center, radius, true))
+			{
+				if (!c.InBounds(map) || c.Fogged(map)) continue;
+
+				// Nearby-only scan; no map-wide pawn iteration.
+				List<Thing> things = c.GetThingList(map);
+				for (int i = 0; i < things.Count; i++)
+				{
+					Thing t = things[i];
+					Pawn p = t as Pawn;
+					if (p == null || p.Dead) continue;
+					if (p == medic) continue;
+					if (p.Faction == null || medic.Faction == null) continue;
+
+					// Must be hostile.
+					if (!p.HostileTo(medic)) continue;
+
+					float d = medic.Position.DistanceTo(p.Position);
+					if (d > radius) continue;
+
+					if (d < bestD)
+					{
+						bestD = d;
+						best = p;
+					}
 				}
 			}
 
