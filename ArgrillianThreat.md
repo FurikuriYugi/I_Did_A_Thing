@@ -3226,7 +3226,7 @@ namespace ArgrillianThreat
 			return false;
 		}
 
-		private static Pawn FindNearestMedic(Pawn seeker)
+		public static Pawn FindNearestMedic(Pawn seeker)
 		{
 			return ArgrillianMedicalState.NearestMedicCache.GetOrCompute(seeker, () =>
 			{
