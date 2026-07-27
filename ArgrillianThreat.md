@@ -3728,117 +3728,23 @@ namespace ArgrillianThreat
 
 		private CompArgrillianThreatSettings Settings(Pawn pawn) => pawn?.GetComp<CompArgrillianThreatSettings>();
 
-		private Pawn FindNearestMedic(Pawn seeker)
-		{
-			return ArgrillianMedicalState.NearestMedicCache.GetOrCompute(seeker, () =>
-			{
-				if (seeker == null || seeker.Dead || seeker.Map == null) return null;
-
-				Map map = seeker.Map;
-
-				// PERF: avoid map-wide AllPawnsSpawned scans.
-				// Use registered combat medics bucket maintained by CompArgrillianMedicSettings.
-				List<Pawn> combatMedics = CompArgrillianMedicSettings.GetCombatMedics(map);
-				if (combatMedics == null || combatMedics.Count == 0) return null;
-
-				Pawn best = null;
-				float bestD = float.PositiveInfinity;
-
-				for (int i = 0; i < combatMedics.Count; i++)
-				{
-					Pawn p = combatMedics[i];
-					if (p == null || p.Dead) continue;
-					if (!p.Spawned || p.Map != map) continue;
-					if (p.Downed) continue;
-					if (seeker.Faction != null && p.Faction != seeker.Faction) continue;
-
-					float d = seeker.Position.DistanceTo(p.Position);
-					if (d < bestD)
-					{
-						bestD = d;
-						best = p;
-					}
-				}
-
-				return best;
-			});
-		}
-
 		private Pawn FindBestAidTargetForCombatMedic(Pawn medic, float maxRange)
 		{
 			if (medic == null || medic.Dead || medic.Map == null) return null;
 
-			var medicComp = medic.GetComp<CompArgrillianMedicSettings>();
-			Pawn assignedPatient = medicComp?.AssignedPawn;
+			// EVENT-DRIVEN: Combat medics must not scan the map for patients.
+			// The alert system maintains the active PatientCall set + prioritization (Bleed > downed).
+			// This method becomes a pure consumer of that cached state.
+			Pawn best = ArgrillianAlertSystem.GetBestPatientFromCalls(medic, maxRange);
 
-			// If the assigned patient is already being tended/rescued by someone else,
-			// don't let this combat medic start competing.
-			if (assignedPatient != null)
-			{
-				if (assignedPatient.Spawned && assignedPatient.Map == medic.Map && !assignedPatient.Dead)
-				{
-					// If we're already on a medical job for the assigned patient, keep going.
-					if (medic.CurJob != null && medic.CurJob.def != null)
-					{
-						Pawn curPatient = ArgillianThreatPatientTuning.GetPatientFromJob(medic.CurJob);
-						if ((medic.CurJob.def == JobDefOf.Rescue || medic.CurJob.def == JobDefOf.TendPatient) && curPatient == assignedPatient)
-							return assignedPatient;
-					}
+			if (best == null) return null;
+			if (best.Dead) return null;
+			if (!best.Spawned || best.Map != medic.Map) return null;
 
-					Pawn someoneElse = ArgillianThreatPatientTuning.PatientAlreadyBeingTendedOrRescuedBySomeoneElse(medic, assignedPatient);
-					if (someoneElse != null)
-						return null;
-
-					// Keep assisting until the patient is already being tended/rescued.
-					// This prevents the medic from “dropping” the assist just because HP% rises above thresholds.
-					float dAssigned = medic.Position.DistanceTo(assignedPatient.Position);
-					if (dAssigned <= maxRange)
-						return assignedPatient;
-				}
-			}
-
-			float bestScore = float.NegativeInfinity;
-			Pawn best = null;
-
-			foreach (Pawn p in medic.Map.mapPawns.AllPawnsSpawned)
-			{
-				if (p == null || p.Dead) continue;
-				if (!p.Spawned || p.Map != medic.Map) continue;
-				if (p.Faction != medic.Faction) continue;
-
-				float hpPct = p.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
-				bool downed = p.Downed;
-
-				// If not downed, it must be injured enough.
-				if (!downed && hpPct >= combatMedicAidHPPercentThreshold)
-					continue;
-
-				float d = medic.Position.DistanceTo(p.Position);
-				if (d > maxRange)
-					continue;
-
-				// Avoid picking someone already being tended/rescued by someone else.
-				// FIX: if the target is downed, we must be willing to take it even if
-				// the "already being tended/rescued" predicate is overly strict,
-				// otherwise medics will never enter tend/rescue and will fall through to
-				// fight -> meal -> haul behavior.
-				if (!downed)
-				{
-					if (ArgillianThreatPatientTuning.PatientAlreadyBeingTendedOrRescuedBySomeoneElse(medic, p) != null)
-						continue;
-				}
-
-				float score =
-					1000f * (downed ? 1f : 0.25f) +
-					(1f - hpPct) * 500f -
-					d * 2f;
-
-				if (score > bestScore)
-				{
-					bestScore = score;
-					best = p;
-				}
-			}
+			// Optional sanity: only accept if within the desired band.
+			// (GetBestPatientFromCalls may already honor range, but this keeps behavior tight.)
+			float d = medic.Position.DistanceTo(best.Position);
+			if (d > maxRange) return null;
 
 			return best;
 		}
@@ -4163,7 +4069,7 @@ namespace ArgrillianThreat
 				// so their job arbitration can transition into tending/rescue.
 				if (IsInjuredEnoughForCombatMedicToStopFighting(pawn))
 				{
-					Pawn nearestMedic = FindNearestMedic(pawn);
+					Pawn nearestMedic = ArgrillianThreatExecution.FindNearestMedic(pawn);
 
 					return ArgrillianThreatExecution.ExecutePatientRetreat(
 						pawn,
@@ -4202,7 +4108,7 @@ namespace ArgrillianThreat
 						// Treat downed as “stop fighting & get them safe” immediately.
 						if (aidTarget.Downed || aidTargetTooInjuredToFight)
 						{
-							Pawn nearestMedic = FindNearestMedic(pawn);
+							Pawn nearestMedic = ArgrillianThreatExecution.FindNearestMedic(pawn);
 
 							return ArgrillianThreatExecution.ExecutePatientRetreat(
 								pawn,
@@ -4229,7 +4135,7 @@ namespace ArgrillianThreat
 						bool patientImmediateThreat = IsImmediateThreat(aidTarget, hostile, desiredCombatDistanceNow);
 						if (patientImmediateThreat)
 						{
-							Pawn nearestMedic = FindNearestMedic(pawn);
+							Pawn nearestMedic = ArgrillianThreatExecution.FindNearestMedic(pawn);
 
 							return ArgrillianThreatExecution.ExecutePatientRetreat(
 								pawn,
@@ -4262,7 +4168,7 @@ namespace ArgrillianThreat
 
 			if (shouldRetreat && !isCombatMedic)
 			{
-				Pawn nearestMedic = FindNearestMedic(pawn);
+				Pawn nearestMedic = ArgrillianThreatExecution.FindNearestMedic(pawn);
 
 				return ArgrillianThreatExecution.ExecutePatientRetreat(
 					pawn,
@@ -4369,7 +4275,7 @@ namespace ArgrillianThreat
 
 					if (!immediateThreat && useImmediateHardGate)
 					{
-						Pawn nearestMedic = FindNearestMedic(pawn);
+						Pawn nearestMedic = ArgrillianThreatExecution.FindNearestMedic(pawn);
 						return ArgrillianThreatExecution.ExecutePatientRetreat(
 							pawn,
 							tctx,
