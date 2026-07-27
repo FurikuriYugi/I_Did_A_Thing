@@ -5077,60 +5077,6 @@ namespace ArgrillianThreat
 			return true;
 		}
 
-		private Pawn FindBestPatient(Pawn medic)
-		{
-			Map map = medic.Map;
-			Pawn best = null;
-			float bestScore = float.NegativeInfinity;
-
-			float r = ArgrillianThreatMath.ClampRadialRadius(searchRadius);
-
-			// PERF: compute hostile proximity once, not per candidate pawn.
-			// This removes repeated FindNearestHostile calls inside the inner loop.
-			Pawn nearestHostileGlobal = FindNearestHostile(medic, radius: 80f);
-			float distToNearestHostileGlobal = nearestHostileGlobal != null
-				? medic.Position.DistanceTo(nearestHostileGlobal.Position)
-				: float.PositiveInfinity;
-
-			foreach (IntVec3 c in GenRadial.RadialCellsAround(medic.Position, r, true))
-			{
-				if (!c.InBounds(map) || c.Fogged(map)) continue;
-
-				foreach (Thing t in c.GetThingList(map))
-				{
-					if (t is not Pawn p) continue;
-					if (p == medic) continue;
-					if (p.Dead || p.Faction != medic.Faction) continue;
-
-					float hpPct = p.health.summaryHealth.SummaryHealthPercent;
-					if (hpPct > 0.95f) continue;
-
-					bool bleeding = HasBloodLossStatic(p);
-					bool serious = hpPct <= treatBelowHealthPercent;
-
-					if (!bleeding && !serious && !p.Downed) continue;
-
-					float score = PatientUrgencyStatic(p, treatBelowHealthPercent) - p.Position.DistanceTo(medic.Position) * 0.35f;
-
-					if (p.Downed)
-						score += downedPatientScoreBonus;
-
-					// PERF: approximate hostile penalty using distance from medic (computed once).
-					// Keeps the original intent (penalize targets very close to hostiles) while removing per-candidate hostile searches.
-					if (nearestHostileGlobal != null && distToNearestHostileGlobal < 18f)
-						score -= 40f;
-
-					if (score > bestScore)
-					{
-						bestScore = score;
-						best = p;
-					}
-				}
-			}
-
-			return best;
-		}
-
 		private Pawn FindNearestHostile(Pawn medic, float radius)
 		{
 			Map map = medic.Map;
