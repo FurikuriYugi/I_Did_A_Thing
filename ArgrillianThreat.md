@@ -1084,6 +1084,7 @@ namespace ArgrillianThreat
 		}
 	}
 
+	// NEW: Event Driven Alert System
 	public static class ArgrillianAlertSystem
 	{
 		private sealed class MapCache
@@ -1245,6 +1246,263 @@ namespace ArgrillianThreat
 
 				ArgrillianThreatState.AwarenessCache.MarkShared(p, lastKnown, hostileId);
 			}
+		}
+
+		// ----------------------------
+		// PatientCall (event-driven)
+		// ----------------------------
+
+		private enum PatientCallSeverity : byte
+		{
+			Downed = 1,
+			Bleed = 2
+		}
+
+		private sealed class PatientCallEntry
+		{
+			public int patientId;
+			public int patientThingIdNumber;
+			public Pawn patient;
+
+			public PatientCallSeverity severity;
+
+			// For “event freshness” / coalescing:
+			// - if we receive another call for the same patientThingIdNumber, we refresh TTL
+			// - we only upgrade severity (Bleed > Downed)
+			public int lastUpdateTick;
+
+			// TTL is enforced via expiryTick derived from lastUpdateTick each cleanup.
+			public int expiryTick;
+		}
+
+		// Map-level patient call cache (keyed by patient thingIDNumber)
+		private sealed class PatientMapCache
+		{
+			public readonly Dictionary<int, PatientCallEntry> byPatientId = new Dictionary<int, PatientCallEntry>();
+			public int lastPatientPruneTick = -1;
+		}
+
+		private static readonly Dictionary<int, PatientMapCache> byPatientMapId = new Dictionary<int, PatientMapCache>();
+
+		// Soft cleanup cadence + TTL. Tune as desired.
+		private const int PatientCallPruneIntervalTicks = 60;
+		private const int PatientCallTTL_DownedTicks = 250;
+		private const int PatientCallTTL_BleedTicks = 400;
+
+		private static PatientMapCache GetOrCreatePatientCache(Map map)
+		{
+			if (map == null) return null;
+
+			int mapId = map.uniqueID;
+			if (!byPatientMapId.TryGetValue(mapId, out PatientMapCache cache))
+			{
+				cache = new PatientMapCache();
+				byPatientMapId[mapId] = cache;
+			}
+
+			return cache;
+		}
+
+		private static PatientCallSeverity ComputePatientSeverity(Pawn patient)
+		{
+			if (patient == null) return PatientCallSeverity.Downed;
+
+			// Severity ordering locked: Bleed > downed
+			// “Bleed” = has BloodLoss hediff
+			// (Using the same HasBloodLossStatic/BloodLossSeverityStatic approach you already have in this file.)
+			if (patient.health?.hediffSet != null && patient.health.hediffSet.HasHediff(HediffDefOf.BloodLoss))
+				return PatientCallSeverity.Bleed;
+
+			if (patient.Downed)
+				return PatientCallSeverity.Downed;
+
+			// If we get called for a non-downed/non-bleeding state, treat as downed-tier so it expires quickly.
+			return PatientCallSeverity.Downed;
+		}
+
+		// Prune expired / invalid entries.
+		private static void PrunePatientCalls(PatientMapCache cache, Map map)
+		{
+			if (cache == null || map == null) return;
+
+			int now = Find.TickManager.TicksGame;
+			if (cache.lastPatientPruneTick >= 0 && now - cache.lastPatientPruneTick < PatientCallPruneIntervalTicks)
+				return;
+
+			cache.lastPatientPruneTick = now;
+
+			// Remove invalid/expired
+			List<int> toRemove = null;
+
+			foreach (var kv in cache.byPatientId)
+			{
+				int id = kv.Key;
+				PatientCallEntry e = kv.Value;
+				if (e == null)
+				{
+					if (toRemove == null) toRemove = new List<int>(4);
+					toRemove.Add(id);
+					continue;
+				}
+
+				Pawn p = e.patient;
+				bool invalid =
+					p == null ||
+					p.Dead ||
+					!p.Spawned ||
+					p.Map != map;
+
+				bool expired = now >= e.expiryTick;
+
+				if (invalid || expired)
+				{
+					if (toRemove == null) toRemove = new List<int>(4);
+					toRemove.Add(id);
+				}
+			}
+
+			if (toRemove == null) return;
+
+			for (int i = 0; i < toRemove.Count; i++)
+			{
+				int id = toRemove[i];
+				cache.byPatientId.Remove(id);
+			}
+		}
+
+		// Publish/refresh a PatientCall (coalesced by patient thingIDNumber).
+		// “call trigger” locked:
+		// - self-state: when a pawn gets injured/down
+		// - observer-state: when any pawn sees injured/down
+		//
+		// This method is the single entry point you’ll call from those triggers.
+		public static void PublishPatientCall(Pawn callerOrObserver, Pawn patient, bool wasDownedOrBleedingNow)
+		{
+			if (patient == null) return;
+			if (patient.Dead) return;
+			if (patient.Map == null) return;
+			if (!patient.Spawned) return;
+
+			// Only create/update if the pawn is actually downed or bleeding (or caller said it was).
+			PatientCallSeverity newSev = ComputePatientSeverity(patient);
+
+			if (!wasDownedOrBleedingNow && newSev != PatientCallSeverity.Downed)
+			{
+				// If caller doesn't assert relevance and severity came out as downed-tier,
+				// you can tighten this later; for now keep it simple and allow downed-tier only.
+			}
+
+			PatientMapCache cache = GetOrCreatePatientCache(patient.Map);
+			if (cache == null) return;
+
+			// Keyed by patient thingIDNumber for coalescing.
+			int patientId = patient.thingIDNumber;
+			if (patientId < 0) return;
+
+			PrunePatientCalls(cache, patient.Map);
+
+			int now = Find.TickManager.TicksGame;
+
+			PatientCallEntry entry;
+			if (!cache.byPatientId.TryGetValue(patientId, out entry) || entry == null)
+			{
+				entry = new PatientCallEntry();
+				entry.patientId = patientId;
+				entry.patientThingIdNumber = patientId;
+				entry.patient = patient;
+				entry.lastUpdateTick = now;
+				entry.severity = newSev;
+
+				int ttl = (newSev == PatientCallSeverity.Bleed) ? PatientCallTTL_BleedTicks : PatientCallTTL_DownedTicks;
+				entry.expiryTick = now + ttl;
+
+				cache.byPatientId[patientId] = entry;
+				return;
+			}
+
+			// Refresh TTL + patient reference
+			entry.patient = patient;
+			entry.lastUpdateTick = now;
+
+			// Upgrade severity if needed (Bleed > downed)
+			if (newSev > entry.severity)
+				entry.severity = newSev;
+
+			int effectiveTtl = (entry.severity == PatientCallSeverity.Bleed) ? PatientCallTTL_BleedTicks : PatientCallTTL_DownedTicks;
+			entry.expiryTick = now + effectiveTtl;
+		}
+
+		// Query: pick the best patient for a medic from cached calls only.
+		// Severity ordering locked: Bleed > downed
+		// heldPatient exclusivity will be handled in JobGiver (next step).
+		public static Pawn GetBestPatientFromCalls(Pawn medic, float searchRadius)
+		{
+			if (medic == null) return null;
+			if (medic.Map == null) return null;
+			if (!medic.Spawned) return null;
+
+			PatientMapCache cache = GetOrCreatePatientCache(medic.Map);
+			if (cache == null) return null;
+
+			PrunePatientCalls(cache, medic.Map);
+
+			float r = Mathf.Max(0f, searchRadius);
+			float bestScore = float.NegativeInfinity;
+			Pawn best = null;
+
+			// Two-pass selection makes severity ordering strict:
+			// first pick Bleed, then Downed.
+			Pawn bestBleed = null;
+			float bestBleedScore = float.NegativeInfinity;
+
+			Pawn bestDowned = null;
+			float bestDownedScore = float.NegativeInfinity;
+
+			foreach (var kv in cache.byPatientId)
+			{
+				PatientCallEntry e = kv.Value;
+				if (e == null) continue;
+
+				Pawn p = e.patient;
+				if (p == null) continue;
+				if (p.Dead || !p.Spawned) continue;
+				if (p.Map != medic.Map) continue;
+
+				float dist = medic.Position.DistanceTo(p.Position);
+				if (dist > r) continue;
+
+				// Score: severity first, then urgency by HP% / downed
+				float hpPct = p.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
+				float hpUrgency = (1f - hpPct) * 300f;
+
+				float bleedBonus = (e.severity == PatientCallSeverity.Bleed) ? 250f : 0f;
+				float downedBonus = (p.Downed) ? 50f : 0f;
+
+				float score = hpUrgency + bleedBonus + downedBonus;
+
+				if (e.severity == PatientCallSeverity.Bleed)
+				{
+					if (score > bestBleedScore)
+					{
+						bestBleedScore = score;
+						bestBleed = p;
+					}
+				}
+				else
+				{
+					if (score > bestDownedScore)
+					{
+						bestDownedScore = score;
+						bestDowned = p;
+					}
+				}
+			}
+
+			// Locked ordering: Bleed > downed
+			if (bestBleed != null) best = bestBleed;
+			else best = bestDowned;
+
+			return best;
 		}
 	}
 
