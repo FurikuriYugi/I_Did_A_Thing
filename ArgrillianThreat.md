@@ -982,64 +982,56 @@ namespace ArgrillianThreat
 
 		public static class PatientMedicHold
 		{
-			private static readonly Dictionary<int, int> medicByPatient = new Dictionary<int, int>();
-			private static readonly Dictionary<int, int> patientByMedic = new Dictionary<int, int>();
+			// Medic thingID -> cached patientId (int only; Pawn resolved via ArgrillianAlertSystem lookup)
+			private static readonly Dictionary<int, int> patientIdByMedic = new Dictionary<int, int>();
 
 			public static Pawn GetHeldPatient(Pawn medic)
 			{
 				if (medic == null) return null;
+				if (medic.Map == null) return null;
+				if (!medic.Spawned) return null;
+				if (medic.Dead) return null;
 
 				int medicId = medic.thingIDNumber;
-				if (!patientByMedic.TryGetValue(medicId, out int patientId)) return null;
+				if (!patientIdByMedic.TryGetValue(medicId, out int patientId))
+					return null;
 
-				return FindPatientByThingID(medic.Map, patientId);
+				// Resolve from alert cache (no map scans).
+				return ArgrillianAlertSystem.TryGetPatientFromCachedCall(medic.Map, patientId);
 			}
-
-			
 
 			public static void Lock(Pawn medic, Pawn patient)
 			{
-				if (medic == null || patient == null || patient.Dead) return;
+				if (medic == null || patient == null) return;
+				if (medic.Dead || patient.Dead) return;
+				if (medic.Map == null || patient.Map == null) return;
+				if (medic.Map != patient.Map) return;
+				if (!medic.Spawned || !patient.Spawned) return;
 
 				int medicId = medic.thingIDNumber;
 				int patientId = patient.thingIDNumber;
 
-				patientByMedic[medicId] = patientId;
-				medicByPatient[patientId] = medicId;
+				// Enforce exclusivity inside alert system.
+				bool accepted = ArgrillianAlertSystem.TryReserveMedicForPatient(medic, patient);
+				if (!accepted) return;
+
+				patientIdByMedic[medicId] = patientId;
 			}
 
-			// IMPORTANT: replace the body of your existing "ReleaseForMedic" (or equivalent) with this logic.
+			// Release by medic only; resolves nothing; no scanning.
 			public static void ReleaseForMedic(Pawn medic)
 			{
 				if (medic == null) return;
 
 				int medicId = medic.thingIDNumber;
-				if (!patientByMedic.TryGetValue(medicId, out int patientId)) return;
+				patientIdByMedic.Remove(medicId);
 
-				patientByMedic.Remove(medicId);
+				ArgrillianAlertSystem.ReleaseMedicHold(medic);
 
-				medicByPatient.Remove(patientId);
-
-				Pawn patient = FindPatientByThingID(medic.Map, patientId);
-				if (patient == null || patient.Dead) return;
-
-				// CRITICAL: do NOT ClearQueuedJobs() or StopAll here.
-				// Clearing queued jobs during tend/rescue transition can leave the patient in a half-state
-				// (getting up / stuck moving), and then the normal utility layer can steer into hauling.
-				patient.pather?.StopDead();
-			}
-
-			private static Pawn FindPatientByThingID(Map map, int thingID)
-			{
-				if (map == null) return null;
-
-				foreach (Thing t in map.spawnedThings)
-				{
-					if (t != null && t.thingIDNumber == thingID)
-						return t as Pawn;
-				}
-
-				return null;
+				// Preserve your existing “stop drift” behavior without clearing queued jobs.
+				Pawn patient = GetHeldPatient(medic);
+				if (patient != null && !patient.Dead)
+					patient.pather?.StopDead();
 			}
 		}
 	}
@@ -1534,6 +1526,8 @@ namespace ArgrillianThreat
 			bool wasDownedOrBleedingNow = true;
 			PublishPatientCall(observer, target, wasDownedOrBleedingNow);
 		}
+
+
 	}
 
 	public readonly struct ArgrillianThreatHostileAcquireContext
