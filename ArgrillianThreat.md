@@ -562,6 +562,10 @@ namespace ArgrillianThreat
 			{
 				public int hostileId;
 				public int lastSeenTick;
+
+				// PERF: store direct hostile pawn reference so we never do map-wide
+				// pursuer.Map.mapPawns.AllPawnsSpawned scans just to resolve by thingID.
+				public Pawn hostilePawn;
 			}
 
 			private static readonly Dictionary<int, LockedTarget> lockByPawnId = new Dictionary<int, LockedTarget>();
@@ -583,7 +587,8 @@ namespace ArgrillianThreat
 				lockByPawnId[pursuer.thingIDNumber] = new LockedTarget
 				{
 					hostileId = hostile.thingIDNumber,
-					lastSeenTick = now
+					lastSeenTick = now,
+					hostilePawn = hostile
 				};
 			}
 
@@ -600,20 +605,14 @@ namespace ArgrillianThreat
 				if (now - locked.lastSeenTick > HoldAfterHostileLostTicks)
 					return null;
 
-				Pawn p = null;
-				foreach (Pawn candidate in pursuer.Map.mapPawns.AllPawnsSpawned)
-				{
-					if (candidate != null && candidate.thingIDNumber == locked.hostileId)
-					{
-						p = candidate;
-						break;
-					}
-				}
+				// PERF: never scan map pawns; validate the cached reference.
+				Pawn p = locked.hostilePawn;
 
 				if (p == null) return null;
 				if (p.Dead) return null;
 				if (!p.Spawned) return null;
 				if (pursuer.Map == null || p.Map != pursuer.Map) return null;
+				if (p.thingIDNumber != locked.hostileId) return null;
 				if (!p.HostileTo(pursuer)) return null;
 
 				return p;
