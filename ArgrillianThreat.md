@@ -2022,27 +2022,7 @@ namespace ArgrillianThreat
 			if (patient == null || patient.Map == null || patient.Dead || !patient.Spawned)
 				return false;
 
-			Map map = patient.Map;
-
-			foreach (Pawn p in map.mapPawns.AllPawnsSpawned)
-			{
-				if (p == null || p.Dead || !p.Spawned) continue;
-
-				var comp = p.GetComp<CompArgrillianMedicSettings>();
-				if (comp == null || !comp.isMedic) continue;
-
-				Job cur = p.CurJob;
-				if (cur == null) continue;
-
-				if (cur.def == JobDefOf.TendPatient || cur.def == JobDefOf.Rescue)
-				{
-					// TendPatient uses targetA as the patient pawn (vanilla style).
-					if (cur.targetA.Thing as Pawn == patient)
-						return true;
-				}
-			}
-
-			return false;
+			return ArgrillianAlertSystem.IsPatientHeldByAnyMedic(patient.Map, patient.thingIDNumber);
 		}
 
 		// -------- Patient retreat --------
