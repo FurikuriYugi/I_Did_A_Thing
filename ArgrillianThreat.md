@@ -1504,6 +1504,76 @@ namespace ArgrillianThreat
 
 			return best;
 		}
+
+		// ----------------------------
+		// PatientCall transition triggers (event publisher glue)
+		// ----------------------------
+		// These helpers are designed to be called from the existing pawn tick/state update
+		// where you already evaluate down/bleed for medic/patient logic.
+		//
+		// They are transition-based (coalesced): we only publish when a pawn *enters*
+		// downed/bleeding state, not every tick.
+		private static readonly Dictionary<int, byte> patientDownBleedStateByPawnId = new Dictionary<int, byte>();
+
+		// bit0 = downed, bit1 = bleeding
+		private static byte ComputeDownBleedState(Pawn p)
+		{
+			if (p == null || p.Dead) return 0;
+			if (!p.Spawned || p.Map == null) return 0;
+
+			byte s = 0;
+			if (p.Downed) s |= 1;
+
+			bool bleeding =
+				p.health?.hediffSet != null
+				&& p.health.hediffSet.HasHediff(HediffDefOf.BloodLoss);
+
+			if (bleeding) s |= 2;
+			return s;
+		}
+
+		// Call this from the pawn's "self-state" evaluation (once per relevant update, e.g., Think/CompTick).
+		// It will publish PatientCall on transition into downed or bleeding.
+		public static void NotifyPawnSelfState(Pawn pawn)
+		{
+			if (pawn == null) return;
+			if (pawn.Dead) return;
+
+			int id = pawn.thingIDNumber;
+			if (id < 0) return;
+
+			byte prev = 0;
+			patientDownBleedStateByPawnId.TryGetValue(id, out prev);
+
+			byte cur = ComputeDownBleedState(pawn);
+			if (cur == prev) return;
+
+			// Transition into downed/bleeding should publish immediately.
+			bool enteredDowned = ((cur & 1) != 0) && ((prev & 1) == 0);
+			bool enteredBleeding = ((cur & 2) != 0) && ((prev & 2) == 0);
+
+			if (enteredDowned || enteredBleeding)
+			{
+				bool wasDownedOrBleedingNow = enteredDowned || enteredBleeding;
+				PublishPatientCall(pawn, pawn, wasDownedOrBleedingNow);
+			}
+
+			// Keep latest state so we don't churn.
+			patientDownBleedStateByPawnId[id] = cur;
+		}
+
+		// Call this from the observer-state evaluation where you already know "observer sees target downed/bleeding".
+		// This version does NOT require the observer to track previous state; it just publishes as a call.
+		public static void NotifyObserverSeesInjury(Pawn observer, Pawn target)
+		{
+			if (target == null) return;
+			if (target.Dead) return;
+			if (target.Downed == false && (target.health?.hediffSet == null || !target.health.hediffSet.HasHediff(HediffDefOf.BloodLoss)))
+				return;
+
+			bool wasDownedOrBleedingNow = true;
+			PublishPatientCall(observer, target, wasDownedOrBleedingNow);
+		}
 	}
 
 	public readonly struct ArgrillianThreatHostileAcquireContext
