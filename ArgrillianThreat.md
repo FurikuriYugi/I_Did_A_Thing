@@ -4484,6 +4484,39 @@ namespace ArgrillianThreat
 
 		private CompArgrillianMedicSettings Settings(Pawn pawn) => pawn?.GetComp<CompArgrillianMedicSettings>();
 
+		private static readonly System.Collections.Generic.Dictionary<int, int> lastTendLockSwitchTick = new System.Collections.Generic.Dictionary<int, int>();
+
+		private static int TendNow => Find.TickManager.TicksGame;
+
+		private static int TendSwitchKey(Pawn medic, Pawn patient)
+		{
+			unchecked
+			{
+				return (medic.thingIDNumber * 397) ^ patient.thingIDNumber;
+			}
+		}
+
+		// Returns true if we should NOT switch locks yet (cooldown still active).
+		private static bool RecentlySwitchedTendLock(Pawn medic, Pawn patient, int cooldownTicks)
+		{
+			if (medic == null || patient == null) return false;
+
+			int now = TendNow;
+			int k = TendSwitchKey(medic, patient);
+
+			if (!lastTendLockSwitchTick.TryGetValue(k, out int t))
+				return false;
+
+			if (t > now) return false;
+			return (now - t) < cooldownTicks;
+		}
+
+		private static void MarkSwitchedTendLock(Pawn medic, Pawn patient)
+		{
+			if (medic == null || patient == null) return;
+			lastTendLockSwitchTick[TendSwitchKey(medic, patient)] = TendNow;
+		}
+
 		private static bool HasBloodLossStatic(Pawn p)
 		{
 			return p?.health?.hediffSet != null
@@ -5591,24 +5624,31 @@ namespace ArgrillianThreat
 
 					if (bestCandidate != null && bestCandidate != heldPatient)
 					{
-						// Prefer downed over merely-injured.
-						if (bestCandidate.Downed && !heldPatient.Downed)
+						// Cooldown: prevent rapid release/re-lock while still not eligible to tend.
+						// This keeps progress monotonic and avoids thrash when PatientCalls update.
+						if (!RecentlySwitchedTendLock(pawn, bestCandidate, minJobSwitchCooldownTicks))
 						{
-							ArgrillianMedicalState.PatientMedicHold.ReleaseForMedic(pawn);
-							ArgrillianMedicalState.PatientMedicHold.Lock(pawn, bestCandidate);
-							heldPatient = bestCandidate;
-						}
-						else
-						{
-							// Otherwise prefer lower HP% (more serious) if both are eligible candidates.
-							float heldHpPct = heldPatient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
-							float candHpPct = bestCandidate.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
-
-							if (candHpPct < heldHpPct)
+							// Prefer downed over merely-injured.
+							if (bestCandidate.Downed && !heldPatient.Downed)
 							{
 								ArgrillianMedicalState.PatientMedicHold.ReleaseForMedic(pawn);
 								ArgrillianMedicalState.PatientMedicHold.Lock(pawn, bestCandidate);
 								heldPatient = bestCandidate;
+								MarkSwitchedTendLock(pawn, heldPatient);
+							}
+							else
+							{
+								// Otherwise prefer lower HP% (more serious) if both are eligible candidates.
+								float heldHpPct = heldPatient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
+								float candHpPct = bestCandidate.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
+
+								if (candHpPct < heldHpPct)
+								{
+									ArgrillianMedicalState.PatientMedicHold.ReleaseForMedic(pawn);
+									ArgrillianMedicalState.PatientMedicHold.Lock(pawn, bestCandidate);
+									heldPatient = bestCandidate;
+									MarkSwitchedTendLock(pawn, heldPatient);
+								}
 							}
 						}
 					}
