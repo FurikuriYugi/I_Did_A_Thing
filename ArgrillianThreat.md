@@ -1387,7 +1387,7 @@ namespace ArgrillianThreat
 			PrunePatientCalls(cache, medic.Map);
 
 			float r = Mathf.Max(0f, searchRadius);
-			float bestScore = float.NegativeInfinity;
+			//float bestScore = float.NegativeInfinity;
 			Pawn best = null;
 
 			// Two-pass selection makes severity ordering strict:
@@ -1742,6 +1742,7 @@ namespace ArgrillianThreat
 			// Determine which recipients to notify:
 			// - pawns not in battle should investigate
 			// - combat pawns can respond based on your existing ExecuteAlertedMode/hostile awareness logic
+			int hostileId = hostile.thingIDNumber;
 			for (int i = cache.recipients.Count - 1; i >= 0; i--)
 			{
 				Pawn recipient = cache.recipients[i];
@@ -1755,7 +1756,7 @@ namespace ArgrillianThreat
 				//
 				// We’ll use the existing cache methods conceptually by calling the same dispatcher your patient calls use.
 				// (If this repo’s AwarenessCache naming differs, you’ll point me to the exact methods and I’ll patch.)
-				ArgrillianThreatState.AwarenessCache.MarkSharedInvestigateAt(recipient, lastKnown);
+				ArgrillianThreatState.AwarenessCache.MarkShared(recipient, lastKnown, hostileId);
 			}
 		}
 
@@ -1911,7 +1912,7 @@ namespace ArgrillianThreat
 					if (recipient.Dead) continue;
 					if (recipient.Map != map) continue;
 
-					ArgrillianThreatState.AwarenessCache.ClearSharedInvestigateAt(recipient, lastKnown);
+					ArgrillianThreatState.AwarenessCache.Clear(recipient);
 				}
 			}
 		}
@@ -1926,14 +1927,6 @@ namespace ArgrillianThreat
 		// Edge coalescing to avoid per-tick spam. Keyed by (callerPawnId, hostileThingId).
 		private static readonly Dictionary<int, int> hostileLastPublishTick = new Dictionary<int, int>();
 		private const int HostileEdgePublishCoalesceTicks = 15;
-
-		private static int HostileEdgeKey(int callerPawnId, int hostileThingId)
-		{
-			unchecked
-			{
-				return (callerPawnId * 397) ^ hostileThingId;
-			}
-		}
 
 		private static bool CanPublishHostileEdge(int edgeKey)
 		{
@@ -1990,80 +1983,6 @@ namespace ArgrillianThreat
 
 				ArgrillianThreatState.AwarenessCache.MarkShared(p, lastKnownCell, hostileId);
 			}
-		}
-
-		// Called when a pawn has direct LOS/confirmation this tick: "I see a hostile at this location".
-		public static void NotifyPawnSeesHostile(Pawn caller, Pawn hostile, IntVec3 lastKnownCell)
-		{
-			if (caller == null || hostile == null) return;
-			if (caller.Dead || hostile.Dead) return;
-			if (caller.Map == null || hostile.Map == null) return;
-			if (caller.Map != hostile.Map) return;
-
-			int edgeKey = HostileEdgeKey(caller.thingIDNumber, hostile.thingIDNumber);
-			if (!CanPublishHostileEdge(edgeKey)) return;
-
-			// Reuse existing awareness sharing semantics:
-			// - direct caller is handled by the existing AwarenessCache.MarkDirect in JobGiver flow
-			// - others get shared investigate via BroadcastSharedAwareness (if your code treats LOS share as investigate)
-			// If you want "seen" to be high-alert instead, change BroadcastSharedAwareness call to a direct setter for recipients.
-			BroadcastSharedAwareness(
-				source: caller,
-				hostile: hostile,
-				allyRadius: 30f,
-				squadOnly: true
-			);
-		}
-
-		// Called when a pawn loses LOS but hostile isn’t dead: "lost sight; last known is X".
-		public static void NotifyPawnLostSightOfHostile(Pawn caller, Pawn hostile, IntVec3 lastKnownCell)
-		{
-			if (caller == null || hostile == null) return;
-			if (caller.Dead) return;
-			if (hostile.Dead) return;
-			if (caller.Map == null || hostile.Map == null) return;
-			if (caller.Map != hostile.Map) return;
-
-			int edgeKey = HostileEdgeKey(caller.thingIDNumber, hostile.thingIDNumber);
-			if (!CanPublishHostileEdge(edgeKey)) return;
-
-			int hostileId = hostile.thingIDNumber;
-			BroadcastSharedInvestigate(
-				source: caller,
-				lastKnownCell: lastKnownCell,
-				hostileId: hostileId,
-				allyRadius: 30f,
-				squadOnly: true
-			);
-		}
-
-		// Called when hostile is eliminated / despawned / leaves map: cancel investigate/high-alert for that hostile id.
-		public static void NotifyPawnHostileEliminated(Pawn caller, Pawn hostile)
-		{
-			if (caller == null || hostile == null) return;
-			if (caller.Map == null || hostile.Map == null) return;
-			if (caller.Map != hostile.Map) return;
-
-			int hostileId = hostile.thingIDNumber;
-
-			MapCache cache = GetOrCreate(caller.Map);
-			if (cache == null) return;
-
-			PruneRecipients(cache, caller.Map);
-
-			for (int i = 0; i < cache.recipients.Count; i++)
-			{
-				Pawn p = cache.recipients[i];
-				if (p == null) continue;
-				if (p.Dead || !p.Spawned) continue;
-				if (p.Map != caller.Map) continue;
-				if (p.Faction != caller.Faction) continue;
-
-				ArgrillianThreatState.AwarenessCache.ClearIfHostileMatches(p, hostileId);
-			}
-
-			// Also clear caller’s own awareness if it points at that hostile id.
-			ArgrillianThreatState.AwarenessCache.ClearIfHostileMatches(caller, hostileId);
 		}
 	}
 
@@ -3276,12 +3195,12 @@ namespace ArgrillianThreat
 
 				bool hasLOS = GenSight.LineOfSight(pawn.Position, hostileIfAny.Position, map);
 
-				if (!hostile.Dead && hostile.Spawned && hostile.Map == pawn.Map)
+				if (!hostileIfAny.Dead && hostileIfAny.Spawned && hostileIfAny.Map == pawn.Map)
 				{
 					if (hasLOS)
-						ArgrillianAlertSystem.NotifyPawnSeesHostile(pawn, hostile, hostile.Position);
+						ArgrillianAlertSystem.NotifyPawnSeesHostile(pawn, hostileIfAny, hostileIfAny.Position);
 					else
-						ArgrillianAlertSystem.NotifyPawnLostSightOfHostile(pawn, hostile, hostile.Position);
+						ArgrillianAlertSystem.NotifyPawnLostSightOfHostile(pawn, hostileIfAny, hostileIfAny.Position);
 				}
 
 				if (hasLOS && !injuredCombatMedicStop)
@@ -4111,7 +4030,7 @@ namespace ArgrillianThreat
 		private float rangedPursuitMinApproachMultiplier = 0.60f;
 
 		// ---- combat medic aid tuning ----
-		private float combatMedicAidHPPercentThreshold = 0.75f;        // ally injured enough to trigger medic aid
+		//private float combatMedicAidHPPercentThreshold = 0.75f;        // ally injured enough to trigger medic aid
 		private float combatMedicAidMinRange = 25f;
 
 		// --- NEW: injury thresholds for combat medics / patients ---
