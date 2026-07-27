@@ -4621,61 +4621,85 @@ namespace ArgrillianThreat
 				);
 			}
 
-			bool alerted =
-				ArgrillianThreatState.AwarenessCache.IsHighAlert(pawn) ||
-				ArgrillianThreatState.AwarenessCache.IsSharedInvestigate(pawn);
+			bool alerted = ArgrillianThreatState.AwarenessCache.IsHighAlert(pawn) || ArgrillianThreatState.AwarenessCache.IsSharedInvestigate(pawn);
 
 			if (alerted && !skipDecisionTick)
 			{
-				bool hasLOS = (hostile != null && !hostile.Dead && hostile.Spawned && hostile.Map == map)
-					&& GenSight.LineOfSight(pawn.Position, hostile.Position, map);
+				bool hasValidHostile =
+					(hostile != null && !hostile.Dead && hostile.Spawned && hostile.Map == map);
 
-				if (hasLOS)
+				if (!hasValidHostile)
 				{
-					bool immediateThreat = IsImmediateThreat(pawn, hostile, desiredCombatDistanceNow);
+					// If we were tracking a hostile but it’s now eliminated/invalid for this map, cancel it once.
+					if (hostile != null)
+						ArgrillianAlertSystem.NotifyPawnHostileEliminated(pawn, hostile);
 
-					bool useImmediateHardGate = isCombatMedic || shouldRetreat || wantsPatientRetreat;
+					// Fall through: your existing logic will handle no-LOS/no-op behavior.
+				}
+				else
+				{
+					bool hasLOS = GenSight.LineOfSight(pawn.Position, hostile.Position, map);
 
-					if (!immediateThreat && useImmediateHardGate)
+					// Edge publish:
+					// - Seen => tell alert system
+					// - Lost sight => tell alert system "investigate last known"
+					// We use pawn’s current position as “caller”; lastKnownCell is stable per hostile position at publish moment.
+					if (hasLOS)
 					{
-						Pawn nearestMedic = ArgrillianThreatExecution.FindNearestMedic(pawn);
-						return ArgrillianThreatExecution.ExecutePatientRetreat(
-							pawn,
-							tctx,
-							hctx,
-							desiredCombatDistanceNow,
-							pursueAdvance: false,
-							skipDecisionTick: skipDecisionTick,
-							nearestMedic: nearestMedic,
-							patientRetreatSafeDistanceFromHostile,
-							patientRetreatSearchRadius,
-							patientRetreatPreferMedicRadius,
-							patientRetreatMinHPPercentToTreatAsPatient,
-							patientRetreatMinHPPercentToLockIn,
-							patientRetreatModeHysteresisTicks,
-							ArgrillianThreatTuning.PatientFightLockoutAfterRetreatTicks,
-							retreatMinHealthPercent,
-							losBreakBonus,
-							scanRange
-						);
+						ArgrillianAlertSystem.NotifyPawnSeesHostile(pawn, hostile, hostile.Position);
+					}
+					else
+					{
+						ArgrillianAlertSystem.NotifyPawnLostSightOfHostile(pawn, hostile, hostile.Position);
 					}
 
-					if (immediateThreat)
+					if (hasLOS)
 					{
-						Job alertedJob = ArgrillianThreatExecution.ExecuteAlertedMode(
-							pawn,
-							hostileIfAny: hctx.Hostile,
-							desiredCombatDistanceNow: desiredCombatDistanceNow,
-							losBreakBonus: losBreakBonus,
-							isRanged: hctx.IsRanged,
-							minHighAlertTicksToMove: minStepCooldownTicks,
-							scanRange: scanRange,
-							retreatMinHealthPercent: retreatMinHealthPercent,
-							lastKnownInvestigateRadius: 12f
-						);
+						bool immediateThreat = IsImmediateThreat(pawn, hostile, desiredCombatDistanceNow);
 
-						if (alertedJob != null)
-							return alertedJob;
+						bool useImmediateHardGate = isCombatMedic || shouldRetreat || wantsPatientRetreat;
+
+						if (!immediateThreat && useImmediateHardGate)
+						{
+							Pawn nearestMedic = ArgrillianThreatExecution.FindNearestMedic(pawn);
+							return ArgrillianThreatExecution.ExecutePatientRetreat(
+								pawn,
+								tctx,
+								hctx,
+								desiredCombatDistanceNow,
+								pursueAdvance: false,
+								skipDecisionTick: skipDecisionTick,
+								nearestMedic: nearestMedic,
+								patientRetreatSafeDistanceFromHostile,
+								patientRetreatSearchRadius,
+								patientRetreatPreferMedicRadius,
+								patientRetreatMinHPPercentToTreatAsPatient,
+								patientRetreatMinHPPercentToLockIn,
+								patientRetreatModeHysteresisTicks,
+								ArgrillianThreatTuning.PatientFightLockoutAfterRetreatTicks,
+								retreatMinHealthPercent,
+								losBreakBonus,
+								scanRange
+							);
+						}
+
+						if (immediateThreat)
+						{
+							Job alertedJob = ArgrillianThreatExecution.ExecuteAlertedMode(
+								pawn,
+								hostileIfAny: hctx.Hostile,
+								desiredCombatDistanceNow: desiredCombatDistanceNow,
+								losBreakBonus: losBreakBonus,
+								isRanged: hctx.IsRanged,
+								minHighAlertTicksToMove: minStepCooldownTicks,
+								scanRange: scanRange,
+								retreatMinHealthPercent: retreatMinHealthPercent,
+								lastKnownInvestigateRadius: 12f
+							);
+
+							if (alertedJob != null)
+								return alertedJob;
+						}
 					}
 				}
 			}
