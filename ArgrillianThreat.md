@@ -1458,6 +1458,106 @@ namespace ArgrillianThreat
 		}
 
 		// ----------------------------
+		// PatientHold / exclusivity integration (no map scanning)
+		// ----------------------------
+
+		// patientId -> medicId (who is currently reserved to tend this patient)
+		private static readonly Dictionary<int, int> medicIdByPatientId = new Dictionary<int, int>();
+		// medicId -> patientId (what patient this medic is currently holding)
+		private static readonly Dictionary<int, int> patientIdByMedicId = new Dictionary<int, int>();
+
+		private static PatientCallEntry TryGetPatientCallEntry(Map map, int patientId)
+		{
+			if (map == null) return null;
+			if (patientId < 0) return null;
+
+			PatientMapCache cache = GetOrCreatePatientCache(map);
+			if (cache == null) return null;
+
+			PrunePatientCalls(cache, map);
+
+			if (!cache.byPatientId.TryGetValue(patientId, out PatientCallEntry e) || e == null)
+				return null;
+
+			// Double-check entry still maps to a valid spawned pawn on this map.
+			Pawn p = e.patient;
+			if (p == null) return null;
+			if (p.Dead || !p.Spawned) return null;
+			if (p.Map == null || p.Map != map) return null;
+			if (p.thingIDNumber != patientId) return null;
+
+			return e;
+		}
+
+		// Resolve a patient Pawn from the cached PatientCall entry (no map.spawnedThings iteration).
+		public static Pawn TryGetPatientFromCachedCall(Map map, int patientId)
+		{
+			PatientCallEntry e = TryGetPatientCallEntry(map, patientId);
+			return e != null ? e.patient : null;
+		}
+
+		// Enforce: at most one medic holds a given patient at a time.
+		// Accepts reservation if:
+		// - patient is in the cached PatientCall set, AND
+		// - nobody else currently holds that same patient.
+		//
+		// Returns true if accepted; false otherwise.
+		public static bool TryReserveMedicForPatient(Pawn medic, Pawn patient)
+		{
+			if (medic == null || patient == null) return false;
+			if (medic.Dead || patient.Dead) return false;
+			if (medic.Map == null || patient.Map == null) return false;
+			if (medic.Map != patient.Map) return false;
+			if (!medic.Spawned || !patient.Spawned) return false;
+
+			int medicId = medic.thingIDNumber;
+			int patientId = patient.thingIDNumber;
+
+			// Ensure the patient is one of the active cached calls.
+			Pawn cached = TryGetPatientFromCachedCall(medic.Map, patientId);
+			if (cached == null) return false;
+
+			// If some medic already holds this patient, reject unless it's the same medic.
+			if (medicIdByPatientId.TryGetValue(patientId, out int existingMedicId))
+			{
+				if (existingMedicId == medicId)
+					return true;
+
+				return false;
+			}
+
+			// If this medic already holds a different patient, we allow overwrite semantics
+			// only if caller releases first. Here we simply reject to keep behavior explicit.
+			if (patientIdByMedicId.TryGetValue(medicId, out int existingPatientId))
+			{
+				if (existingPatientId != patientId)
+					return false;
+			}
+
+			medicIdByPatientId[patientId] = medicId;
+			patientIdByMedicId[medicId] = patientId;
+			return true;
+		}
+
+		public static void ReleaseMedicHold(Pawn medic)
+		{
+			if (medic == null) return;
+			if (medic.Dead) return;
+			if (medic.Map == null) return;
+			if (!medic.Spawned) return;
+
+			int medicId = medic.thingIDNumber;
+			if (!patientIdByMedicId.TryGetValue(medicId, out int patientId))
+				return;
+
+			patientIdByMedicId.Remove(medicId);
+
+			// Only remove if it still points at this medic.
+			if (medicIdByPatientId.TryGetValue(patientId, out int heldMedicId) && heldMedicId == medicId)
+				medicIdByPatientId.Remove(patientId);
+		}
+
+		// ----------------------------
 		// PatientCall transition triggers (event publisher glue)
 		// ----------------------------
 		// These helpers are designed to be called from the existing pawn tick/state update
@@ -1526,7 +1626,6 @@ namespace ArgrillianThreat
 			bool wasDownedOrBleedingNow = true;
 			PublishPatientCall(observer, target, wasDownedOrBleedingNow);
 		}
-
 
 	}
 
