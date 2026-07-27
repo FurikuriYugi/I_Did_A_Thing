@@ -81,32 +81,25 @@ namespace ArgrillianThreat
 			if (medic.Map == null) return null;
 			if (medic.Map != patient.Map) return null;
 
-			// If the medic calling this helper is already tending/rescuing this same patient,
-			// do not yield/abort due to other pawns also targeting the patient.
-			// (Job-based early-out stays local and avoids unnecessary cache queries.)
+			// If the medic is already doing medical on this exact patient, don't block it.
 			if (medic.CurJob != null && JobIsMedicalForPatient(medic.CurJob, patient)) return null;
 
-			// Authority-based check: if some *other* medic has reserved/held this patient in the alert system,
-			// then another medic is already handling them.
-			// NOTE: held-reservation implies exclusivity so we can treat "is anyone holding it?" as "already being tended/rescued".
-			// We return a pawn only if we can resolve the held medic from cache; otherwise return a non-null sentinel.
-			Pawn heldPatientResolved = ArgrillianAlertSystem.TryGetPatientFromCachedCall(patient.Map, patient.thingIDNumber);
-			if (heldPatientResolved == null) return null;
+			int patientId = patient.thingIDNumber;
 
-			// If the alert system has the patient reserved by a different medic, block.
-			// We don't have a direct "get medic for patient" API in this file snippet, so we conservatively block
-			// by attempting to reserve (if it fails and medic isn't the holder, then someone else holds it).
-			bool accepted = ArgrillianAlertSystem.TryReserveMedicForPatient(medic, patient);
-			if (accepted)
+			// If there isn't an active cached call/entry for this patient, treat as not claimed.
+			Pawn cachedPatient = ArgrillianAlertSystem.TryGetPatientFromCachedCall(medic.Map, patientId);
+			if (cachedPatient == null) return null;
+
+			// If this medic can reserve the hold right now, then nobody else is holding it.
+			// This helper should not take the hold, so release immediately if we were able to reserve.
+			bool reserved = ArgrillianAlertSystem.TryReserveMedicForPatient(medic, patient);
+			if (reserved)
 			{
-				// This medic can reserve right now, so nobody else is holding it.
-				// Immediately release to avoid side-effects from this “query” helper.
 				ArgrillianAlertSystem.ReleaseMedicHold(medic);
 				return null;
 			}
 
-			// Another medic is holding it (or the cached call is not active).
-			// Return the patient itself as a non-null indicator to the caller that the patient is "claimed".
+			// Otherwise, another medic is holding the patient in the alert system.
 			return patient;
 		}
 
