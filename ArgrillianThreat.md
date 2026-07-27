@@ -1042,46 +1042,6 @@ namespace ArgrillianThreat
 				return null;
 			}
 		}
-
-		// Alert: This class is marked for removal.
-		public static class NearestMedicCache
-		{
-			private struct CacheEntry
-			{
-				public int tick;
-				public int mapId;
-				public Pawn medic;
-			}
-
-			private static readonly Dictionary<int, CacheEntry> bySeekerId
-				= new Dictionary<int, CacheEntry>();
-
-			public static Pawn GetOrCompute(Pawn seeker, Func<Pawn> compute)
-			{
-				if (seeker == null || seeker.Dead || seeker.Map == null) return null;
-
-				int now = Find.TickManager.TicksGame;
-				int seekerId = seeker.thingIDNumber;
-				int mapId = seeker.Map.uniqueID;
-
-				if (bySeekerId.TryGetValue(seekerId, out CacheEntry e))
-				{
-					if (e.tick == now && e.mapId == mapId)
-						return e.medic;
-				}
-
-				Pawn result = compute();
-
-				bySeekerId[seekerId] = new CacheEntry
-				{
-					tick = now,
-					mapId = mapId,
-					medic = result
-				};
-
-				return result;
-			}
-		}
 	}
 
 	// NEW: Event Driven Alert System
