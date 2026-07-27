@@ -4411,6 +4411,9 @@ namespace ArgrillianThreat
 
 		protected override Job TryGiveJob(Pawn pawn)
 		{
+			// NEW: publish PatientCalls when this pawn enters downed/bleeding states
+			// (edge/transition coalescing is handled inside NotifyPawnSelfState).
+			ArgrillianAlertSystem.NotifyPawnSelfState(pawn);
 			// Medic gating: non-combat medics don't do threat response.
 			var medicThreatSettings = pawn?.GetComp<CompArgrillianMedicSettings>();
 			if (medicThreatSettings != null && medicThreatSettings.isMedic && !medicThreatSettings.combatMedic)
