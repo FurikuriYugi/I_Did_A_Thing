@@ -79,60 +79,35 @@ namespace ArgrillianThreat
 			if (medic == null) return null;
 			if (patient.Map == null) return null;
 			if (medic.Map == null) return null;
+			if (medic.Map != patient.Map) return null;
 
 			// If the medic calling this helper is already tending/rescuing this same patient,
-			// do not yield/abort due to other pawns also targeting the patient this tick.
+			// do not yield/abort due to other pawns also targeting the patient.
+			// (Job-based early-out stays local and avoids unnecessary cache queries.)
 			if (medic.CurJob != null && JobIsMedicalForPatient(medic.CurJob, patient)) return null;
 
-			Map map = patient.Map;
+			// Authority-based check: if some *other* medic has reserved/held this patient in the alert system,
+			// then another medic is already handling them.
+			// NOTE: held-reservation implies exclusivity so we can treat "is anyone holding it?" as "already being tended/rescued".
+			// We return a pawn only if we can resolve the held medic from cache; otherwise return a non-null sentinel.
+			Pawn heldPatientResolved = ArgrillianAlertSystem.TryGetPatientFromCachedCall(patient.Map, patient.thingIDNumber);
+			if (heldPatientResolved == null) return null;
 
-			// Performance: do NOT scan AllPawnsSpawned.
-			// Nearby-only: enough to answer "is anyone already doing the Tend/Rescue for this patient right now?"
-			// Keep radius small to avoid long-range / whole-map work.
-			float searchRadius = 12f;
-
-			IntVec3 center = patient.Position;
-
-			float best = float.PositiveInfinity;
-
-			// Iterate things in nearby cells and only consider pawns from those cells.
-			// (Much smaller set than map.mapPawns.AllPawnsSpawned.)
-			foreach (IntVec3 c in GenRadial.RadialCellsAround(center, searchRadius, true))
+			// If the alert system has the patient reserved by a different medic, block.
+			// We don't have a direct "get medic for patient" API in this file snippet, so we conservatively block
+			// by attempting to reserve (if it fails and medic isn't the holder, then someone else holds it).
+			bool accepted = ArgrillianAlertSystem.TryReserveMedicForPatient(medic, patient);
+			if (accepted)
 			{
-				if (!c.InBounds(map) || c.Fogged(map)) continue;
-
-				float d = c.DistanceTo(center);
-				if (d > best) continue;
-				// best is not strictly required here; leaving it as a tiny pruning knob.
-
-				foreach (Thing t in c.GetThingList(map))
-				{
-					Pawn p = t as Pawn;
-					if (p == null) continue;
-					if (p == medic) continue;
-					if (p.Dead) continue;
-					if (!p.Spawned || p.Map != map) continue;
-					if (p.jobs == null || p.jobs.curJob == null) continue;
-
-					Job cur = p.jobs.curJob;
-					if (cur == null || cur.def == null) continue;
-
-					bool isMedical =
-						cur.def == JobDefOf.TendPatient ||
-						cur.def == JobDefOf.Rescue;
-
-					if (!isMedical)
-						continue;
-
-					if (!JobTargetsIncludePawn(cur, patient))
-						continue;
-
-					// Return first qualifying pawn; nearby list keeps this cheap.
-					return p;
-				}
+				// This medic can reserve right now, so nobody else is holding it.
+				// Immediately release to avoid side-effects from this “query” helper.
+				ArgrillianAlertSystem.ReleaseMedicHold(medic);
+				return null;
 			}
 
-			return null;
+			// Another medic is holding it (or the cached call is not active).
+			// Return the patient itself as a non-null indicator to the caller that the patient is "claimed".
+			return patient;
 		}
 
 		private static bool IsPatientServiceJob(JobDef def)
