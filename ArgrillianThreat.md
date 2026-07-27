@@ -1603,7 +1603,6 @@ namespace ArgrillianThreat
 			bool wasDownedOrBleedingNow = true;
 			PublishPatientCall(observer, target, wasDownedOrBleedingNow);
 		}
-
 	}
 
 	public readonly struct ArgrillianThreatHostileAcquireContext
