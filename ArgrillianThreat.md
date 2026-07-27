@@ -1043,6 +1043,7 @@ namespace ArgrillianThreat
 			}
 		}
 
+		// Alert: This class is marked for removal.
 		public static class NearestMedicCache
 		{
 			private struct CacheEntry
@@ -1083,6 +1084,7 @@ namespace ArgrillianThreat
 		}
 	}
 
+	// Alert: This class is marked for removal.
 	public static class ArgrillianThreatAlert
 	{
 		public static void BroadcastSharedAwareness(
@@ -1310,9 +1312,6 @@ namespace ArgrillianThreat
 		public bool SquadMode { get; init; }
 	}
 
-	// -----------------------------------------
-	// Note: Check why there is only IsRanged in here and not melee and what this actually does
-	// -----------------------------------------
 	public readonly struct HostileContext
 	{
 		public Pawn Hostile { get; init; }
@@ -1320,6 +1319,7 @@ namespace ArgrillianThreat
 		public bool IsRanged { get; init; }
 	}
 
+	// Alert: This class is marked for removal.
 	public static class ArgrillianThreatTargeting
 	{
 		/// <summary>
