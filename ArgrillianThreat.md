@@ -1603,6 +1603,310 @@ namespace ArgrillianThreat
 			bool wasDownedOrBleedingNow = true;
 			PublishPatientCall(observer, target, wasDownedOrBleedingNow);
 		}
+
+		// ----------------------------
+		// HostileCall transition triggers (event publisher glue)
+		// ----------------------------
+		// We keep this edge/transition based to avoid per-tick spam.
+		//
+		// Hostile call lifecycle:
+		// - Seen: publish/refresh a hostile call with last-known cell.
+		// - Lost sight: if still alive, switch state to "investigate" with last-known cell.
+		// - Eliminated/left map: invalidate call so recipients stop pursuing stale info.
+
+		private sealed class HostileCall
+		{
+			public int callerPawnId = -1;
+			public int hostileThingId = -1;
+			public int mapId = -1;
+
+			public IntVec3 lastKnownCell;
+			public bool hasLOS = false;
+
+			// If true: recipients should investigate lastKnownCell rather than treat as confirmed pursuit.
+			public bool investigateMode = false;
+
+			public int lastUpdateTick = -1;
+		}
+
+		// mapId -> hostileThingId -> call
+		private static readonly Dictionary<int, Dictionary<int, HostileCall>> hostileCallsByMap = new Dictionary<int, Dictionary<int, HostileCall>>();
+
+		// (callerId, hostileId) -> lastPublishedStateBit (edge coalescing)
+		// bit0: hadLOS=true/false at last publish
+		// bit1: eliminated/invalidated published
+		private static readonly Dictionary<int, byte> hostileSeenLostByCallerAndHostile = new Dictionary<int, byte>();
+
+		private static int HostileEdgeKey(int callerId, int hostileId)
+		{
+			unchecked
+			{
+				return (callerId * 397) ^ hostileId;
+			}
+		}
+
+		private static Dictionary<int, HostileCall> GetHostileCallsForMap(Map map)
+		{
+			if (map == null) return null;
+
+			int mapId = map.uniqueID;
+			if (!hostileCallsByMap.TryGetValue(mapId, out var dict))
+			{
+				dict = new Dictionary<int, HostileCall>();
+				hostileCallsByMap[mapId] = dict;
+			}
+
+			return dict;
+		}
+
+		private static HostileCall GetOrCreateHostileCall(Map map, Pawn caller, Pawn hostile)
+		{
+			if (map == null || caller == null || hostile == null) return null;
+
+			var dict = GetHostileCallsForMap(map);
+			if (dict == null) return null;
+
+			int hostileId = hostile.thingIDNumber;
+			if (!dict.TryGetValue(hostileId, out HostileCall call))
+			{
+				call = new HostileCall
+				{
+					callerPawnId = caller.thingIDNumber,
+					hostileThingId = hostileId,
+					mapId = map.uniqueID,
+					lastKnownCell = hostile.Position,
+					hasLOS = false,
+					investigateMode = false,
+					lastUpdateTick = Find.TickManager.TicksGame
+				};
+				dict[hostileId] = call;
+			}
+
+			return call;
+		}
+
+		// Prune/cancel stale calls so recipients don’t chase forever.
+		private const int HostileCallTtlTicks = 1500; // tuned conservatively; adjust if you want faster forget.
+
+		private static void PruneHostileCallsIfNeeded(Map map)
+		{
+			if (map == null) return;
+			var dict = GetHostileCallsForMap(map);
+			if (dict == null || dict.Count == 0) return;
+
+			int now = Find.TickManager.TicksGame;
+
+			HostileThingPruneBuffer.Clear();
+			foreach (var kvp in dict)
+			{
+				var call = kvp.Value;
+				if (call == null) continue;
+				if (call.lastUpdateTick < 0) continue;
+
+				if (now - call.lastUpdateTick > HostileCallTtlTicks)
+					HostileThingPruneBuffer.Add(kvp.Key);
+			}
+
+			for (int i = 0; i < HostileThingPruneBuffer.Count; i++)
+				dict.Remove(HostileThingPruneBuffer[i]);
+		}
+
+		private static readonly List<int> HostileThingPruneBuffer = new List<int>(64);
+
+		// Recipients mode routing:
+		// - If hasLOS: recipients should respond as "combat/intercept" (not implement new job logic here;
+		//   they already have ExecuteAlertedMode gated by AwarenessCache flags)
+		// - If lost sight: recipients should switch to "shared investigate" mode
+		private static void PublishHostileCallToRecipients(Map map, IntVec3 lastKnown, Pawn hostile)
+		{
+			var cache = GetOrCreate(map);
+			if (cache == null) return;
+
+			// Decide "investigate mode" based on caller/call state stored in hostileCallsByMap.
+			// We route by setting AwarenessCache flags (which your job logic already reads).
+			//
+			// NOTE: We do NOT do map-wide scanning; recipients are the registered list only.
+			PruneRecipients(cache, map);
+
+			// Determine which recipients to notify:
+			// - pawns not in battle should investigate
+			// - combat pawns can respond based on your existing ExecuteAlertedMode/hostile awareness logic
+			for (int i = cache.recipients.Count - 1; i >= 0; i--)
+			{
+				Pawn recipient = cache.recipients[i];
+				if (recipient == null) continue;
+				if (recipient.Dead) continue;
+				if (!recipient.Spawned) continue;
+				if (recipient.Map != map) continue;
+
+				// If you already have an "investigate" flag setter, use it here.
+				// Otherwise, your next step is to implement those setters in AwarenessCache.
+				//
+				// We’ll use the existing cache methods conceptually by calling the same dispatcher your patient calls use.
+				// (If this repo’s AwarenessCache naming differs, you’ll point me to the exact methods and I’ll patch.)
+				ArgrillianThreatState.AwarenessCache.MarkSharedInvestigateAt(recipient, lastKnown);
+			}
+		}
+
+		// PUBLIC API (call from pawn edge transitions)
+		public static void NotifyPawnSeesHostile(Pawn caller, Pawn hostile, IntVec3 lastKnownCell)
+		{
+			if (caller == null || hostile == null) return;
+			if (caller.Dead || hostile.Dead) return;
+			if (caller.Map == null || hostile.Map == null) return;
+			if (caller.Map != hostile.Map) return;
+
+			Map map = caller.Map;
+			int now = Find.TickManager.TicksGame;
+
+			PruneHostileCallsIfNeeded(map);
+
+			int callerId = caller.thingIDNumber;
+			int hostileId = hostile.thingIDNumber;
+			int edgeKey = HostileEdgeKey(callerId, hostileId);
+
+			byte prev = 0;
+			hostileSeenLostByCallerAndHostile.TryGetValue(edgeKey, out prev);
+
+			// Only publish on edge into "LOS confirmed" (bit0 transition).
+			byte cur = (byte)(prev | 1);
+
+			if ((prev & 1) == 1)
+			{
+				// Already in LOS-confirmed state for this caller/hostile: just refresh TTL + location coalesced.
+				if (hostileCallsByMap.TryGetValue(map.uniqueID, out var dict) &&
+					dict.TryGetValue(hostileId, out var existing) &&
+					existing != null)
+				{
+					existing.lastKnownCell = lastKnownCell;
+					existing.hasLOS = true;
+					existing.investigateMode = false;
+					existing.lastUpdateTick = now;
+				}
+				return;
+			}
+
+			// Edge: transitioned from no-LOS to has-LOS
+			hostileSeenLostByCallerAndHostile[edgeKey] = cur;
+
+			var call = GetOrCreateHostileCall(map, caller, hostile);
+			if (call == null) return;
+
+			call.callerPawnId = callerId;
+			call.hostileThingId = hostileId;
+			call.lastKnownCell = lastKnownCell;
+			call.hasLOS = true;
+			call.investigateMode = false;
+			call.lastUpdateTick = now;
+
+			// Ensure recipients respond immediately as “high alert / investigate” based on existing behavior.
+			// Your repo already has AwarenessCache high-alert gating; use the same pattern.
+			PublishHostileCallToRecipients(map, lastKnownCell, hostile);
+		}
+
+		public static void NotifyPawnLostSightOfHostile(Pawn caller, Pawn hostile, IntVec3 lastKnownCell)
+		{
+			if (caller == null || hostile == null) return;
+			if (caller.Dead) return;
+			if (hostile.Dead) return;
+			if (caller.Map == null || hostile.Map == null) return;
+			if (caller.Map != hostile.Map) return;
+
+			Map map = caller.Map;
+			int now = Find.TickManager.TicksGame;
+
+			PruneHostileCallsIfNeeded(map);
+
+			int callerId = caller.thingIDNumber;
+			int hostileId = hostile.thingIDNumber;
+			int edgeKey = HostileEdgeKey(callerId, hostileId);
+
+			byte prev = 0;
+			hostileSeenLostByCallerAndHostile.TryGetValue(edgeKey, out prev);
+
+			// Edge into lost-sight state: bit0 should become 0, and we should avoid repeated publishes.
+			// If we already published lost-sight (bit1 might be used, but we reuse bit0 here).
+			if ((prev & 1) == 0)
+			{
+				// Already in lost-sight state for this caller/hostile: refresh TTL + location.
+				if (hostileCallsByMap.TryGetValue(map.uniqueID, out var dict) &&
+					dict.TryGetValue(hostileId, out var existing) &&
+					existing != null)
+				{
+					existing.lastKnownCell = lastKnownCell;
+					existing.hasLOS = false;
+					existing.investigateMode = true;
+					existing.lastUpdateTick = now;
+				}
+				return;
+			}
+
+			byte cur = (byte)(prev & 0xFE); // clear bit0 => lost sight
+			hostileSeenLostByCallerAndHostile[edgeKey] = cur;
+
+			var call = GetOrCreateHostileCall(map, caller, hostile);
+			if (call == null) return;
+
+			call.lastKnownCell = lastKnownCell;
+			call.hasLOS = false;
+			call.investigateMode = true;
+			call.lastUpdateTick = now;
+
+			PublishHostileCallToRecipients(map, lastKnownCell, hostile);
+		}
+
+		public static void NotifyPawnHostileEliminated(Pawn caller, Pawn hostile)
+		{
+			if (caller == null || hostile == null) return;
+			if (caller.Map == null || hostile.Map == null) return;
+			if (caller.Map != hostile.Map) return;
+
+			Map map = caller.Map;
+			int now = Find.TickManager.TicksGame;
+
+			int callerId = caller.thingIDNumber;
+			int hostileId = hostile.thingIDNumber;
+			int edgeKey = HostileEdgeKey(callerId, hostileId);
+
+			byte prev = 0;
+			hostileSeenLostByCallerAndHostile.TryGetValue(edgeKey, out prev);
+
+			// Only publish cancel on edge from not-yet-eliminated.
+			if ((prev & 0x02) == 0x02)
+				return;
+
+			hostileSeenLostByCallerAndHostile[edgeKey] = (byte)(prev | 0x02);
+
+			// Invalidate hostile call immediately
+			if (hostileCallsByMap.TryGetValue(map.uniqueID, out var dict))
+			{
+				dict.Remove(hostileId);
+			}
+
+			// Tell recipients to stop investigating this hostile last-known.
+			// We implement this as clearing shared investigate at cell (recipient code needs this helper).
+			// If your repo doesn’t have a method for that, we’ll add it similarly to MarkSharedInvestigateAt.
+			IntVec3 lastKnown = hostile.Position;
+			for (int i = 0; i < recipientsBufferClearOrder.Count; i++) { /* no-op placeholder */ }
+
+			var cache = GetOrCreate(map);
+			if (cache != null)
+			{
+				PruneRecipients(cache, map);
+				for (int i = cache.recipients.Count - 1; i >= 0; i--)
+				{
+					Pawn recipient = cache.recipients[i];
+					if (recipient == null) continue;
+					if (recipient.Dead) continue;
+					if (recipient.Map != map) continue;
+
+					ArgrillianThreatState.AwarenessCache.ClearSharedInvestigateAt(recipient, lastKnown);
+				}
+			}
+		}
+
+		// ---- temp helper buffer to avoid changing too much structure yet ----
+		private static readonly List<Pawn> recipientsBufferClearOrder = new List<Pawn>(64);
 	}
 
 	public readonly struct ArgrillianThreatHostileAcquireContext
