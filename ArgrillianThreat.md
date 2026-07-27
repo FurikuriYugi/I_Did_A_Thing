@@ -4081,14 +4081,27 @@ namespace ArgrillianThreat
 			ArgrillianThreatState.CombatLock.MarkSeen(pawn, hostile);
 			ArgrillianThreatState.ThreatTickCache.MarkNow(pawn);
 
+			int prevHostileId = ArgrillianThreatState.AwarenessCache.GetLastKnownHostileId(pawn);
+			IntVec3 prevCell = ArgrillianThreatState.AwarenessCache.GetLastKnownCell(pawn);
+
 			ArgrillianThreatState.AwarenessCache.MarkDirect(pawn, hostile);
 
-			ArgrillianAlertSystem.BroadcastSharedAwareness(
-				source: pawn,
-				hostile: hostile,
-				allyRadius: 30f,
-				squadOnly: true
-			);
+			int hostileId = hostile.thingIDNumber;
+			IntVec3 newCell = hostile.Position;
+
+			bool shouldBroadcast =
+				prevHostileId != hostileId
+				|| prevCell != newCell;
+
+			if (shouldBroadcast)
+			{
+				ArgrillianAlertSystem.BroadcastSharedAwareness(
+					source: pawn,
+					hostile: hostile,
+					allyRadius: 30f,
+					squadOnly: true
+				);
+			}
 
 			bool wantsPatientRetreat;
 			byte currentMode = ArgrillianThreatMode.UpdateMode(
