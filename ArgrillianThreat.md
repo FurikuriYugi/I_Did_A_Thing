@@ -1084,50 +1084,6 @@ namespace ArgrillianThreat
 		}
 	}
 
-	// Alert: This class is marked for removal.
-	public static class ArgrillianThreatAlert
-	{
-		public static void BroadcastSharedAwareness(
-			Pawn source,
-			Pawn hostile,
-			float allyRadius,
-			bool squadOnly)
-		{
-			if (source == null || hostile == null) return;
-			if (source.Map == null) return;
-			if (hostile.Dead || !hostile.Spawned) return;
-
-			Map map = source.Map;
-			IntVec3 lastKnown = hostile.Position;
-			int hostileId = hostile.thingIDNumber;
-
-			// Use killed/hostile position as the "last known"
-			var allies = map.mapPawns.AllPawnsSpawned;
-			foreach (Pawn p in allies)
-			{
-				if (p == null || p.Dead || !p.Spawned) continue;
-				if (p == source) continue;
-				if (p.Faction != source.Faction) continue;
-				if (p.Map != map) continue;
-
-				if (p.Position.DistanceTo(source.Position) > allyRadius) continue;
-
-				if (squadOnly)
-				{
-					var ts = p.GetComp<CompArgrillianThreatSettings>();
-					if (ts == null || ts.squadMode != true) continue;
-				}
-
-				// Do not overwrite if they already have fresher/high-alert data:
-				// (optional; keeps behavior from "chasing stale alerts")
-				if (ArgrillianThreatState.AwarenessCache.IsHighAlert(p) || ArgrillianThreatState.AwarenessCache.IsSharedInvestigate(p))
-					continue;
-
-				ArgrillianThreatState.AwarenessCache.MarkShared(p, lastKnown, hostileId);
-			}
-		}
-	}
-
 	public static class ArgrillianAlertSystem
 	{
 		private sealed class MapCache
@@ -3887,7 +3843,7 @@ namespace ArgrillianThreat
 
 			ArgrillianThreatState.AwarenessCache.MarkDirect(pawn, hostile);
 
-			ArgrillianThreatAlert.BroadcastSharedAwareness(
+			ArgrillianAlertSystem.BroadcastSharedAwareness(
 				source: pawn,
 				hostile: hostile,
 				allyRadius: 30f,
