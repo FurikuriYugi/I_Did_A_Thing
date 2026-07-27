@@ -5077,47 +5077,6 @@ namespace ArgrillianThreat
 			return true;
 		}
 
-		private Pawn FindNearestHostile(Pawn medic, float radius)
-		{
-			Map map = medic.Map;
-
-			bool finishOff = false;
-			{
-				CompArgrillianThreatSettings s = medic.GetComp<CompArgrillianThreatSettings>();
-				finishOff = s != null && s.finishOff;
-			}
-
-			Pawn best = null;
-			float bestDist = float.PositiveInfinity;
-
-			float r = ArgrillianThreatMath.ClampRadialRadius(radius);
-
-			foreach (IntVec3 c in GenRadial.RadialCellsAround(medic.Position, r, true))
-			{
-				if (!c.InBounds(map) || c.Fogged(map)) continue;
-
-				foreach (Thing t in c.GetThingList(map))
-				{
-					if (t is not Pawn p) continue;
-					if (p.Dead) continue;
-					if (p.Faction == medic.Faction) continue;
-
-					// NEW: When Finish Off is false, downed hostiles must be ignored as hostile anchors
-					// so melee doesn't hover/reposition around them.
-					if (p.Downed && !finishOff) continue;
-
-					float d = medic.Position.DistanceTo(p.Position);
-					if (d < bestDist)
-					{
-						bestDist = d;
-						best = p;
-					}
-				}
-			}
-
-			return best;
-		}
-
 		private Building_Bed FindBestBedFor(Pawn medic, Pawn patient)
 		{
 			if (medic?.Map == null || patient?.Map == null) return null;
@@ -5631,7 +5590,7 @@ namespace ArgrillianThreat
 				// top-priority -> medic drifts to next jobs / battles” behavior.
 				if (!canTendNow(pawn, heldPatient))
 				{
-					Pawn bestCandidate = FindBestPatient(pawn);
+					Pawn bestCandidate = ArgrillianAlertSystem.GetBestPatientFromCalls(pawn, searchRadius);
 
 					if (bestCandidate != null && bestCandidate != heldPatient)
 					{
