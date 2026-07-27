@@ -1126,6 +1126,170 @@ namespace ArgrillianThreat
 		}
 	}
 
+	public static class ArgrillianAlertSystem
+	{
+		private sealed class MapCache
+		{
+			public readonly List<Pawn> recipients = new List<Pawn>(64);
+
+			// Used to prevent duplicates in recipients.
+			public readonly HashSet<int> recipientIds = new HashSet<int>();
+
+			// Soft TTL cleanup cadence for recipients list pruning.
+			public int lastRecipientPruneTick = -1;
+		}
+
+		private static readonly Dictionary<int, MapCache> byMapId = new Dictionary<int, MapCache>();
+
+		// Prune recipients list at most this often per map.
+		// Keeps this event-driven without doing work every broadcast.
+		private const int RecipientPruneIntervalTicks = 60;
+
+		private static MapCache GetOrCreate(Map map)
+		{
+			if (map == null) return null;
+
+			int mapId = map.uniqueID;
+			if (!byMapId.TryGetValue(mapId, out MapCache cache))
+			{
+				cache = new MapCache();
+				byMapId[mapId] = cache;
+			}
+
+			return cache;
+		}
+
+		private static void PruneRecipients(MapCache cache, Map map)
+		{
+			if (cache == null || map == null) return;
+
+			int now = Find.TickManager.TicksGame;
+			if (cache.lastRecipientPruneTick >= 0 &&
+				now - cache.lastRecipientPruneTick < RecipientPruneIntervalTicks)
+				return;
+
+			cache.lastRecipientPruneTick = now;
+
+			for (int i = cache.recipients.Count - 1; i >= 0; i--)
+			{
+				Pawn p = cache.recipients[i];
+
+				bool remove =
+					p == null ||
+					p.Dead ||
+					!p.Spawned ||
+					p.Map != map;
+
+				if (remove)
+				{
+					int id = p != null ? p.thingIDNumber : -1;
+					if (id >= 0) cache.recipientIds.Remove(id);
+					cache.recipients.RemoveAt(i);
+				}
+			}
+		}
+
+		/// <summary>
+		/// Call this once for any pawn that should RECEIVE alerts (radio recipients).
+		/// Typical usage: in the comp's SpawnSetup / OnEnable for pawns you want participating.
+		/// </summary>
+		public static void RegisterRecipient(Pawn pawn)
+		{
+			if (pawn == null) return;
+			if (pawn.Dead) return;
+			if (pawn.Map == null) return;
+			if (!pawn.Spawned) return;
+
+			MapCache cache = GetOrCreate(pawn.Map);
+			if (cache == null) return;
+
+			int id = pawn.thingIDNumber;
+			if (id < 0) return;
+
+			if (cache.recipientIds.Add(id))
+				cache.recipients.Add(pawn);
+		}
+
+		/// <summary>
+		/// Optional: call when a pawn should stop receiving alerts (despawn/death/comp disabled).
+		/// </summary>
+		public static void UnregisterRecipient(Pawn pawn)
+		{
+			if (pawn == null) return;
+			if (pawn.Map == null) return;
+
+			if (!byMapId.TryGetValue(pawn.Map.uniqueID, out MapCache cache))
+				return;
+
+			int id = pawn.thingIDNumber;
+			if (id < 0) return;
+
+			if (!cache.recipientIds.Remove(id))
+				return;
+
+			// Remove from recipients list (rare; keeps Register fast).
+			for (int i = cache.recipients.Count - 1; i >= 0; i--)
+			{
+				Pawn p = cache.recipients[i];
+				if (p == null || p.thingIDNumber == id)
+					cache.recipients.RemoveAt(i);
+			}
+		}
+
+		/// <summary>
+		/// Event-driven broadcast dispatcher.
+		/// No map scanning: only not-expired registered recipients are consulted.
+		/// </summary>
+		public static void BroadcastSharedAwareness(
+			Pawn source,
+			Pawn hostile,
+			float allyRadius,
+			bool squadOnly)
+		{
+			if (source == null) return;
+			if (hostile == null) return;
+			if (source.Map == null) return;
+			if (hostile.Dead || !hostile.Spawned) return;
+			if (allyRadius < 0f) allyRadius = 0f;
+
+			MapCache cache = GetOrCreate(source.Map);
+			if (cache == null) return;
+
+			PruneRecipients(cache, source.Map);
+
+			IntVec3 lastKnown = hostile.Position;
+			int hostileId = hostile.thingIDNumber;
+
+			// Recipients are already cached; we only filter per broadcast.
+			for (int i = 0; i < cache.recipients.Count; i++)
+			{
+				Pawn p = cache.recipients[i];
+				if (p == null) continue;
+				if (p.Dead || !p.Spawned) continue;
+				if (p.Map != source.Map) continue;
+				if (p == source) continue;
+
+				if (p.Faction != source.Faction) continue;
+
+				if (squadOnly)
+				{
+					// If this comp doesn't exist, treat as not in squad channel.
+					CompArgrillianThreatSettings ts = p.GetComp<CompArgrillianThreatSettings>();
+					if (ts == null || ts.squadMode != true) continue;
+				}
+
+				if (p.Position.DistanceTo(source.Position) > allyRadius) continue;
+
+				// Keep your existing awareness cache semantics intact.
+				if (ArgrillianThreatState.AwarenessCache.IsHighAlert(p) ||
+					ArgrillianThreatState.AwarenessCache.IsSharedInvestigate(p))
+					continue;
+
+				ArgrillianThreatState.AwarenessCache.MarkShared(p, lastKnown, hostileId);
+			}
+		}
+	}
+
 	public readonly struct ArgrillianThreatHostileAcquireContext
 	{
 		public Pawn Pawn { get; init; }
