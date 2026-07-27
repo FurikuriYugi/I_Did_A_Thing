@@ -3276,6 +3276,14 @@ namespace ArgrillianThreat
 
 				bool hasLOS = GenSight.LineOfSight(pawn.Position, hostileIfAny.Position, map);
 
+				if (!hostile.Dead && hostile.Spawned && hostile.Map == pawn.Map)
+				{
+					if (hasLOS)
+						ArgrillianAlertSystem.NotifyPawnSeesHostile(pawn, hostile, hostile.Position);
+					else
+						ArgrillianAlertSystem.NotifyPawnLostSightOfHostile(pawn, hostile, hostile.Position);
+				}
+
 				if (hasLOS && !injuredCombatMedicStop)
 				{
 					// Try to start a real attack job immediately.
@@ -4526,6 +4534,9 @@ namespace ArgrillianThreat
 
 			if (hostile == null || hostile.Dead)
 			{
+				if (hostile != null)
+					ArgrillianAlertSystem.NotifyPawnHostileEliminated(pawn, hostile);
+
 				ArgrillianThreatState.CombatLock.Clear(pawn);
 				ArgrillianThreatState.CombatCommit.Clear(pawn);
 				return null;
@@ -4798,7 +4809,7 @@ namespace ArgrillianThreat
 				{
 					bool hasLOS = GenSight.LineOfSight(pawn.Position, hostile.Position, map);
 
-					
+
 
 					// Edge publish:
 					// - Seen => tell alert system
