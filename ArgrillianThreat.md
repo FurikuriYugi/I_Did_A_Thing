@@ -2326,11 +2326,13 @@ namespace ArgrillianThreat
 	public static class ArgrillianThreatExecution
 	{
 		// -------- NEW: Injured stop-attacking gate --------
-		private static bool IsInjuredPatientOrInjuredMedicStopAttacking(
-			Pawn pawn,
-			float retreatMinHealthPercent)
+			private static bool IsInjuredPatientOrInjuredMedicStopAttacking(Pawn pawn, float retreatMinHealthPercent)
 		{
 			if (pawn == null || pawn.Dead || pawn.Map == null) return false;
+
+			// DOWNED must always stop fighting/attack-mode immediately.
+			// This prevents the “stand for ~0.5s / few seconds then keeps fighting” window.
+			if (pawn.Downed) return true;
 
 			float hp = pawn.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
 			return hp <= retreatMinHealthPercent;
