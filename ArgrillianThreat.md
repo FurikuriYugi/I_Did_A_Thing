@@ -2858,6 +2858,13 @@ namespace ArgrillianThreat
 										var keep = ArgrillianGotoHelper.KeepIfSameGoto(pawn, coverCell3);
 										if (keep != null) return keep;
 
+										// Prevent pursue-advance cover thrash: throttle new destinations.
+										if (pawn.CurJob?.def == JobDefOf.Goto && pawn.CurJob.targetA.Cell != coverCell3)
+										{
+											if (!ArgrillianGotoHelper.RepathCooldown.ShouldAllowNewDestination(pawn, coverCell3))
+												return pawn.CurJob;
+										}
+
 										ArgrillianThreatState.ThreatTickCache.MarkNow(pawn);
 										return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, coverCell3);
 									}
