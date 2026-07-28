@@ -5983,6 +5983,22 @@ namespace ArgrillianThreat
 				}
 			}
 
+			// FORCE TRANSITION: if we were tending and the held patient becomes downed,
+			// immediately switch to Rescue for the same heldPatient (don’t fall back to combat).
+			if (pawn.CurJob != null && pawn.CurJob.def == JobDefOf.TendPatient && heldPatient.Downed)
+			{
+				// Ensure we still have a valid held patient pipeline target.
+				// (heldPatient null/dead would have been handled earlier.)
+				if (!TryGetRescueBedForPatient(pawn, heldPatient, out Building_Bed bed) || bed == null)
+					return null;
+
+				Job rescueJob = JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
+				rescueJob.count = 1;
+				rescueJob.targetB = bed;
+
+				return rescueJob;
+			}
+
 			// Core: canTendNow should only decide "start Tend/Rescue now" vs "move into tend position".
 			if (!canTendNow(pawn, heldPatient))
 			{
