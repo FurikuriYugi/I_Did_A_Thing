@@ -5263,7 +5263,7 @@ namespace ArgrillianThreat
 			if (patient.Dead) return false;
 
 			PathEndMode endMode = patient.Downed ? PathEndMode.ClosestTouch : PathEndMode.Touch;
-			Danger danger = patient.Downed ? Danger.None : Danger.Some;
+			Danger danger = patient.Downed ? Danger.Some : Danger.None;
 			return medic.CanReach(patient, endMode, danger);
 		}
 
