@@ -6264,15 +6264,22 @@ namespace ArgrillianThreat
 			int stableTicksOuter = GetPatientStableTicksForTend(patient);
 			int requiredStableTicksOuter = patient.Downed ? 0 : patientStableTicksRequired;
 
+			// NEW: combat medics should tend injured targets immediately enough (skip stability wait)
+			// to prevent “stand briefly while hostile awareness transitions” and to ensure retreat/tend flow starts.
+			if (combatMedic && patient != null && !patient.Downed)
+			{
+				float hpPct = patient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
+				if (hpPct <= combatMedicInjuredHPPercentThreshold)
+					requiredStableTicksOuter = 0;
+			}
+
 			if (!patient.Downed && patient.CurJob != null && patient.CurJob.def != null)
 			{
 				Job j = patient.CurJob;
 
 				// Don’t start Tend if the patient is actively doing combat/mobility jobs (only in normal case).
 				if (IsCombatAttackLikeJob(j) || IsChaseOrTacticJob(j) || IsFleeLikeJob(j) || IsHaulJob(j) || IsMealOrConsumeLikeJob(j) || j.def.defName == "ConsumeMeal")
-				{
 					return false;
-				}
 
 				if (j.def == JobDefOf.LayDown) return false;
 				if (j.def == JobDefOf.Rescue) return false;
