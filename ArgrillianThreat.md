@@ -6197,6 +6197,7 @@ namespace ArgrillianThreat
 
 				if (holdActive)
 				{
+					// For non-downed held patients you can keep reserve restriction.
 					return IsValidTendTarget(patient, pawn) &&
 						CanReserveTendTarget(pawn, patient);
 				}
@@ -6233,6 +6234,15 @@ namespace ArgrillianThreat
 			}
 
 			bool distanceOk = patient.Downed ? true : pawn.Position.DistanceTo(patient.Position) <= combatTendMaxDistance;
+
+			// NOTE: if we ever reach here and patient is downed, we do NOT require reserving tend targets,
+			// because that is exactly what causes the initial “stand for ~0.5s / few seconds then keep fighting” symptom.
+			if (patient.Downed)
+			{
+				return distanceOk &&
+					IsValidTendTarget(patient, pawn) &&
+					stableTicksOuter >= requiredStableTicksOuter;
+			}
 
 			return distanceOk &&
 				IsValidTendTarget(patient, pawn) &&
