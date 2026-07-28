@@ -6176,9 +6176,9 @@ namespace ArgrillianThreat
 		{
 			bool combatMedic = pawn.GetComp<CompArgrillianMedicSettings>()?.combatMedic == true;
 
-			// NEW: Combat medics must be able to start tending/rescuing immediately for downed patients,
-			// even during reservation/job churn right after hostiles are first noticed.
-			// Otherwise they can get stuck in a short stand/goto loop and never reach Tend/Rescue.
+			// Combat medics must start Tend/Rescue immediately for downed patients.
+			// Otherwise they can get a short “stand” while reserve/job state churns,
+			// and may never actually switch into the medical job.
 			if (combatMedic && patient != null && patient.Downed)
 				return IsValidTendTarget(patient, pawn);
 
