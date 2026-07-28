@@ -6009,8 +6009,17 @@ namespace ArgrillianThreat
 			Building_Bed cached = GetCachedRescueBedForPatient(patient);
 			if (cached != null)
 			{
-				bed = cached;
-				return CanReserveThingForPatient(medic, cached, patient);
+				// If we can't reserve the cached bed, don't fail outright.
+				// Invalidate cache and search again so we never create TakeToBed with a bad target.
+				if (CanReserveThingForPatient(medic, cached, patient))
+				{
+					bed = cached;
+					return true;
+				}
+
+				// Invalidate cached target so other code paths don't keep reusing it.
+				// (Uses your existing cache setter/getter discipline.)
+				CacheRescueBedForPatient(patient, null);
 			}
 
 			Building_Bed best = null;
