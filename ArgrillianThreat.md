@@ -5248,10 +5248,12 @@ namespace ArgrillianThreat
 		private static bool IsValidTendTarget(Pawn patient, Pawn medic)
 		{
 			if (patient == null || medic == null) return false;
+
 			if (patient.Dead) return false;
 
 			PathEndMode endMode = patient.Downed ? PathEndMode.ClosestTouch : PathEndMode.Touch;
-			return medic.CanReach(patient, endMode, Danger.Some);
+			Danger danger = patient.Downed ? Danger.None : Danger.Some;
+			return medic.CanReach(patient, endMode, danger);
 		}
 
 		private static bool CanReserveThing(Pawn medic, Thing t)
