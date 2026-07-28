@@ -5929,10 +5929,12 @@ namespace ArgrillianThreat
 					}
 				}
 
-				bool medicIsActiveMedical =
-					pawn.CurJob != null &&
-					pawn.CurJob.def != null &&
-					(pawn.CurJob.def == JobDefOf.TendPatient || pawn.CurJob.def == JobDefOf.Rescue);
+				bool medicIsActiveMedical = pawn.CurJob != null && pawn.CurJob.def != null && (pawn.CurJob.def == JobDefOf.TendPatient || pawn.CurJob.def == JobDefOf.Rescue);
+
+				// If we’ve locked a patient for this combat medic, immediately prevent the patient
+				// from continuing unrelated combat/mobility jobs until Tend/Rescue can actually start.
+				// Otherwise the patient keeps fighting while the medic is still transitioning/standing.
+				TryStopPatientToAllowTend(heldPatient);
 
 				// When we are in/approaching Tend/Rescue, prevent the patient from continuing
 				// their combat job while we’re able to start tending (fixes "medic stuck +
