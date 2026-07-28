@@ -5933,7 +5933,17 @@ namespace ArgrillianThreat
 
 		protected override Job TryGiveJob(Pawn pawn)
 		{
-			if (pawn == null || pawn.Map == null) return null;
+			// NEW: publish PatientCalls when this pawn enters downed/bleeding states
+			// (edge/transition coalescing is handled inside NotifyPawnSelfState).
+			ArgrillianAlertSystem.NotifyPawnSelfState(pawn);
+
+			// Medic gating: non-combat medics don't do threat response.
+			var medicThreatSettings = pawn?.GetComp<CompArgrillianMedicSettings>();
+			if (medicThreatSettings != null && medicThreatSettings.isMedic && !medicThreatSettings.combatMedic)
+				return null;
+
+			if (pawn == null || pawn.Dead || pawn.Map == null) return null;
+			if (pawn.Downed) return null;
 
 			var medicComp = pawn.GetComp<CompArgrillianMedicSettings>();
 			if (medicComp == null || !medicComp.isMedic) return null;
@@ -5953,6 +5963,25 @@ namespace ArgrillianThreat
 
 			if (heldPatient == null)
 				return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
+
+			// KEEP-ACTIVE-JOB GUARD:
+			// If we already have Tend/Rescue running for this heldPatient,
+			// do not abandon it due to transient movement/distance eligibility flips.
+			if (pawn.CurJob != null && pawn.CurJob.def != null)
+			{
+				Job cur = pawn.CurJob;
+				JobDef def = cur.def;
+
+				if (def == JobDefOf.TendPatient || def == JobDefOf.Rescue)
+				{
+					Thing ta = cur.targetA.Thing;
+					Thing tb = cur.targetB.Thing;
+
+					// Rescue/Tend should include the patient as one of the targets.
+					if ((ta != null && ta == heldPatient) || (tb != null && tb == heldPatient))
+						return cur;
+				}
+			}
 
 			// Core: canTendNow should only decide "start Tend/Rescue now" vs "move into tend position".
 			if (!canTendNow(pawn, heldPatient))
@@ -5983,7 +6012,7 @@ namespace ArgrillianThreat
 				rescueJob.count = 1;
 
 				// Vanilla Rescue/TakeToBed pipeline expects a bed/thing target. We have it now.
-				// If your mod’s Rescue target mapping differs, adjust only the target index here.
+				// This keeps your existing target mapping discipline.
 				rescueJob.targetB = bed;
 
 				return rescueJob;
