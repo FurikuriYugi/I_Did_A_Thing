@@ -6173,7 +6173,7 @@ namespace ArgrillianThreat
 				return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, tendSpot);
 			}
 
-			return JobMaker.MakeJob(JobDefOf.Wait, 60);
+			return null;
 		}
 
 		private bool TryGetRescueBedForPatient(Pawn medic, Pawn patient, out Building_Bed bed)
