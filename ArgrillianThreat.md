@@ -6036,6 +6036,7 @@ namespace ArgrillianThreat
 
 					// If the patient is in a combat job, only interrupt when they would need to
 					// move (i.e., their current hostile target is NOT in range).
+					//
 					// This keeps “shooting/attacking in-range” allowed while still preventing movement derailment.
 					if (isHeldPatientOnCombatJob)
 					{
@@ -6059,6 +6060,7 @@ namespace ArgrillianThreat
 							else
 							{
 								Verb attackVerb = null;
+
 								if (jobTarget.Thing != null)
 								{
 									// RimWorld 1.6 signature requires: TryGetAttackVerb(Thing target, bool allowIndirectFire, bool allowMelee)
@@ -6186,7 +6188,9 @@ namespace ArgrillianThreat
 				return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, tendSpot);
 			}
 
-			return null;
+			// IMPORTANT: when we have no held patient, this should NOT return null for combat medics.
+			// Fall back to the combat threat response dispatcher so the medic doesn't default to haul/stockpile behavior.
+			return new JobGiver_ArgrillianThreatResponse().TryGiveJob(pawn);
 		}
 
 		private bool TryGetRescueBedForPatient(Pawn medic, Pawn patient, out Building_Bed bed)
