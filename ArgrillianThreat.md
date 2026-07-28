@@ -2657,7 +2657,7 @@ namespace ArgrillianThreat
 			// NEW CHANGE: injuredGate tuning for patients/combat medics
 			// - Patients: retreat/stop when HP < 80% so Tend/Rescue can start reliably.
 			// - Combat medics: require a higher injury threshold before they stop engaging.
-			float effectiveRetreatMinHP = IsArgrillianMedicPawn(pawn) ? combatMedicInjuredHPPercentThreshold : patientRetreatMinHPPercentToTreatAsPatient;
+			float effectiveRetreatMinHP = IsArgrillianMedicPawn(pawn) ? JobGiver_ArgrillianThreatResponse.combatMedicInjuredHPPercentThreshold : JobGiver_ArgrillianThreatResponse.patientRetreatMinHPPercentToTreatAsPatient;
 
 			bool injuredGate = IsInjuredPatientOrInjuredMedicStopAttacking(pawn, effectiveRetreatMinHP);
 
@@ -4054,7 +4054,7 @@ namespace ArgrillianThreat
 		public float patientRetreatPreferMedicRadius = 70f;
 
 		// Patient-like threshold
-		public float patientRetreatMinHPPercentToTreatAsPatient = 0.8f;
+		public static float patientRetreatMinHPPercentToTreatAsPatient = 0.8f;
 
 		public int patientRetreatModeHysteresisTicks = 180;
 		private float patientRetreatMinHPPercentToLockIn = 0.8f;
@@ -4067,7 +4067,7 @@ namespace ArgrillianThreat
 		private float combatMedicAidMinRange = 25f;
 
 		// --- NEW: injury thresholds for combat medics / patients ---
-		private float combatMedicInjuredHPPercentThreshold = 0.85f;   // injured enough to stop engaging
+		public static float combatMedicInjuredHPPercentThreshold = 0.85f;   // injured enough to stop engaging
 
 		private float combatMedicAssistEngageDistanceMultiplier = 1.6f; // immediate threat heuristic
 		private float immediateThreatScanRadius = 35f;                  // immediate threat heuristic
