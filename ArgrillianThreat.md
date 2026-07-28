@@ -6176,6 +6176,12 @@ namespace ArgrillianThreat
 		{
 			bool combatMedic = pawn.GetComp<CompArgrillianMedicSettings>()?.combatMedic == true;
 
+			// NEW: Combat medics must be able to start tending/rescuing immediately for downed patients,
+			// even during reservation/job churn right after hostiles are first noticed.
+			// Otherwise they can get stuck in a short stand/goto loop and never reach Tend/Rescue.
+			if (combatMedic && patient != null && patient.Downed)
+				return IsValidTendTarget(patient, pawn);
+
 			// Held patient invariant: if this patient is locked into this medic's medical pipeline,
 			// tend/rescue eligibility should NOT be blocked by the patient's current combat job.
 			if (combatMedic)
@@ -6189,12 +6195,6 @@ namespace ArgrillianThreat
 
 				if (holdActive)
 				{
-					// IMPORTANT: if the patient is downed, we must allow Rescue pipeline progression
-					// even if CanReserveTendTarget fails (often due to combat job reservation state).
-					// The Rescue branch later uses bed reservation + Tend/Rescue job defs.
-					if (patient.Downed)
-						return IsValidTendTarget(patient, pawn);
-
 					return IsValidTendTarget(patient, pawn) &&
 						CanReserveTendTarget(pawn, patient);
 				}
