@@ -5298,7 +5298,20 @@ namespace ArgrillianThreat
 			if (patient.Dead) return false;
 
 			PathEndMode endMode = patient.Downed ? PathEndMode.ClosestTouch : PathEndMode.Touch;
-			Danger danger = patient.Downed ? Danger.Some : Danger.None;
+
+			// Downed pawns should be tendable immediately by combat medics.
+			// The previous Danger.Some check can block CanReach(...) during hostile-awareness transitions.
+			bool medicIsCombatMedic = false;
+			var medicComp = medic.GetComp<CompArgrillianMedicSettings>();
+			if (medicComp != null && medicComp.isMedic && medicComp.combatMedic)
+			{
+				medicIsCombatMedic = true;
+			}
+
+			Danger danger = patient.Downed
+				? (medicIsCombatMedic ? Danger.None : Danger.Some)
+				: Danger.None;
+
 			return medic.CanReach(patient, endMode, danger);
 		}
 
