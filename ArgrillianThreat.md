@@ -5980,7 +5980,7 @@ namespace ArgrillianThreat
 
 						if (jobTarget.IsValid && jobTarget.Thing != null)
 						{
-							float distSqr = heldPatient.Position.DistanceToSquared(jobTarget.Cell);
+							float distSqr = jobTarget.Thing != null ? heldPatient.Position.DistanceToSquared(jobTarget.Thing.Position) : heldPatient.Position.DistanceToSquared(jobTarget.Cell);
 
 							// Approximate reach: melee uses adjacency; ranged uses current attack verb range when possible.
 							float maxDistSqr = 0.0f;
