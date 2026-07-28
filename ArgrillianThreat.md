@@ -6162,6 +6162,20 @@ namespace ArgrillianThreat
 				// After lock arbitration, attempt Tend/Rescue.
 				if (canTendNow(pawn, heldPatient))
 				{
+					// Position gate:
+					// canTendNow may be true while we are not yet close enough to start TendPatient reliably.
+					// Only attempt the Tend job when we are already on top / in immediate interaction range.
+					const float tendStartMaxDist = 1.6f; // tuned for "on top / adjacent" feel
+
+					bool inImmediateRange = pawn.Position.DistanceTo(heldPatient.Position) <= tendStartMaxDist;
+
+					if (!inImmediateRange)
+					{
+						// Move to the patient's cell so next tick we can start the Tend job.
+						// (You can later refine this to "closest touch cell" if you have a helper.)
+						return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
+					}
+
 					// Only at tend-start: hard-stop patient drift so tend/rescue completion isn't blocked.
 					heldPatient.pather?.StopDead();
 					return JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
@@ -6259,8 +6273,7 @@ namespace ArgrillianThreat
 			// Combat medics must start Tend/Rescue immediately for downed patients.
 			// Otherwise they can get a short “stand” while reserve/job state churns,
 			// and may never actually switch into the medical job.
-			if (combatMedic && patient != null && patient.Downed)
-				return IsValidTendTarget(patient, pawn);
+			if (combatMedic && patient != null && patient.Downed) return IsValidTendTarget(patient, pawn);
 
 			// Held patient invariant: if this patient is locked into this medic's medical pipeline,
 			// tend/rescue eligibility should NOT be blocked by the patient's current combat job/reservations.
