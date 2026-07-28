@@ -5349,21 +5349,46 @@ namespace ArgrillianThreat
 			if (patient == null || patient.Dead) return;
 
 			Job cur = patient.CurJob;
-			if (cur == null) return;
 
+			// Downed: must be immediately tendable.
 			if (patient.Downed)
 			{
-				if (IsAllowedDownPawnJob(cur))
+				if (cur != null && IsAllowedDownPawnJob(cur))
 					return;
 
 				// Patient is downed but on a non-tendable job:
-				// Use StopAll(true) + clear queued jobs to prevent stand/haul oscillation
+				// Stop + clear queued jobs to prevent stand/haul oscillation
 				// until the medic's Tend/Rescue pipeline completes.
 				patient.jobs?.StopAll(true);
 				patient.jobs?.ClearQueuedJobs();
 				patient.pather?.StopDead();
 				return;
 			}
+
+			// Injured (not downed): HP<80% => force stop/retreat-eligible state
+			// so Tend can start reliably (and so the pawn doesn’t bounce into queued haul/bed jobs).
+			float hpPct = patient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
+			if (hpPct >= 0.80f) return;
+
+			// If already job-compatible with the tend/rescue pipeline, don’t stomp it.
+			if (cur != null && cur.def != null)
+			{
+				if (cur.def == JobDefOf.TendPatient || cur.def == JobDefOf.Rescue || cur.def == JobDefOf.Wait)
+					return;
+			}
+
+			// Force patient retreat behavior so the next combat tick yields move-to-safety,
+			// instead of just a momentary StopAll that combat can immediately re-hand off.
+			ArgrillianThreatState.ModeTickCache.MarkMode(patient, 1); // 1 = patient-retreat
+
+			// Prevent immediate combat “commit/reacquire” churn during the same window.
+			ArgrillianThreatState.CombatLock.Clear(patient);
+			ArgrillianThreatState.CombatCommit.Clear(patient);
+
+			// Crucial: stop AND clear queued jobs so we don’t immediately bounce back to haul/bed.
+			patient.jobs?.StopAll(true);
+			patient.jobs?.ClearQueuedJobs();
+			patient.pather?.StopDead();
 		}
 
 		private static void TryStopPatientToAllowTendIfChasingOrAttacking(Pawn patient)
@@ -5379,34 +5404,6 @@ namespace ArgrillianThreat
 				patient.jobs?.StopAll(true);
 				patient.pather?.StopDead();
 			}
-		}
-
-		private static void TryStopPatientToAllowTendIfUrgentNonDowned(Pawn patient)
-		{
-			if (patient == null || patient.Dead) return;
-			if (patient.Downed) return;
-
-			float hpPct = patient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
-			if (hpPct >= 0.80f) return;
-
-			// Force patient retreat behavior so the next combat tick yields move-to-safety,
-			// instead of just a momentary StopAll that combat can immediately re-hand off.
-			ArgrillianThreatState.ModeTickCache.MarkMode(patient, 1); // 1 = patient-retreat
-
-			// Prevent immediate combat “commit/reacquire” churn during the same window.
-			ArgrillianThreatState.CombatLock.Clear(patient);
-			ArgrillianThreatState.CombatCommit.Clear(patient);
-
-			// If already job-compatible with tend/rescue pipeline, don’t stomp it.
-			Job cur = patient.CurJob;
-			if (cur != null && cur.def != null)
-			{
-				if (cur.def == JobDefOf.TendPatient || cur.def == JobDefOf.Rescue || cur.def == JobDefOf.Wait)
-					return;
-			}
-
-			patient.jobs?.StopAll(true);
-			patient.pather?.StopDead();
 		}
 
 		private static bool IsJobNameContains(Job j, string part)
@@ -5967,7 +5964,7 @@ namespace ArgrillianThreat
 			// 1) FORCE PATIENT RETREAT / STOP so Tend/Rescue can succeed
 			// ----------------------------
 			if (!heldPatient.Downed)
-				TryStopPatientToAllowTendIfUrgentNonDowned(heldPatient);
+				TryStopPatientToAllowTend(heldPatient);
 
 			// ----------------------------
 			// 2) KEEP-ACTIVE-JOB GUARD
@@ -6011,14 +6008,14 @@ namespace ArgrillianThreat
 			{
 				// Patient already forced above; just move into tend distance without churn.
 				if (!heldPatient.Downed)
-					TryStopPatientToAllowTendIfUrgentNonDowned(heldPatient);
+					TryStopPatientToAllowTend(heldPatient);
 
 				return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
 			}
 
 			// Start-eligible now: hard-stop right before we start Tend/Rescue.
 			if (!heldPatient.Downed)
-				TryStopPatientToAllowTendIfUrgentNonDowned(heldPatient);
+				TryStopPatientToAllowTend(heldPatient);
 
 			// Ensure medic is committed to this held patient.
 			LockPatientToMedic(pawn, heldPatient);
