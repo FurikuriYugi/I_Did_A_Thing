@@ -5392,32 +5392,24 @@ namespace ArgrillianThreat
 			if (patient.Downed) return;
 
 			float hpPct = patient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
+			if (hpPct >= 0.80f) return;
 
-			// NEW: retreat/stop-for-tend triggers purely by injury threshold (< 80%),
-			// not by "urgent" scoring.
-			if (hpPct >= 0.80f)
-				return;
+			// Force patient retreat behavior so the next combat tick yields move-to-safety,
+			// instead of just a momentary StopAll that combat can immediately re-hand off.
+			ArgrillianThreatState.ModeTickCache.MarkMode(patient, 1); // 1 = patient-retreat
 
-			// Force the patient's threat-mode into "patient retreat" so the main combat
-			// job giver produces retreat/move-to-safety instead of immediately re-entering combat.
-			ArgrillianThreatState.ModeTickCache.MarkMode(patient, 1);
+			// Prevent immediate combat “commit/reacquire” churn during the same window.
 			ArgrillianThreatState.CombatLock.Clear(patient);
 			ArgrillianThreatState.CombatCommit.Clear(patient);
 
-			Job j = patient.CurJob;
-			if (j == null || j.def == null)
+			// If already job-compatible with tend/rescue pipeline, don’t stomp it.
+			Job cur = patient.CurJob;
+			if (cur != null && cur.def != null)
 			{
-				// No meaningful job: just stop movement/combat so the retreat planner can proceed.
-				patient.jobs?.StopAll(true);
-				patient.pather?.StopDead();
-				return;
+				if (cur.def == JobDefOf.TendPatient || cur.def == JobDefOf.Rescue || cur.def == JobDefOf.Wait)
+					return;
 			}
 
-			// If we're already on a job that is compatible with the tend/rescue pipeline, don't fight it.
-			if (j.def == JobDefOf.TendPatient || j.def == JobDefOf.Rescue || j.def == JobDefOf.Wait)
-				return;
-
-			// Always stop current interference when below threshold.
 			patient.jobs?.StopAll(true);
 			patient.pather?.StopDead();
 		}
@@ -6015,17 +6007,14 @@ namespace ArgrillianThreat
 			Building_Bed cached = GetCachedRescueBedForPatient(patient);
 			if (cached != null)
 			{
-				// If we can't reserve the cached bed, don't fail outright.
-				// Invalidate cache and search again so we never create TakeToBed with a bad target.
+				// If cache exists but can’t be reserved anymore, invalidate it and fall through to re-pick.
 				if (CanReserveThingForPatient(medic, cached, patient))
 				{
 					bed = cached;
 					return true;
 				}
 
-				// Invalidate cached target so other code paths don't keep reusing it.
-				// (Uses your existing cache setter/getter discipline.)
-				CacheRescueBedForPatient(patient, null);
+				ClearCachedRescueBedForPatient(patient);
 			}
 
 			Building_Bed best = null;
