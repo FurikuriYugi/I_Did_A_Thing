@@ -5911,6 +5911,13 @@ namespace ArgrillianThreat
 			Pawn heldPatient = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
 			if (heldPatient != null)
 			{
+				// Prevent the held patient from continuing hauling/combat while the medic is still transitioning.
+				// This is what removes the “medic stands briefly, patient keeps fighting/hauling” window.
+				TryStopPatientToAllowTendIfChasingOrAttacking(heldPatient);
+				TryStopPatientToAllowTendIfUrgentNonDowned(heldPatient);
+				// Downed: only allow jobs that are compatible with the tend/rescue pipeline.
+				TryStopPatientToAllowTend(heldPatient);
+			
 				// If we are already on Tend/Rescue but tend is no longer valid/eligible,
 				// cancel the medical job so the medic can re-attempt later.
 				if (pawn.CurJob != null && pawn.CurJob.def != null)
