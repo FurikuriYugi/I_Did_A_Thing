@@ -6196,7 +6196,7 @@ namespace ArgrillianThreat
 				return IsValidTendTarget(patient, pawn);
 
 			// Held patient invariant: if this patient is locked into this medic's medical pipeline,
-			// tend/rescue eligibility should NOT be blocked by the patient's current combat job.
+			// tend/rescue eligibility should NOT be blocked by the patient's current combat job/reservations.
 			if (combatMedic)
 			{
 				Pawn heldPatient = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
@@ -6208,9 +6208,9 @@ namespace ArgrillianThreat
 
 				if (holdActive)
 				{
-					// For non-downed held patients you can keep reserve restriction.
-					return IsValidTendTarget(patient, pawn) &&
-						CanReserveTendTarget(pawn, patient);
+					// Remove reservation gate here: the lock already resolved the “which patient” question,
+					// and requiring medic.CanReserve(patient, ...) causes “held but never tender” stalls.
+					return IsValidTendTarget(patient, pawn);
 				}
 			}
 
@@ -6228,20 +6228,9 @@ namespace ArgrillianThreat
 					return false;
 				}
 
-				if (j.def == JobDefOf.LayDown)
-				{
-					return false;
-				}
-
-				if (j.def == JobDefOf.Rescue)
-				{
-					return false;
-				}
-
-				if (!IsAllowedDownPawnJob(j))
-				{
-					return false;
-				}
+				if (j.def == JobDefOf.LayDown) return false;
+				if (j.def == JobDefOf.Rescue) return false;
+				if (!IsAllowedDownPawnJob(j)) return false;
 			}
 
 			bool distanceOk = patient.Downed ? true : pawn.Position.DistanceTo(patient.Position) <= combatTendMaxDistance;
