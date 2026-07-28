@@ -2654,15 +2654,10 @@ namespace ArgrillianThreat
 				return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, pawn.Position);
 			}
 
-			// NEW CHANGE: injuredGate tuning for medics
-			// - Patients: use retreatMinHealthPercent as-is
-			// - Medics/combat medics: require them to be more injured before they stop attacking.
-			// This prevents melee combat medics from immediately falling into "cover/hold/tend" behavior.
-			float medicInjuredMultiplier = IsArgrillianCombatMedicPawn(pawn) ? 0.55f : 0.7f;
-			float effectiveRetreatMinHP = retreatMinHealthPercent;
-
-			if (IsArgrillianMedicPawn(pawn))
-				effectiveRetreatMinHP = retreatMinHealthPercent * medicInjuredMultiplier;
+			// NEW CHANGE: injuredGate tuning for patients/combat medics
+			// - Patients: retreat/stop when HP < 80% so Tend/Rescue can start reliably.
+			// - Combat medics: require a higher injury threshold before they stop engaging.
+			float effectiveRetreatMinHP = IsArgrillianMedicPawn(pawn) ? combatMedicInjuredHPPercentThreshold : patientRetreatMinHPPercentToTreatAsPatient;
 
 			bool injuredGate = IsInjuredPatientOrInjuredMedicStopAttacking(pawn, effectiveRetreatMinHP);
 
