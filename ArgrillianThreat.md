@@ -4936,6 +4936,11 @@ namespace ArgrillianThreat
 		{
 			if (medic == null || patient == null) return false;
 
+			// Downed patients must be allowed to preempt the cooldown gate,
+			// otherwise combat medics can remain stuck in transition/standing
+			// while the downed tend/rescue pipeline should start immediately.
+			if (patient.Downed) return false;
+
 			int now = TendNow;
 			int k = TendSwitchKey(medic, patient);
 
