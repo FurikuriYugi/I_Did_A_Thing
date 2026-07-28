@@ -6057,8 +6057,35 @@ namespace ArgrillianThreat
 		{
 			bool combatMedic = pawn.GetComp<CompArgrillianMedicSettings>()?.combatMedic == true;
 
+			if (pawn == null || patient == null) return false;
+			if (patient.Dead) return false;
+
+			// KEEP-ACTIVE-JOB GUARD:
+			// If the medic is already running the correct Tend/Rescue job for the held/assigned patient,
+			// do not let transient movement/stability/distance flips cause the job giver to abandon it.
+			Job cur = pawn.CurJob;
+			if (cur != null && cur.def != null)
+			{
+				if (cur.def == JobDefOf.Rescue)
+				{
+					// Rescue expects the patient in one of the targets (vanilla/patch dependent).
+					if ((cur.targetA.IsValid && cur.targetA.Thing == patient) ||
+						(cur.targetB.IsValid && cur.targetB.Thing == patient) ||
+						(cur.targetC.IsValid && cur.targetC.Thing == patient))
+						return true;
+				}
+
+				if (cur.def == JobDefOf.TendPatient)
+				{
+					if ((cur.targetA.IsValid && cur.targetA.Thing == patient) ||
+						(cur.targetB.IsValid && cur.targetB.Thing == patient) ||
+						(cur.targetC.IsValid && cur.targetC.Thing == patient))
+						return true;
+				}
+			}
+
 			// Combat medics must start Tend/Rescue immediately for downed patients.
-			if (combatMedic && patient != null && patient.Downed) return IsValidTendTarget(patient, pawn);
+			if (combatMedic && patient.Downed) return IsValidTendTarget(patient, pawn);
 
 			// Held patient invariant: if this patient is locked into this medic's medical pipeline,
 			// tend/rescue eligibility should NOT be blocked by the patient's current combat job.
