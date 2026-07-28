@@ -5252,8 +5252,8 @@ namespace ArgrillianThreat
 			if (patient.Dead) return false;
 
 			PathEndMode endMode = patient.Downed ? PathEndMode.ClosestTouch : PathEndMode.Touch;
-			Danger danger = patient.Downed ? Danger.None : Danger.Some;
-			return medic.CanReach(patient, endMode, danger);
+			//Danger danger = patient.Downed ? Danger.None : Danger.Some;
+			return medic.CanReach(patient, endMode, Danger.None);
 		}
 
 		private static bool CanReserveThing(Pawn medic, Thing t)
