@@ -5980,8 +5980,17 @@ namespace ArgrillianThreat
 
 			if (heldPatient.Downed)
 			{
-				// Rescue needs to target the patient pawn.
-				return JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
+				// Prevent TakeToBed NRE: ensure we have a valid, reservable bed at job creation time.
+				if (!TryGetRescueBedForPatient(pawn, heldPatient, out Building_Bed bed) || bed == null)
+					return null;
+
+				Job rescueJob = JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
+
+				// Vanilla Rescue/TakeToBed pipeline expects a bed/thing target. We have it now.
+				// If your mod’s Rescue target mapping differs, adjust only the target index here.
+				rescueJob.targetB = bed;
+
+				return rescueJob;
 			}
 
 			return JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
