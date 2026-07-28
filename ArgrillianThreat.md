@@ -5949,7 +5949,6 @@ namespace ArgrillianThreat
 			if (medicComp == null || !medicComp.isMedic) return null;
 			if (!medicComp.combatMedic) return null;
 
-			// Combat medics fight when no patients exist.
 			Pawn heldPatient = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
 			if (heldPatient == null)
 			{
@@ -5964,9 +5963,16 @@ namespace ArgrillianThreat
 			if (heldPatient == null)
 				return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 
-			// KEEP-ACTIVE-JOB GUARD:
-			// If we already have Tend/Rescue running for this heldPatient,
-			// do not abandon it due to transient movement/distance eligibility flips.
+			// ----------------------------
+			// 1) FORCE PATIENT RETREAT / STOP so Tend/Rescue can succeed
+			// ----------------------------
+			if (!heldPatient.Downed)
+				TryStopPatientToAllowTendIfUrgentNonDowned(heldPatient);
+
+			// ----------------------------
+			// 2) KEEP-ACTIVE-JOB GUARD
+			//    If we already have Tend/Rescue running for this heldPatient, don't abandon it
+			// ----------------------------
 			if (pawn.CurJob != null && pawn.CurJob.def != null)
 			{
 				Job cur = pawn.CurJob;
@@ -5976,38 +5982,37 @@ namespace ArgrillianThreat
 				{
 					Thing ta = cur.targetA.Thing;
 					Thing tb = cur.targetB.Thing;
+					Thing tc = cur.targetC.Thing;
 
-					// Rescue/Tend should include the patient as one of the targets.
-					if ((ta != null && ta == heldPatient) || (tb != null && tb == heldPatient))
+					if ((ta != null && ta == heldPatient) ||
+						(tb != null && tb == heldPatient) ||
+						(tc != null && tc == heldPatient))
+					{
+						// If we were tending and the patient has just gone down,
+						// switch to Rescue immediately (don't let it fall through to combat).
+						if (def == JobDefOf.TendPatient && heldPatient.Downed)
+						{
+							if (!TryGetRescueBedForPatient(pawn, heldPatient, out Building_Bed bed) || bed == null)
+								return null;
+
+							Job rescueJob = JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
+							rescueJob.count = 1;
+							rescueJob.targetB = bed;
+							return rescueJob;
+						}
+
 						return cur;
+					}
 				}
-			}
-
-			// FORCE TRANSITION: if we were tending and the held patient becomes downed,
-			// immediately switch to Rescue for the same heldPatient (don’t fall back to combat).
-			if (pawn.CurJob != null && pawn.CurJob.def == JobDefOf.TendPatient && heldPatient.Downed)
-			{
-				// Ensure we still have a valid held patient pipeline target.
-				// (heldPatient null/dead would have been handled earlier.)
-				if (!TryGetRescueBedForPatient(pawn, heldPatient, out Building_Bed bed) || bed == null)
-					return null;
-
-				Job rescueJob = JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
-				rescueJob.count = 1;
-				rescueJob.targetB = bed;
-
-				return rescueJob;
 			}
 
 			// Core: canTendNow should only decide "start Tend/Rescue now" vs "move into tend position".
 			if (!canTendNow(pawn, heldPatient))
 			{
-				// For injured but not downed urgent targets, explicitly stop patient interference
-				// so Tend can become startable reliably.
+				// Patient already forced above; just move into tend distance without churn.
 				if (!heldPatient.Downed)
 					TryStopPatientToAllowTendIfUrgentNonDowned(heldPatient);
 
-				// Move into tend distance (no churn).
 				return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
 			}
 
@@ -6027,8 +6032,7 @@ namespace ArgrillianThreat
 				Job rescueJob = JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
 				rescueJob.count = 1;
 
-				// Vanilla Rescue/TakeToBed pipeline expects a bed/thing target. We have it now.
-				// This keeps your existing target mapping discipline.
+				// Vanilla Rescue/TakeToBed pipeline expects the bed as targetB.
 				rescueJob.targetB = bed;
 
 				return rescueJob;
