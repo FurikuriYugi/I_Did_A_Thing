@@ -3182,22 +3182,23 @@ namespace ArgrillianThreat
 			// If this medic's own job is Tend/Rescue, keep it as long as the target is still in the medic's medical pipeline.
 			if (IsArgrillianMedicPawn(pawn) && pawn.CurJob != null)
 			{
-				JobDef def = pawn.CurJob.def;
+				Job curJob = pawn.CurJob;
+				JobDef def = curJob.def;
+
 				if (def == JobDefOf.TendPatient || def == JobDefOf.Rescue)
 				{
-					Pawn patient = pawn.CurJob.targetA.Pawn;
-					if (patient != null && !patient.Dead && patient.Spawned && patient.Map == pawn.Map)
+					// Use the held mapping so we don't depend on whether the patient pawn is in targetA vs targetB/targetC.
+					Pawn held = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
+
+					if (held != null && !held.Dead && held.Spawned && held.Map == pawn.Map)
 					{
-						// Use your authoritative hold mapping instead of IsBeingTendedByArgrillianMedic(),
-						// which may be out of sync with PatientMedicHold.
-						Pawn held = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
-						bool patientStillBoundToMedic = held == patient;
+						bool jobIsForHeldPatient = JobTargetsIncludePawn(curJob, held);
 
-						// Rescue is for downed/unable patients.
+						// Rescue is only for downed/unable patients.
 						if (def == JobDefOf.Rescue)
-							patientStillBoundToMedic = patientStillBoundToMedic && patient.Downed;
+							jobIsForHeldPatient = jobIsForHeldPatient && held.Downed;
 
-						if (patientStillBoundToMedic)
+						if (jobIsForHeldPatient)
 							return pawn.CurJob;
 					}
 				}
