@@ -5985,6 +5985,7 @@ namespace ArgrillianThreat
 					return null;
 
 				Job rescueJob = JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
+				rescueJob.count = 1;
 
 				// Vanilla Rescue/TakeToBed pipeline expects a bed/thing target. We have it now.
 				// If your mod’s Rescue target mapping differs, adjust only the target index here.
