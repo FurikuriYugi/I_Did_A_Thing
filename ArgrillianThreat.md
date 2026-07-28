@@ -5991,236 +5991,25 @@ namespace ArgrillianThreat
 			if (!medicComp.combatMedic) return null;
 
 			Pawn heldPatient = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
-			if (heldPatient != null)
+			if (heldPatient == null)
 			{
-				// Prevent the held patient from continuing hauling/combat while the medic is still transitioning.
-				// This is what removes the “medic stands briefly, patient keeps fighting/hauling” window.
-				TryStopPatientToAllowTendIfChasingOrAttacking(heldPatient);
-				TryStopPatientToAllowTendIfUrgentNonDowned(heldPatient);
-				// Downed: only allow jobs that are compatible with the tend/rescue pipeline.
-				TryStopPatientToAllowTend(heldPatient);
-			
-				// If we are already on Tend/Rescue but tend is no longer valid/eligible,
-				// cancel the medical job so the medic can re-attempt later.
-				if (pawn.CurJob != null && pawn.CurJob.def != null)
+				Pawn bestCandidate = ArgrillianAlertSystem.GetBestPatientFromCalls(pawn, searchRadius);
+				if (bestCandidate != null)
 				{
-					if (pawn.CurJob.def == JobDefOf.TendPatient)
+					// Prefer downed over merely-injured if the system reports both.
+					if (bestCandidate.Downed)
 					{
-						if (!canTendNow(pawn, heldPatient))
-							pawn.jobs.EndCurrentJob(JobCondition.InterruptForced);
-						else
-							return pawn.CurJob;
-					}
-					else if (pawn.CurJob.def == JobDefOf.Rescue)
-					{
-						if (!heldPatient.Downed)
-							pawn.jobs.EndCurrentJob(JobCondition.InterruptForced);
-						else
-							return pawn.CurJob;
-					}
-				}
-
-				bool medicIsActiveMedical = pawn.CurJob != null && pawn.CurJob.def != null && (pawn.CurJob.def == JobDefOf.TendPatient || pawn.CurJob.def == JobDefOf.Rescue);
-
-				// If we’ve locked a patient for this combat medic, immediately prevent the patient
-				// from continuing unrelated combat/mobility jobs until Tend/Rescue can actually start.
-				// Otherwise the patient keeps fighting while the medic is still transitioning/standing.
-				TryStopPatientToAllowTend(heldPatient);
-
-				// When we are in/approaching Tend/Rescue, prevent the patient from continuing
-				// their combat job while we’re able to start tending (fixes "medic stuck +
-				// patient keeps fighting").
-				bool canTouchNow = canTendNow(pawn, heldPatient);
-
-				if (medicIsActiveMedical)
-				{
-					// Stop movement drift + prevent job-queue switching.
-					heldPatient.pather?.StopDead();
-					heldPatient.jobs?.ClearQueuedJobs();
-
-					// IMPORTANT: we do NOT force-start an attack job here.
-					// If an enemy is already in range, RimWorld’s attack/shoot behavior will execute
-					// without needing chase/move.
-
-					bool isHeldPatientOnCombatJob =
-						heldPatient.CurJob != null &&
-						heldPatient.CurJob.def != null &&
-						(
-							heldPatient.CurJob.def == JobDefOf.AttackMelee ||
-							heldPatient.CurJob.def == JobDefOf.AttackStatic ||
-							(heldPatient.CurJob.def.defName != null && (
-								heldPatient.CurJob.def.defName.IndexOf("attack", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
-								heldPatient.CurJob.def.defName.IndexOf("shoot", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
-								heldPatient.CurJob.def.defName.IndexOf("range", System.StringComparison.OrdinalIgnoreCase) >= 0
-							))
-						);
-
-					// If the patient is in a combat job, only interrupt when they would need to
-					// move (i.e., their current hostile target is NOT in range).
-					//
-					// This keeps “shooting/attacking in-range” allowed while still preventing movement derailment.
-					if (isHeldPatientOnCombatJob)
-					{
-						// Try to infer current hostile target from the active job.
-						LocalTargetInfo jobTarget =
-							(heldPatient.CurJob.targetA.IsValid) ? heldPatient.CurJob.targetA :
-							(heldPatient.CurJob.targetB.IsValid) ? heldPatient.CurJob.targetB :
-							(LocalTargetInfo) LocalTargetInfo.Invalid;
-
-						if (jobTarget.IsValid && jobTarget.Thing != null)
-						{
-							float distSqr = jobTarget.Thing != null ? heldPatient.Position.DistanceToSquared(jobTarget.Thing.Position) : heldPatient.Position.DistanceToSquared(jobTarget.Cell);
-
-							// Approximate reach: melee uses adjacency; ranged uses current attack verb range when possible.
-							float maxDistSqr = 0.0f;
-
-							if (heldPatient.CurJob.def == JobDefOf.AttackMelee)
-							{
-								maxDistSqr = 2.25f; // ~1.5 tiles; melee-ish
-							}
-							else
-							{
-								Verb attackVerb = null;
-
-								if (jobTarget.Thing != null)
-								{
-									// RimWorld 1.6 signature requires: TryGetAttackVerb(Thing target, bool allowIndirectFire, bool allowMelee)
-									// Using (true, true) lets the verb resolve for both melee and ranged weapons.
-									attackVerb = heldPatient.TryGetAttackVerb(jobTarget.Thing, true, true);
-								}
-
-								float reach = (attackVerb != null && attackVerb.verbProps != null) ? attackVerb.verbProps.range : 0f;
-
-								// If we can't compute reach, be conservative and prevent movement derailment.
-								if (reach > 0f)
-									maxDistSqr = (reach * reach) + 0.25f;
-								else
-									maxDistSqr = 0.0f;
-							}
-
-							bool targetInRangeNow = (maxDistSqr > 0.0f) ? (distSqr <= maxDistSqr) : false;
-
-							// Rule: patient may attack/shoot while in range, but MUST NOT move (no chasing/advancing).
-							bool patientIsMoving = heldPatient.pather != null && heldPatient.pather.Moving;
-
-							if (!targetInRangeNow)
-							{
-								// Not in range -> stop advancing/chasing so tend can proceed.
-								heldPatient.jobs.EndCurrentJob(JobCondition.InterruptForced);
-							}
-							else
-							{
-								// In range -> allow combat, but remove drift/pathing that would derail tending.
-								// Stop movement and clear queued jobs only; do NOT EndCurrentJob for combat.
-								if (patientIsMoving)
-								{
-									heldPatient.pather?.StopDead();
-									heldPatient.jobs?.ClearQueuedJobs();
-								}
-							}
-						}
-						else
-						{
-							// No valid target info -> safest behavior: interrupt so patient can't wander.
-							heldPatient.jobs.EndCurrentJob(JobCondition.InterruptForced);
-						}
+						ArgrillianMedicalState.PatientMedicHold.Lock(pawn, bestCandidate);
+						heldPatient = bestCandidate;
 					}
 					else
 					{
-						// Non-combat (haul/wait/flee/etc.) should be interrupted immediately to keep tend exclusive.
-						heldPatient.jobs.EndCurrentJob(JobCondition.InterruptForced);
-					}
-
-					// IMPORTANT: we do NOT force-start an attack job here.
-					// If an enemy is already in range, RimWorld’s attack/shoot behavior will execute
-					// without needing chase/move.
-				}
-
-				// Tend-first arbitration:
-				// If the currently held patient is NOT the most serious eligible target,
-				// release and re-lock onto the best patient. This prevents “held patient not actually
-				// top-priority -> medic drifts to next jobs / battles” behavior.
-				if (!canTendNow(pawn, heldPatient))
-				{
-					Pawn bestCandidate = ArgrillianAlertSystem.GetBestPatientFromCalls(pawn, searchRadius);
-
-					if (bestCandidate != null && bestCandidate != heldPatient)
-					{
-						// Cooldown: prevent rapid release/re-lock while still not eligible to tend.
-						// This keeps progress monotonic and avoids thrash when PatientCalls update.
-						if (!RecentlySwitchedTendLock(pawn, bestCandidate, minJobSwitchCooldownTicks))
-						{
-							// Prefer downed over merely-injured.
-							if (bestCandidate.Downed && !heldPatient.Downed)
-							{
-								ArgrillianMedicalState.PatientMedicHold.ReleaseForMedic(pawn);
-								ArgrillianMedicalState.PatientMedicHold.Lock(pawn, bestCandidate);
-								heldPatient = bestCandidate;
-								MarkSwitchedTendLock(pawn, heldPatient);
-							}
-							else
-							{
-								// Otherwise prefer lower HP% (more serious) if both are eligible candidates.
-								float heldHpPct = heldPatient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
-								float candHpPct = bestCandidate.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
-
-								if (candHpPct < heldHpPct)
-								{
-									ArgrillianMedicalState.PatientMedicHold.ReleaseForMedic(pawn);
-									ArgrillianMedicalState.PatientMedicHold.Lock(pawn, bestCandidate);
-									heldPatient = bestCandidate;
-									MarkSwitchedTendLock(pawn, heldPatient);
-								}
-							}
-						}
+						// If multiple are equally eligible, lock onto the most serious we can.
+						// (This mirrors your later downed/HP logic, but only needed for the first lock.)
+						ArgrillianMedicalState.PatientMedicHold.Lock(pawn, bestCandidate);
+						heldPatient = bestCandidate;
 					}
 				}
-
-				// After lock arbitration, attempt Tend/Rescue.
-				if (canTendNow(pawn, heldPatient))
-				{
-					// Position gate:
-					// canTendNow may be true while we are not yet close enough to start TendPatient reliably.
-					// Only attempt the Tend job when we are already on top / in immediate interaction range.
-					const float tendStartMaxDist = 1.6f; // tuned for "on top / adjacent" feel
-
-					bool inImmediateRange = pawn.Position.DistanceTo(heldPatient.Position) <= tendStartMaxDist;
-
-					if (!inImmediateRange)
-					{
-						// Move to the patient's cell so next tick we can start the Tend job.
-						// (You can later refine this to "closest touch cell" if you have a helper.)
-						return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
-					}
-
-					// Only at tend-start: hard-stop patient drift so tend/rescue completion isn't blocked.
-					heldPatient.pather?.StopDead();
-					return JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
-				}
-
-				// If downed and a bed exists, try Rescue.
-				if (heldPatient.Downed)
-				{
-					Building_Bed bed;
-					if (TryGetRescueBedForPatient(pawn, heldPatient, out bed))
-					{
-						heldPatient.pather?.StopDead();
-						return JobMaker.MakeJob(JobDefOf.Rescue, heldPatient, bed);
-					}
-				}
-
-				// Not eligible yet:
-				// Keep the medic in the medical pipeline without tend/rescue,
-				// but DO NOT just Wait.
-				IntVec3 tendSpot = FindBestTendSpot(pawn, heldPatient, combatTendMaxDistance);
-
-				// Fallback: avoid feeding an invalid/unreachable cell into Goto (causes idle/standing).
-				if (!tendSpot.IsValid)
-				{
-					tendSpot = heldPatient.Position;
-				}
-
-				return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, tendSpot);
 			}
 
 			// IMPORTANT: when we have no held patient, this should NOT return null for combat medics.
