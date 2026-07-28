@@ -1895,12 +1895,7 @@ namespace ArgrillianThreat
 				dict.Remove(hostileId);
 			}
 
-			// Tell recipients to stop investigating this hostile last-known.
-			// We implement this as clearing shared investigate at cell (recipient code needs this helper).
-			// If your repo doesn’t have a method for that, we’ll add it similarly to MarkSharedInvestigateAt.
-			IntVec3 lastKnown = hostile.Position;
-			for (int i = 0; i < recipientsBufferClearOrder.Count; i++) { /* no-op placeholder */ }
-
+			// Tell recipients to stop investigating this specific hostile last-known.
 			var cache = GetOrCreate(map);
 			if (cache != null)
 			{
@@ -1912,7 +1907,7 @@ namespace ArgrillianThreat
 					if (recipient.Dead) continue;
 					if (recipient.Map != map) continue;
 
-					ArgrillianThreatState.AwarenessCache.Clear(recipient);
+					ArgrillianThreatState.AwarenessCache.ClearIfHostileMatches(recipient, hostileId);
 				}
 			}
 		}
