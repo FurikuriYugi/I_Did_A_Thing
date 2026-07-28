@@ -3191,7 +3191,7 @@ namespace ArgrillianThreat
 
 					if (held != null && !held.Dead && held.Spawned && held.Map == pawn.Map)
 					{
-						bool jobIsForHeldPatient = IsJobRelevantToCombatMedicUrgent(curJob, held);
+						bool jobIsForHeldPatient = JobGiver_TendRetreatingAllies.IsJobRelevantToCombatMedicUrgent(curJob, held);
 
 						// Rescue is for downed/unable patients.
 						if (def == JobDefOf.Rescue)
@@ -5487,7 +5487,7 @@ namespace ArgrillianThreat
 			return false;
 		}
 
-		private static bool IsJobRelevantToCombatMedicUrgent(Job job, Pawn patient)
+		public static bool IsJobRelevantToCombatMedicUrgent(Job job, Pawn patient)
 		{
 			if (job == null || patient == null) return false;
 
