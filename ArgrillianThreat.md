@@ -2894,7 +2894,6 @@ namespace ArgrillianThreat
 			// -------- movement band decisions (unchanged) --------
 			if (isRanged)
 			{
-				// (your entire ranged block unchanged)
 				if (!pursueAdvance)
 				{
 					if (TryPickCoverCell(pawn, hostile, desiredCombatDistanceNow, losBreakBonus, out IntVec3 coverCellNoPursue))
@@ -2902,16 +2901,16 @@ namespace ArgrillianThreat
 						var keepCover = ArgrillianGotoHelper.KeepIfSameGoto(pawn, coverCellNoPursue);
 						if (keepCover != null) return keepCover;
 
+						// Prevent ranged cover thrash when hostile awareness/geometry updates every tick.
+						if (pawn.CurJob?.def == JobDefOf.Goto)
+						{
+							if (!ArgrillianGotoHelper.RepathCooldown.ShouldAllowNewDestination(pawn, coverCellNoPursue))
+								return pawn.CurJob;
+						}
+
 						ArgrillianThreatState.ThreatTickCache.MarkNow(pawn);
 						return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, coverCellNoPursue);
 					}
-
-					var keepHold = ArgrillianGotoHelper.KeepIfSameGoto(pawn, pawn.Position);
-					if (keepHold != null) return keepHold;
-
-					ArgrillianThreatState.ThreatTickCache.MarkNow(pawn);
-					IntVec3 tiny = pawn.Position + ArgrillianThreatGeometry.GetAdj8()[Rand.Range(0, ArgrillianThreatGeometry.GetAdj8().Length)];
-					return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, tiny);
 				}
 
 				if (TryPickCoverCell(pawn, hostile, desiredCombatDistanceNow, losBreakBonus, out IntVec3 coverCell))
