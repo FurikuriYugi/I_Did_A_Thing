@@ -3187,14 +3187,13 @@ namespace ArgrillianThreat
 
 				if (def == JobDefOf.TendPatient || def == JobDefOf.Rescue)
 				{
-					// Use the held mapping so we don't depend on whether the patient pawn is in targetA vs targetB/targetC.
 					Pawn held = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
 
 					if (held != null && !held.Dead && held.Spawned && held.Map == pawn.Map)
 					{
-						bool jobIsForHeldPatient = JobTargetsIncludePawn(curJob, held);
+						bool jobIsForHeldPatient = IsJobRelevantToCombatMedicUrgent(curJob, held);
 
-						// Rescue is only for downed/unable patients.
+						// Rescue is for downed/unable patients.
 						if (def == JobDefOf.Rescue)
 							jobIsForHeldPatient = jobIsForHeldPatient && held.Downed;
 
