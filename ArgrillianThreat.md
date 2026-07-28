@@ -1183,6 +1183,7 @@ namespace ArgrillianThreat
 
 		private enum PatientCallSeverity : byte
 		{
+			Injured = 0,
 			Downed = 1,
 			Bleed = 2
 		}
@@ -1218,6 +1219,8 @@ namespace ArgrillianThreat
 		private const int PatientCallTTL_DownedTicks = 250;
 		private const int PatientCallTTL_BleedTicks = 400;
 
+		private const float PatientInjuredHPPercentThreshold = 0.75f;
+
 		private static PatientMapCache GetOrCreatePatientCache(Map map)
 		{
 			if (map == null) return null;
@@ -1243,21 +1246,25 @@ namespace ArgrillianThreat
 			return medicIdByPatientId.TryGetValue(patientId, out int _);
 		}
 
+		// 5) Update ComputePatientSeverity so ranking works with injured
 		private static PatientCallSeverity ComputePatientSeverity(Pawn patient)
 		{
-			if (patient == null) return PatientCallSeverity.Downed;
+			if (patient == null) return PatientCallSeverity.Injured;
 
-			// Severity ordering locked: Bleed > downed
-			// “Bleed” = has BloodLoss hediff
-			// (Using the same HasBloodLossStatic/BloodLossSeverityStatic approach you already have in this file.)
-			if (patient.health?.hediffSet != null && patient.health.hediffSet.HasHediff(HediffDefOf.BloodLoss))
-				return PatientCallSeverity.Bleed;
+			if (patient.Downed) return PatientCallSeverity.Downed;
 
-			if (patient.Downed)
-				return PatientCallSeverity.Downed;
+			bool bleeding =
+				patient.health?.hediffSet != null
+				&& patient.health.hediffSet.HasHediff(HediffDefOf.BloodLoss);
 
-			// If we get called for a non-downed/non-bleeding state, treat as downed-tier so it expires quickly.
-			return PatientCallSeverity.Downed;
+			if (bleeding) return PatientCallSeverity.Bleed;
+
+			float hpPct = patient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
+			if (hpPct <= PatientInjuredHPPercentThreshold)
+				return PatientCallSeverity.Injured;
+
+			// Default fallback: not really eligible; treat as injured-low priority
+			return PatientCallSeverity.Injured;
 		}
 
 		// Prune expired / invalid entries.
@@ -1574,6 +1581,7 @@ namespace ArgrillianThreat
 
 		// Call this from the pawn's "self-state" evaluation (once per relevant update, e.g., Think/CompTick).
 		// It will publish PatientCall on transition into downed or bleeding.
+		// 3) Extend NotifyPawnSelfState transition trigger
 		public static void NotifyPawnSelfState(Pawn pawn)
 		{
 			if (pawn == null) return;
@@ -1585,16 +1593,32 @@ namespace ArgrillianThreat
 			byte prev = 0;
 			patientDownBleedStateByPawnId.TryGetValue(id, out prev);
 
+			// Existing state for downed/bleeding
 			byte cur = ComputeDownBleedState(pawn);
+
+			// NEW: extend state with “injured” bit (low HP but not downed/bleeding)
+			// We'll use bit 4 as an injured marker to keep existing bits intact.
+			bool isInjuredLowHP = !pawn.Downed
+				&& !(pawn.health?.hediffSet != null && pawn.health.hediffSet.HasHediff(HediffDefOf.BloodLoss))
+				&& (pawn.health?.summaryHealth?.SummaryHealthPercent ?? 1f) <= PatientInjuredHPPercentThreshold;
+
+			if (isInjuredLowHP) cur |= 4;
+
 			if (cur == prev) return;
 
 			// Transition into downed/bleeding should publish immediately.
 			bool enteredDowned = ((cur & 1) != 0) && ((prev & 1) == 0);
 			bool enteredBleeding = ((cur & 2) != 0) && ((prev & 2) == 0);
 
-			if (enteredDowned || enteredBleeding)
+			// NEW: publish when we enter injured-low-HP state
+			bool enteredInjured = ((cur & 4) != 0) && ((prev & 4) == 0);
+
+			if (enteredDowned || enteredBleeding || enteredInjured)
 			{
 				bool wasDownedOrBleedingNow = enteredDowned || enteredBleeding;
+
+				// We still pass “wasDownedOrBleedingNow” for compatibility with existing Publish signature.
+				// PublishPatientCall will compute severity from the pawn anyway.
 				PublishPatientCall(pawn, pawn, wasDownedOrBleedingNow);
 			}
 
@@ -1604,17 +1628,28 @@ namespace ArgrillianThreat
 
 		// Call this from the observer-state evaluation where you already know "observer sees target downed/bleeding".
 		// This version does NOT require the observer to track previous state; it just publishes as a call.
+		// 4) Extend NotifyObserverSeesInjury publishing trigger
 		public static void NotifyObserverSeesInjury(Pawn observer, Pawn target)
 		{
 			if (target == null) return;
 			if (target.Dead) return;
-			if (target.Downed == false && (target.health?.hediffSet == null || !target.health.hediffSet.HasHediff(HediffDefOf.BloodLoss)))
+
+			// Existing downed/bleeding gate
+			bool isDowned = target.Downed;
+			bool isBleeding = target.health?.hediffSet != null && target.health.hediffSet.HasHediff(HediffDefOf.BloodLoss);
+
+			// NEW: low-HP injured (non-downed, non-bleeding)
+			float hpPct = target.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
+			bool isInjuredLowHP = !isDowned && !isBleeding && hpPct <= PatientInjuredHPPercentThreshold;
+
+			if (!isDowned && !isBleeding && !isInjuredLowHP)
 				return;
 
-			bool wasDownedOrBleedingNow = true;
+			// Preserve existing parameter meaning; severity will be computed inside PublishPatientCall.
+			bool wasDownedOrBleedingNow = isDowned || isBleeding;
 			PublishPatientCall(observer, target, wasDownedOrBleedingNow);
 		}
-
+		
 		// ----------------------------
 		// HostileCall transition triggers (event publisher glue)
 		// ----------------------------
