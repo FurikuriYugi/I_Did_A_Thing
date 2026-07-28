@@ -4079,7 +4079,6 @@ namespace ArgrillianThreat
 
 		// NEW: patient TEND override tuning
 		//private int tendOverrideMinStableTicks = 10; // small buffer to reduce “fight vs tend” tug-of-war
-
 		private float GetDesiredCombatDistance(Pawn pawn, Pawn hostile, bool pursueAdvance)
 		{
 			if (pawn == null || hostile == null) return 30f;
@@ -4906,6 +4905,11 @@ namespace ArgrillianThreat
 				rangedPursuitMinApproachMultiplier,
 				rangedFiringBandFactor,
 				ArgrillianThreatTuning.PatientFightLockoutAfterRetreatTicks);
+		}
+
+		public Job GiveCombatThreatJob(Pawn pawn)
+		{
+			return TryGiveJob(pawn);
 		}
 	}
 
@@ -6190,7 +6194,7 @@ namespace ArgrillianThreat
 
 			// IMPORTANT: when we have no held patient, this should NOT return null for combat medics.
 			// Fall back to the combat threat response dispatcher so the medic doesn't default to haul/stockpile behavior.
-			return new JobGiver_ArgrillianThreatResponse().TryGiveJob(pawn);
+			return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 		}
 
 		private bool TryGetRescueBedForPatient(Pawn medic, Pawn patient, out Building_Bed bed)
