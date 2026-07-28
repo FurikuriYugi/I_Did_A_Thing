@@ -6167,7 +6167,7 @@ namespace ArgrillianThreat
 				// Fallback: avoid feeding an invalid/unreachable cell into Goto (causes idle/standing).
 				if (!tendSpot.IsValid)
 				{
-					tendSpot = pawn.Position;
+					tendSpot = heldPatient.Position;
 				}
 
 				return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, tendSpot);
