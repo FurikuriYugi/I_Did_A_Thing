@@ -5398,10 +5398,16 @@ namespace ArgrillianThreat
 			if (hpPct >= 0.80f)
 				return;
 
+			// Force the patient's threat-mode into "patient retreat" so the main combat
+			// job giver produces retreat/move-to-safety instead of immediately re-entering combat.
+			ArgrillianThreatState.ModeTickCache.MarkMode(patient, 1);
+			ArgrillianThreatState.CombatLock.Clear(patient);
+			ArgrillianThreatState.CombatCommit.Clear(patient);
+
 			Job j = patient.CurJob;
 			if (j == null || j.def == null)
 			{
-				// No meaningful job: just stop movement/combat so tend can proceed.
+				// No meaningful job: just stop movement/combat so the retreat planner can proceed.
 				patient.jobs?.StopAll(true);
 				patient.pather?.StopDead();
 				return;
