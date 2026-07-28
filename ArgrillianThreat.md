@@ -6189,6 +6189,12 @@ namespace ArgrillianThreat
 
 				if (holdActive)
 				{
+					// IMPORTANT: if the patient is downed, we must allow Rescue pipeline progression
+					// even if CanReserveTendTarget fails (often due to combat job reservation state).
+					// The Rescue branch later uses bed reservation + Tend/Rescue job defs.
+					if (patient.Downed)
+						return IsValidTendTarget(patient, pawn);
+
 					return IsValidTendTarget(patient, pawn) &&
 						CanReserveTendTarget(pawn, patient);
 				}
