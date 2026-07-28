@@ -5394,6 +5394,12 @@ namespace ArgrillianThreat
 			Job j = patient.CurJob;
 			if (j == null || j.def == null) return;
 
+			// If we're already on a job that is compatible with the tend/rescue pipeline, don't fight it.
+			// (Tend/Rescue will be allowed later by the medic's tend job start checks.)
+			if (j.def == JobDefOf.TendPatient || j.def == JobDefOf.Rescue || j.def == JobDefOf.Wait)
+				return;
+
+			// Existing stops for non-combat interference
 			if (IsMealOrConsumeLikeJob(j))
 			{
 				patient.jobs?.StopAll(true);
@@ -5407,35 +5413,46 @@ namespace ArgrillianThreat
 				return;
 			}
 
-			if (IsCombatAttackLikeJob(j) || IsChaseOrTacticJob(j) || IsFleeLikeJob(j))
+			// Broaden “combat stop”:
+			// Your reported symptom ("patient keeps fighting") means their combat job defName may not match the
+			// narrower IsCombatAttackLikeJob / IsChaseOrTacticJob / IsFleeLikeJob heuristics.
+			string defName = j.def.defName;
+			defName = defName == null ? "" : defName.ToLowerInvariant();
+
+			bool looksLikeCombat =
+				IsCombatAttackLikeJob(j) ||
+				IsChaseOrTacticJob(j) ||
+				IsFleeLikeJob(j) ||
+				defName.Contains("attack") ||
+				defName.Contains("shoot") ||
+				defName.Contains("range") ||
+				defName.Contains("melee");
+
+			if (looksLikeCombat)
 			{
+				// Stop current engagement so their own combat logic can transition into retreat/move-to-safety.
 				patient.jobs?.StopAll(true);
 				patient.pather?.StopDead();
 				return;
 			}
 
-			// NEW: prevent urgent non-downed patients from walking off to LayDown while a medic is trying to tend them.
+			// NEW/kept: prevent urgent non-downed patients from walking off to LayDown while a medic is trying to tend them.
 			if (j.def == JobDefOf.LayDown)
 			{
 				patient.jobs?.StopAll(true);
 				return;
 			}
 
-			string defName = j.def.defName;
 			if (!string.IsNullOrEmpty(defName))
 			{
-				defName = defName.ToLowerInvariant();
-
-				if (defName.IndexOf("laydown", StringComparison.OrdinalIgnoreCase) >= 0 ||
-					defName.IndexOf("lay_down", StringComparison.OrdinalIgnoreCase) >= 0)
+				if (defName.Contains("laydown") || defName.Contains("lay_down"))
 				{
 					patient.jobs?.StopAll(true);
 					return;
 				}
 
 				// Extra conservative catch: only if the job name clearly implies “lay on/bed”.
-				if (defName.IndexOf("bed", StringComparison.OrdinalIgnoreCase) >= 0 &&
-					defName.IndexOf("lay", StringComparison.OrdinalIgnoreCase) >= 0)
+				if (defName.Contains("bed") && defName.Contains("lay"))
 				{
 					patient.jobs?.StopAll(true);
 					return;
@@ -6271,12 +6288,10 @@ namespace ArgrillianThreat
 			bool combatMedic = pawn.GetComp<CompArgrillianMedicSettings>()?.combatMedic == true;
 
 			// Combat medics must start Tend/Rescue immediately for downed patients.
-			// Otherwise they can get a short “stand” while reserve/job state churns,
-			// and may never actually switch into the medical job.
 			if (combatMedic && patient != null && patient.Downed) return IsValidTendTarget(patient, pawn);
 
 			// Held patient invariant: if this patient is locked into this medic's medical pipeline,
-			// tend/rescue eligibility should NOT be blocked by the patient's current combat job/reservations.
+			// tend/rescue eligibility should NOT be blocked by the patient's current combat job.
 			if (combatMedic)
 			{
 				Pawn heldPatient = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
@@ -6288,8 +6303,7 @@ namespace ArgrillianThreat
 
 				if (holdActive)
 				{
-					// Remove reservation gate here: the lock already resolved the “which patient” question,
-					// and requiring medic.CanReserve(patient, ...) causes “held but never tender” stalls.
+					// Held target should be tendable regardless of their current combat job.
 					return IsValidTendTarget(patient, pawn);
 				}
 			}
@@ -6307,23 +6321,32 @@ namespace ArgrillianThreat
 					requiredStableTicksOuter = 0;
 			}
 
-			if (!patient.Downed && patient.CurJob != null && patient.CurJob.def != null)
+			// If the medic is treating this as an urgent injured target, don't block Tend start just because
+			// the patient is still in a combat-like job state.
+			bool isUrgentInjuredTarget = combatMedic &&
+				patient != null &&
+				!patient.Downed &&
+				(patient.health?.summaryHealth?.SummaryHealthPercent ?? 1f) <= combatMedicInjuredHPPercentThreshold;
+
+			if (!isUrgentInjuredTarget)
 			{
-				Job j = patient.CurJob;
+				// Normal case: Don’t start Tend if the patient is actively doing combat/mobility jobs.
+				// (But urgent injured target should override this to prevent the “keep fighting -> medic keeps hauling” loop.)
+				if (!patient.Downed && patient.CurJob != null && patient.CurJob.def != null)
+				{
+					Job j = patient.CurJob;
 
-				// Don’t start Tend if the patient is actively doing combat/mobility jobs (only in normal case).
-				if (IsCombatAttackLikeJob(j) || IsChaseOrTacticJob(j) || IsFleeLikeJob(j) || IsHaulJob(j) || IsMealOrConsumeLikeJob(j) || j.def.defName == "ConsumeMeal")
-					return false;
+					if (IsCombatAttackLikeJob(j) || IsChaseOrTacticJob(j) || IsFleeLikeJob(j) || IsHaulJob(j) || IsMealOrConsumeLikeJob(j) || j.def.defName == "ConsumeMeal")
+						return false;
 
-				if (j.def == JobDefOf.LayDown) return false;
-				if (j.def == JobDefOf.Rescue) return false;
-				if (!IsAllowedDownPawnJob(j)) return false;
+					if (j.def == JobDefOf.LayDown) return false;
+					if (j.def == JobDefOf.Rescue) return false;
+					if (!IsAllowedDownPawnJob(j)) return false;
+				}
 			}
 
 			bool distanceOk = patient.Downed ? true : pawn.Position.DistanceTo(patient.Position) <= combatTendMaxDistance;
 
-			// NOTE: if we ever reach here and patient is downed, we do NOT require reserving tend targets,
-			// because that is exactly what causes the initial “stand for ~0.5s / few seconds then keep fighting” symptom.
 			if (patient.Downed)
 			{
 				return distanceOk &&
