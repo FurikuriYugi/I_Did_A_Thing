@@ -6229,7 +6229,13 @@ namespace ArgrillianThreat
 			if (patient.Dead) return false;
 
 			// TRACE: entering tend evaluation for this held/assigned target.
-			JobGiver_ArgrillianThreatResponse.TraceMedKit("canTendNow_enter", pawn, patient, tendEligibleNow: false, retreatingHeldPatient: false);
+			JobGiver_ArgrillianThreatResponse.TraceMedKit(
+				"canTendNow_enter",
+				pawn,
+				patient,
+				tendEligibleNow: false,
+				retreatingHeldPatient: false
+			);
 
 			// KEEP-ACTIVE-JOB GUARD:
 			// If the medic is already running the correct Tend/Rescue job for the held/assigned patient,
@@ -6259,7 +6265,13 @@ namespace ArgrillianThreat
 			if (combatMedic && patient.Downed)
 			{
 				bool ok = IsValidTendTarget(patient, pawn);
-				JobGiver_ArgrillianThreatResponse.TraceMedKit("canTendNow_downedFastPath", pawn, patient, tendEligibleNow: ok, retreatingHeldPatient: false);
+				JobGiver_ArgrillianThreatResponse.TraceMedKit(
+					"canTendNow_downedFastPath",
+					pawn,
+					patient,
+					tendEligibleNow: ok,
+					retreatingHeldPatient: false
+				);
 				return ok;
 			}
 
@@ -6277,7 +6289,13 @@ namespace ArgrillianThreat
 				if (holdActive)
 				{
 					bool ok = IsValidTendTarget(patient, pawn);
-					JobGiver_ArgrillianThreatResponse.TraceMedKit("canTendNow_heldInvariant", pawn, patient, tendEligibleNow: ok, retreatingHeldPatient: false);
+					JobGiver_ArgrillianThreatResponse.TraceMedKit(
+						"canTendNow_heldInvariant",
+						pawn,
+						patient,
+						tendEligibleNow: ok,
+						retreatingHeldPatient: false
+					);
 					return ok;
 				}
 			}
@@ -6312,7 +6330,13 @@ namespace ArgrillianThreat
 
 					if (IsCombatAttackLikeJob(j) || IsChaseOrTacticJob(j) || IsFleeLikeJob(j) || IsHaulJob(j) || IsMealOrConsumeLikeJob(j) || j.def.defName == "ConsumeMeal")
 					{
-						JobGiver_ArgrillianThreatResponse.TraceMedKit("canTendNow_blocked_by_patientCombatLikeJob", pawn, patient, tendEligibleNow: false, retreatingHeldPatient: false);
+						JobGiver_ArgrillianThreatResponse.TraceMedKit(
+							"canTendNow_blocked_by_patientCombatLikeJob",
+							pawn,
+							patient,
+							tendEligibleNow: false,
+							retreatingHeldPatient: false
+						);
 						return false;
 					}
 
@@ -6330,16 +6354,54 @@ namespace ArgrillianThreat
 					IsValidTendTarget(patient, pawn) &&
 					stableTicksOuter >= requiredStableTicksOuter;
 
-				JobGiver_ArgrillianThreatResponse.TraceMedKit("canTendNow_downed_finalGates", pawn, patient, tendEligibleNow: ok, retreatingHeldPatient: false);
+				JobGiver_ArgrillianThreatResponse.TraceMedKit(
+					"canTendNow_downed_finalGates",
+					pawn,
+					patient,
+					tendEligibleNow: ok,
+					retreatingHeldPatient: false
+				);
 				return ok;
 			}
 
-			bool ok2 = distanceOk &&
-				IsValidTendTarget(patient, pawn) &&
-				stableTicksOuter >= requiredStableTicksOuter &&
-				CanReserveTendTarget(pawn, patient);
+			bool isValid = IsValidTendTarget(patient, pawn);
+			bool canReserve = CanReserveTendTarget(pawn, patient);
+			bool stableOk = stableTicksOuter >= requiredStableTicksOuter;
 
-			JobGiver_ArgrillianThreatResponse.TraceMedKit("canTendNow_injured_finalGates", pawn, patient, tendEligibleNow: ok2, retreatingHeldPatient: false);
+			bool ok2 = distanceOk &&
+				isValid &&
+				stableOk &&
+				canReserve;
+
+			// NEW: explicit breakdown when Tend is NOT eligible (this is what we need next).
+			if (!ok2)
+			{
+				JobGiver_ArgrillianThreatResponse.TraceMedKit(
+					"canTendNow_injured_gateBreakdown",
+					pawn,
+					patient,
+					tendEligibleNow: ok2,
+					retreatingHeldPatient: false
+				);
+
+				// Use existing TraceMedKit channel only; embed details in the same trace line format.
+				// (If your TraceMedKit signature supports only the fixed args, these will get emitted by log text below.)
+				Verse.Log.Message(
+					$"[ArgrillianThreat][TRACE] canTendNow_gateDetails medic={pawn.thingIDNumber} patient={patient.thingIDNumber} " +
+					$"hp={patient.health?.summaryHealth?.SummaryHealthPercent ?? -1f:F2} " +
+					$"distanceOk={distanceOk} dist2={pawn.Position.DistanceTo(patient.Position):F2} maxDist={combatTendMaxDistance:F2} " +
+					$"isValidTarget={isValid} stableTicksOuter={stableTicksOuter} requiredStableTicksOuter={requiredStableTicksOuter} stableOk={stableOk} " +
+					$"canReserveTendTarget={canReserve}"
+				);
+			}
+
+			JobGiver_ArgrillianThreatResponse.TraceMedKit(
+				"canTendNow_injured_finalGates",
+				pawn,
+				patient,
+				tendEligibleNow: ok2,
+				retreatingHeldPatient: false
+			);
 			return ok2;
 		}
 
