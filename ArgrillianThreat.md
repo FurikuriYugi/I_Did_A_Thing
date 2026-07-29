@@ -5970,37 +5970,28 @@ namespace ArgrillianThreat
 
 				if (def == JobDefOf.TendPatient || def == JobDefOf.Rescue)
 				{
-					Thing ta = cur.targetA.Thing;
-					Thing tb = cur.targetB.Thing;
-					Thing tc = cur.targetC.Thing;
-
-					if ((ta != null && ta == heldPatient) ||
-						(tb != null && tb == heldPatient) ||
-						(tc != null && tc == heldPatient))
+					// If we were tending and the patient has just gone down,
+					// switch to Rescue immediately (don't let it fall through to combat).
+					if (def == JobDefOf.TendPatient && heldPatient.Downed)
 					{
-						// If we were tending and the patient has just gone down,
-						// switch to Rescue immediately (don't let it fall through to combat).
-						if (def == JobDefOf.TendPatient && heldPatient.Downed)
+						if (!TryGetRescueBedForPatient(pawn, heldPatient, out Building_Bed bed) || bed == null)
 						{
-							if (!TryGetRescueBedForPatient(pawn, heldPatient, out Building_Bed bed) || bed == null)
-							{
-								// Stay committed to the downed heldPatient instead of falling back to combat.
-								// We’ll retry Rescue creation next tick once bed reservation becomes possible.
-								return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
-							}
-
-							Job rescueJob = JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
-							rescueJob.count = 1;
-
-							// Explicitly set both targets to match RimWorld expectations:
-							rescueJob.targetA = heldPatient; // carry thing = patient
-							rescueJob.targetB = bed;          // destination = bed
-							rescueJob.targetC = null;
-
-							return rescueJob;
+							// Stay committed to the downed heldPatient instead of falling back to combat.
+							// We’ll retry Rescue creation next tick once bed reservation becomes possible.
+							return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
 						}
-						return cur;
+
+						Job rescueJob = JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
+						rescueJob.count = 1;
+
+						// Explicitly set both targets to match RimWorld expectations:
+						rescueJob.targetA = heldPatient; // carry thing = patient
+						rescueJob.targetB = bed;          // destination = bed
+						rescueJob.targetC = null;
+
+						return rescueJob;
 					}
+					return cur;
 				}
 			}
 
