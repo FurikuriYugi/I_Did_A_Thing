@@ -2663,36 +2663,34 @@ namespace ArgrillianThreat
 
 			if (injuredGate)
 			{
-				bool imminent = IsImminentThreatToTarget(hostile, pawn, scanRange);
+				// IMPORTANT: HP<80% injured patients must enter tend-eligible safety behavior
+				// even if the hostile is still considered "imminent" to them. This prevents
+				// the patient from continuing the attack/move-away bounce while a medic tries to tend.
+				skipAggressiveStart = true;
 
-				if (!imminent)
+				if (pawn.CurJob != null)
 				{
-					skipAggressiveStart = true;
-
-					if (pawn.CurJob != null)
-					{
-						var def = pawn.CurJob.def;
-						if (def == JobDefOf.TendPatient || def == JobDefOf.Rescue)
-							return pawn.CurJob;
-						if (def == JobDefOf.Goto)
-							return pawn.CurJob;
-					}
-
-					if (TryPickCoverCell(pawn, hostile, desiredCombatDistanceNow, losBreakBonus, out IntVec3 coverCell))
-					{
-						ArgrillianThreatState.ThreatTickCache.MarkNow(pawn);
-						var keep = ArgrillianGotoHelper.KeepIfSameGoto(pawn, coverCell);
-						if (keep != null) return keep;
-
-						return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, coverCell);
-					}
-
-					var keepHold = ArgrillianGotoHelper.KeepIfSameGoto(pawn, pawn.Position);
-					if (keepHold != null) return keepHold;
-
-					ArgrillianThreatState.ThreatTickCache.MarkNow(pawn);
-					return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, pawn.Position);
+					var def = pawn.CurJob.def;
+					if (def == JobDefOf.TendPatient || def == JobDefOf.Rescue)
+						return pawn.CurJob;
+					if (def == JobDefOf.Goto)
+						return pawn.CurJob;
 				}
+
+				if (TryPickCoverCell(pawn, hostile, desiredCombatDistanceNow, losBreakBonus, out IntVec3 coverCell))
+				{
+					ArgrillianThreatState.ThreatTickCache.MarkNow(pawn);
+					var keep = ArgrillianGotoHelper.KeepIfSameGoto(pawn, coverCell);
+					if (keep != null) return keep;
+
+					return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, coverCell);
+				}
+
+				var keepHold = ArgrillianGotoHelper.KeepIfSameGoto(pawn, pawn.Position);
+				if (keepHold != null) return keepHold;
+
+				ArgrillianThreatState.ThreatTickCache.MarkNow(pawn);
+				return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, pawn.Position);
 			}
 
 			// NORMAL FIGHT MODE
