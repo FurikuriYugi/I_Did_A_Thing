@@ -4933,6 +4933,8 @@ namespace ArgrillianThreat
 
 		public float hospitalBedMaxDist = 70f;
 
+		public float medicEscortCombatRadius = 6.5f;
+
 		// NEW: require stability for tending
 		public int patientStableTicksRequired = 18;
 
@@ -5927,7 +5929,6 @@ namespace ArgrillianThreat
 
 			var medicComp = pawn.GetComp<CompArgrillianMedicSettings>();
 			if (medicComp == null || !medicComp.isMedic) return null;
-
 			if (!medicComp.combatMedic) return null;
 
 			Pawn heldPatient = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
@@ -5945,95 +5946,108 @@ namespace ArgrillianThreat
 				return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 
 			// ----------------------------
+			// 0) Gate state detection (used by both gates)
+			// ----------------------------
+			float heldHpPct = heldPatient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
+			bool retreatingHeldPatient = !heldPatient.Downed && heldHpPct < 0.80f;
+
+			// Evaluate eligibility early so we can apply escort locks before RimWorld arbitration
+			// gets it "stuck" on attack/fight jobs.
+			bool tendEligibleNow = canTendNow(pawn, heldPatient);
+
+			// ----------------------------
 			// 1) FORCE PATIENT RETREAT / STOP so Tend/Rescue can succeed
 			// ----------------------------
+			// If patient isn't downed, they still need to stop fighting / position for tend to start.
 			if (!heldPatient.Downed)
 				TryStopPatientToAllowTend(heldPatient);
 
 			// ----------------------------
-			// 1.2) HP < 0.80 ESCORT / BREAK-AWAY PHASE (new)
-			// Patient retreats at <80%; medic must move with them to assist/protect
-			// until the patient reaches a tend-eligible position/state.
+			// 1.25) ESCORT objective gate + near-hostile permission gate (two-gates)
+			// HARD: while in retreating HeldPatient stage and NOT tend-eligible yet,
+			//       medic should stay escort/follow (no chase). Any combat job must be aborted
+			//       unless the hostile is "near enough" for short opportunistic action.
+			// SOFT: allow staying in/keeping a combat job only when a hostile is within
+			//       medicEscortCombatRadius of the patient and/or medic (and line-of-sight holds).
 			// ----------------------------
-			if (!heldPatient.Downed)
+			if (retreatingHeldPatient && !tendEligibleNow)
 			{
-				float heldHpPct = heldPatient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
-
-				// Retreat start: medic breaks away and escorts.
-				if (heldHpPct < 0.80f)
+				Job cur = pawn.CurJob;
+				if (cur != null && cur.def != null)
 				{
-					// If we can’t tend yet, we escort by moving to a tend spot around the patient.
-					if (!canTendNow(pawn, heldPatient))
+					if (IsCombatAttackLikeJob(cur) || IsChaseOrTacticJob(cur))
 					{
-						Job cur = pawn.CurJob;
-						if (cur != null && cur.def != null)
+						// Determine if hostiles are "near" for soft permission.
+						Pawn nearestHostile = FindNearestHostile(pawn, radius: medicEscortCombatRadius);
+						bool hostileNear = false;
+
+						if (nearestHostile != null)
 						{
-							string dn = cur.def.defName?.ToLowerInvariant() ?? "";
+							bool los = GenSight.LineOfSight(
+								pawn.Position,
+								nearestHostile.Position,
+								pawn.Map
+							);
 
-							bool combatLike =
-								dn.Contains("attack") ||
-								dn.Contains("shoot") ||
-								dn.Contains("fight") ||
-								dn.Contains("melee") ||
-								dn.Contains("range");
+							float dMed = pawn.Position.DistanceTo(nearestHostile.Position);
+							float dPat = heldPatient.Position.DistanceTo(nearestHostile.Position);
 
-							if (combatLike)
-							{
-								pawn.jobs?.StopAll(true);
-								pawn.jobs?.ClearQueuedJobs();
-								pawn.pather?.StopDead();
-
-								ArgrillianThreatState.CombatLock.Clear(pawn);
-								ArgrillianThreatState.CombatCommit.Clear(pawn);
-							}
+							hostileNear = los && (dMed <= (medicEscortCombatRadius + 0.1f) || dPat <= (medicEscortCombatRadius + 0.1f));
 						}
 
-						// Move to the nearest valid tend spot near the retreating patient.
-						IntVec3 tendSpot = FindBestTendSpot(pawn, heldPatient, 10f);
-						return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, tendSpot);
+						// HARD gate enforcement: if not near, stop combat/chase so medic immediately re-enters escort follow.
+						if (!hostileNear)
+						{
+							pawn.jobs?.StopAll(true);
+							pawn.jobs?.ClearQueuedJobs();
+							pawn.pather?.StopDead();
+
+							ArgrillianThreatState.CombatLock.Clear(pawn);
+							ArgrillianThreatState.CombatCommit.Clear(pawn);
+						}
+						// SOFT gate: if hostile is near, we do NOT stop; we rely on the existing architecture
+						// to keep this non-chase (next tick will re-evaluate tend eligibility and re-sync).
 					}
 				}
 			}
 
 			// ----------------------------
 			// 1.5) RESYNC ESCALATION: if patient worsens to <= 75% during retreat
+			// Force medic to break away from combat NOW and re-sync to Tend/Rescue heldPatient.
 			// ----------------------------
+			if (!heldPatient.Downed)
 			{
-				// Force medic to break away from combat NOW and re-sync to Tend/Rescue heldPatient.
-				if (!heldPatient.Downed)
+				float heldHpPctNow = heldPatient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
+				if (heldHpPctNow <= 0.75f)
 				{
-					float heldHpPct = heldPatient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
-					if (heldHpPct <= 0.75f)
+					Job cur = pawn.CurJob;
+					if (cur != null && cur.def != null && !(
+							cur.def == JobDefOf.TendPatient ||
+							cur.def == JobDefOf.Rescue ||
+							cur.def == JobDefOf.Wait ||
+							cur.def == JobDefOf.LayDown))
 					{
-						Job cur = pawn.CurJob;
-						if (cur != null && cur.def != null && !(
-								cur.def == JobDefOf.TendPatient ||
-								cur.def == JobDefOf.Rescue ||
-								cur.def == JobDefOf.Wait ||
-								cur.def == JobDefOf.LayDown))
+						string dn = cur.def.defName?.ToLowerInvariant() ?? "";
+
+						bool isCombatLike =
+							dn.Contains("attack") ||
+							dn.Contains("shoot") ||
+							dn.Contains("fight") ||
+							dn.Contains("melee") ||
+							dn.Contains("range");
+
+						if (isCombatLike)
 						{
-							string dn = cur.def.defName?.ToLowerInvariant() ?? "";
+							// Break away from fight and re-route to heldPatient for tending.
+							pawn.jobs?.StopAll(true);
+							pawn.jobs?.ClearQueuedJobs();
+							pawn.pather?.StopDead();
 
-							bool isCombatLike =
-								dn.Contains("attack") ||
-								dn.Contains("shoot") ||
-								dn.Contains("fight") ||
-								dn.Contains("melee") ||
-								dn.Contains("range");
+							ArgrillianThreatState.CombatLock.Clear(pawn);
+							ArgrillianThreatState.CombatCommit.Clear(pawn);
 
-							if (isCombatLike)
-							{
-								// Break away from fight and re-route to heldPatient for tending.
-								pawn.jobs?.StopAll(true);
-								pawn.jobs?.ClearQueuedJobs();
-								pawn.pather?.StopDead();
-
-								ArgrillianThreatState.CombatLock.Clear(pawn);
-								ArgrillianThreatState.CombatCommit.Clear(pawn);
-
-								// Move back into tend range / re-sync.
-								return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
-							}
+							// Move back into tend range / re-sync.
+							return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
 						}
 					}
 				}
@@ -6057,7 +6071,7 @@ namespace ArgrillianThreat
 						if (!TryGetRescueBedForPatient(pawn, heldPatient, out Building_Bed bed) || bed == null)
 						{
 							// Stay committed to the downed heldPatient instead of falling back to combat.
-							// We’ll retry Rescue creation next tick once bed reservation becomes possible.
+							// We'll retry Rescue creation next tick once bed reservation becomes possible.
 							return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
 						}
 
@@ -6077,7 +6091,7 @@ namespace ArgrillianThreat
 			}
 
 			// Core: canTendNow should only decide "start Tend/Rescue now" vs "move into tend position".
-			if (!canTendNow(pawn, heldPatient))
+			if (!tendEligibleNow)
 			{
 				// Patient already forced above; just move into tend distance without churn.
 				if (!heldPatient.Downed)
