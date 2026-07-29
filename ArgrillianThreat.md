@@ -5951,42 +5951,89 @@ namespace ArgrillianThreat
 				TryStopPatientToAllowTend(heldPatient);
 
 			// ----------------------------
-			// 1.5) RESYNC ESCALATION: if patient worsens to <= 75% during retreat
-			// Force medic to break away from combat NOW and re-sync to Tend/Rescue heldPatient.
+			// 1.2) HP < 0.80 ESCORT / BREAK-AWAY PHASE (new)
+			// Patient retreats at <80%; medic must move with them to assist/protect
+			// until the patient reaches a tend-eligible position/state.
 			// ----------------------------
 			if (!heldPatient.Downed)
 			{
 				float heldHpPct = heldPatient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
-				if (heldHpPct <= 0.75f)
+
+				// Retreat start: medic breaks away and escorts.
+				if (heldHpPct < 0.80f)
 				{
-					Job cur = pawn.CurJob;
-					if (cur != null && cur.def != null && !(
-							cur.def == JobDefOf.TendPatient ||
-							cur.def == JobDefOf.Rescue ||
-							cur.def == JobDefOf.Wait ||
-							cur.def == JobDefOf.LayDown))
+					// If we can’t tend yet, we escort by moving to a tend spot around the patient.
+					if (!canTendNow(pawn, heldPatient))
 					{
-						string dn = cur.def.defName?.ToLowerInvariant() ?? "";
-
-						bool isCombatLike =
-							dn.Contains("attack") ||
-							dn.Contains("shoot") ||
-							dn.Contains("fight") ||
-							dn.Contains("melee") ||
-							dn.Contains("range");
-
-						if (isCombatLike)
+						Job cur = pawn.CurJob;
+						if (cur != null && cur.def != null)
 						{
-							// Break away from fight and re-route to heldPatient for tending.
-							pawn.jobs?.StopAll(true);
-							pawn.jobs?.ClearQueuedJobs();
-							pawn.pather?.StopDead();
+							string dn = cur.def.defName?.ToLowerInvariant() ?? "";
 
-							ArgrillianThreatState.CombatLock.Clear(pawn);
-							ArgrillianThreatState.CombatCommit.Clear(pawn);
+							bool combatLike =
+								dn.Contains("attack") ||
+								dn.Contains("shoot") ||
+								dn.Contains("fight") ||
+								dn.Contains("melee") ||
+								dn.Contains("range");
 
-							// Move back into tend range / re-sync.
-							return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
+							if (combatLike)
+							{
+								pawn.jobs?.StopAll(true);
+								pawn.jobs?.ClearQueuedJobs();
+								pawn.pather?.StopDead();
+
+								ArgrillianThreatState.CombatLock.Clear(pawn);
+								ArgrillianThreatState.CombatCommit.Clear(pawn);
+							}
+						}
+
+						// Move to the nearest valid tend spot near the retreating patient.
+						IntVec3 tendSpot = FindBestTendSpot(pawn, heldPatient, 10f);
+						return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, tendSpot);
+					}
+				}
+			}
+
+			// ----------------------------
+			// 1.5) RESYNC ESCALATION: if patient worsens to <= 75% during retreat
+			// ----------------------------
+			{
+				// Force medic to break away from combat NOW and re-sync to Tend/Rescue heldPatient.
+				if (!heldPatient.Downed)
+				{
+					float heldHpPct = heldPatient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
+					if (heldHpPct <= 0.75f)
+					{
+						Job cur = pawn.CurJob;
+						if (cur != null && cur.def != null && !(
+								cur.def == JobDefOf.TendPatient ||
+								cur.def == JobDefOf.Rescue ||
+								cur.def == JobDefOf.Wait ||
+								cur.def == JobDefOf.LayDown))
+						{
+							string dn = cur.def.defName?.ToLowerInvariant() ?? "";
+
+							bool isCombatLike =
+								dn.Contains("attack") ||
+								dn.Contains("shoot") ||
+								dn.Contains("fight") ||
+								dn.Contains("melee") ||
+								dn.Contains("range");
+
+							if (isCombatLike)
+							{
+								// Break away from fight and re-route to heldPatient for tending.
+								pawn.jobs?.StopAll(true);
+								pawn.jobs?.ClearQueuedJobs();
+								pawn.pather?.StopDead();
+
+								ArgrillianThreatState.CombatLock.Clear(pawn);
+								ArgrillianThreatState.CombatCommit.Clear(pawn);
+
+								// Move back into tend range / re-sync.
+								return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
+							}
 						}
 					}
 				}
