@@ -957,10 +957,51 @@ namespace ArgrillianThreat
 			}
 		}
 
+		// -----------------------------
+		// Held Patient hold/exclusivity state + helpers
+		// -----------------------------
 		public static class PatientMedicHold
 		{
 			// Medic thingID -> cached patientId (int only; Pawn resolved via ArgrillianAlertSystem lookup)
 			private static readonly Dictionary<int, int> patientIdByMedic = new Dictionary<int, int>();
+
+			// Patient thingID -> cached medicId (int only; lets us do cheap "is held" arbitration without map scans)
+			private static readonly Dictionary<int, int> medicIdByPatientId = new Dictionary<int, int>();
+
+			private static bool IsValidPawnForHold(Pawn p)
+			{
+				if (p == null) return false;
+				if (p.Dead) return false;
+				if (!p.Spawned) return false;
+				if (p.Map == null) return false;
+				return true;
+			}
+
+			public static bool IsPatientHeldForTend(Pawn patient)
+			{
+				if (patient == null) return false;
+				if (!patient.Spawned || patient.Dead) return false;
+				int patientId = patient.thingIDNumber;
+				return medicIdByPatientId.ContainsKey(patientId);
+			}
+
+			// Optional helper for debug/introspection.
+			public static Pawn GetHoldingMedicIfAny(Pawn patient)
+			{
+				if (patient == null) return null;
+				if (!IsValidPawnForHold(patient)) return null;
+
+				int patientId = patient.thingIDNumber;
+				if (!medicIdByPatientId.TryGetValue(patientId, out int medicId))
+					return null;
+
+				// Resolve without scanning: use alert system cached lookup by patientId (no map-wide scans).
+				// If cached resolution isn't available for medic, we still preserve correctness for gating via IsPatientHeldForTend.
+				// So here we return null if we can't resolve a Pawn reference.
+				if (patient.Map == null) return null;
+
+				return ArgrillianAlertSystem.TryGetMedicFromCachedCall(patient.Map, medicId);
+			}
 
 			public static Pawn GetHeldPatient(Pawn medic)
 			{
@@ -970,6 +1011,7 @@ namespace ArgrillianThreat
 				if (medic.Dead) return null;
 
 				int medicId = medic.thingIDNumber;
+
 				if (!patientIdByMedic.TryGetValue(medicId, out int patientId))
 					return null;
 
@@ -993,6 +1035,12 @@ namespace ArgrillianThreat
 				if (!accepted) return;
 
 				patientIdByMedic[medicId] = patientId;
+				medicIdByPatientId[patientId] = medicId;
+
+				// Real trace requirement: log when hold is acquired and confirmed.
+				Verse.Log.Message(
+					$"[ArgrillianThreat][HOLD] patientHoldAcquired patient={patientId} medic={medicId} map={medic.Map.TileInfo?.ToString() ?? "?"}"
+				);
 			}
 
 			// Release by medic only; resolves nothing; no scanning.
@@ -1001,9 +1049,23 @@ namespace ArgrillianThreat
 				if (medic == null) return;
 
 				int medicId = medic.thingIDNumber;
+
+				if (!patientIdByMedic.TryGetValue(medicId, out int patientId))
+					return;
+
 				patientIdByMedic.Remove(medicId);
 
+				// Clear reverse index only if it still points to this medic.
+				if (medicIdByPatientId.TryGetValue(patientId, out int heldMedicId) && heldMedicId == medicId)
+					medicIdByPatientId.Remove(patientId);
+
+				// Release inside alert system.
 				ArgrillianAlertSystem.ReleaseMedicHold(medic);
+
+				// Real trace requirement: log when hold release is requested (this is the single-owner release entry).
+				Verse.Log.Message(
+					$"[ArgrillianThreat][HOLD] patientHoldReleaseRequested medic={medicId} patient={patientId}"
+				);
 
 				// Preserve your existing “stop drift” behavior without clearing queued jobs.
 				Pawn patient = GetHeldPatient(medic);
@@ -5428,6 +5490,11 @@ namespace ArgrillianThreat
 			hold.count = 1;
 
 			patient.jobs?.StartJob(hold, JobCondition.InterruptForced);
+
+			// Real trace requirement: explicitly log hold acquisition when we force the patient into the hold.
+			Verse.Log.Message(
+				$"[ArgrillianThreat][HOLD] patientHoldForcedByTryStop patient={patient.thingIDNumber} pos=({here.x},{here.y},{here.z})"
+			);
 		}
 
 		private static bool IsJobNameContains(Job j, string part)
@@ -5439,6 +5506,37 @@ namespace ArgrillianThreat
 		private static bool IsInterferingJobForTend(Pawn patient)
 		{
 			if (patient == null) return false;
+
+			// NEW: held-for-tend arbitration guard
+			// If this patient is reserved/held for tend/rescue by the alert/medic pipeline,
+			// all other job churn that would re-enable movement/combat should be treated as interfering.
+			// This prevents "patient wiggle" after Tend eligibility while the hold is still active.
+			if (PatientMedicHold.IsPatientHeldForTend(patient))
+			{
+				Job heldJob = patient.CurJob;
+				if (heldJob == null || heldJob.def == null) return false;
+
+				// If it's combat-like or movement-like, we must treat it as interfering so the tend pipeline can win.
+				if (IsCrawlLikeJob(heldJob) || IsMoveLikeJob(heldJob))
+					return true;
+
+				if (IsCombatAttackLikeJob(heldJob) || IsChaseOrTacticJob(heldJob))
+					return true;
+
+				if (IsHaulJob(heldJob)) return true;
+
+				string heldDefName = heldJob.def.defName;
+				if (!string.IsNullOrEmpty(heldDefName))
+				{
+					if (heldDefName.IndexOf("eat", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+					if (heldDefName.IndexOf("ingest", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+					if (heldDefName.IndexOf("meal", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+					if (heldDefName.IndexOf("consume", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+					if (heldDefName.IndexOf("rest", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+					if (heldDefName.IndexOf("grab", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+					if (heldDefName.IndexOf("pickup", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+				}
+			}
 
 			Job j = patient.CurJob;
 			if (j == null) return false;
