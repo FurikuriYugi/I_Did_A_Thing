@@ -4028,6 +4028,31 @@ namespace ArgrillianThreat
 	// -----------------------------
 	public class JobGiver_ArgrillianThreatResponse : ThinkNode_JobGiver
 	{
+		// LOGGING-TRACE
+		private static readonly Dictionary<int, int> lastTraceTickByPawnId = new Dictionary<int, int>();
+		private const int TraceLogCooldownTicks = 30;
+
+		private static void TraceMedKit(string eventName, Pawn medic, Pawn patient, bool tendEligibleNow, bool retreatingHeldPatient)
+		{
+			if (medic == null || medic.Map == null) return;
+			if (patient == null || patient.Map == null) return;
+
+			int now = Find.TickManager.TicksGame;
+			int mid = medic.thingIDNumber;
+
+			if (lastTraceTickByPawnId.TryGetValue(mid, out int last) && (now - last) < TraceLogCooldownTicks)
+				return;
+
+			lastTraceTickByPawnId[mid] = now;
+
+			float pHp = patient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
+			string held = (patient != null ? patient.thingIDNumber.ToString() : "null");
+
+			Log.Message(
+				$"[ArgrillianThreat][TRACE] {eventName} medic={mid} patient={held} pHP={pHp:0.00} tendEligibleNow={tendEligibleNow} retreatingHeldPatient={retreatingHeldPatient}"
+			);
+		}
+
 		public float scanRange = 60f;
 		public float assistAllyScanRange = 50f;
 
@@ -5975,6 +6000,8 @@ namespace ArgrillianThreat
 				Job cur = pawn.CurJob;
 				if (cur != null && cur.def != null)
 				{
+					TraceMedKit("TryGiveJob_enterEscortRetreatGate", pawn, heldPatient, tendEligibleNow, retreatingHeldPatient);
+
 					if (IsCombatAttackLikeJob(cur) || IsChaseOrTacticJob(cur))
 					{
 						// Determine if hostiles are "near" for soft permission.
@@ -5994,10 +6021,16 @@ namespace ArgrillianThreat
 
 							hostileNear = los && (dMed <= (medicEscortCombatRadius + 0.1f) || dPat <= (medicEscortCombatRadius + 0.1f));
 						}
+						else
+						{
+							TraceMedKit("TryGiveJob_softEscort_AllowCombatBecauseHostileNear", pawn, heldPatient, tendEligibleNow: false, retreatingHeldPatient: retreatingHeldPatient);
+						}
 
 						// HARD gate enforcement: if not near, stop combat/chase so medic immediately re-enters escort follow.
 						if (!hostileNear)
 						{
+							TraceMedKit("TryGiveJob_hardEscort_StopCombatBecauseHostileNotNear", pawn, heldPatient, tendEligibleNow: false, retreatingHeldPatient: retreatingHeldPatient);
+
 							pawn.jobs?.StopAll(true);
 							pawn.jobs?.ClearQueuedJobs();
 							pawn.pather?.StopDead();
@@ -6195,6 +6228,10 @@ namespace ArgrillianThreat
 			if (pawn == null || patient == null) return false;
 			if (patient.Dead) return false;
 
+			// TRACE: entering tend evaluation for this held/assigned target.
+			bool combatMedic = pawn.GetComp<CompArgrillianMedicSettings>()?.combatMedic == true;
+			TraceMedKit("canTendNow_enter", pawn, patient, tendEligibleNow: false, retreatingHeldPatient: false);
+
 			// KEEP-ACTIVE-JOB GUARD:
 			// If the medic is already running the correct Tend/Rescue job for the held/assigned patient,
 			// do not let transient movement/stability/distance flips cause the job giver to abandon it.
@@ -6220,7 +6257,12 @@ namespace ArgrillianThreat
 			}
 
 			// Combat medics must start Tend/Rescue immediately for downed patients.
-			if (combatMedic && patient.Downed) return IsValidTendTarget(patient, pawn);
+			if (combatMedic && patient.Downed)
+			{
+				bool ok = IsValidTendTarget(patient, pawn);
+				TraceMedKit("canTendNow_downedFastPath", pawn, patient, tendEligibleNow: ok, retreatingHeldPatient: false);
+				return ok;
+			}
 
 			// Held patient invariant: if this patient is locked into this medic's medical pipeline,
 			// tend/rescue eligibility should NOT be blocked by the patient's current combat job.
@@ -6235,8 +6277,9 @@ namespace ArgrillianThreat
 
 				if (holdActive)
 				{
-					// Held target should be tendable regardless of their current combat job.
-					return IsValidTendTarget(patient, pawn);
+					bool ok = IsValidTendTarget(patient, pawn);
+					TraceMedKit("canTendNow_heldInvariant", pawn, patient, tendEligibleNow: ok, retreatingHeldPatient: false);
+					return ok;
 				}
 			}
 
@@ -6269,7 +6312,10 @@ namespace ArgrillianThreat
 					Job j = patient.CurJob;
 
 					if (IsCombatAttackLikeJob(j) || IsChaseOrTacticJob(j) || IsFleeLikeJob(j) || IsHaulJob(j) || IsMealOrConsumeLikeJob(j) || j.def.defName == "ConsumeMeal")
+					{
+						TraceMedKit("canTendNow_blocked_by_patientCombatLikeJob", pawn, patient, tendEligibleNow: false, retreatingHeldPatient: false);
 						return false;
+					}
 
 					if (j.def == JobDefOf.LayDown) return false;
 					if (j.def == JobDefOf.Rescue) return false;
@@ -6279,17 +6325,25 @@ namespace ArgrillianThreat
 
 			bool distanceOk = patient.Downed ? true : pawn.Position.DistanceTo(patient.Position) <= combatTendMaxDistance;
 
+					bool distanceOk = patient.Downed ? true : pawn.Position.DistanceTo(patient.Position) <= combatTendMaxDistance;
+
 			if (patient.Downed)
 			{
-				return distanceOk &&
+				bool ok = distanceOk &&
 					IsValidTendTarget(patient, pawn) &&
 					stableTicksOuter >= requiredStableTicksOuter;
+
+				TraceMedKit("canTendNow_downed_finalGates", pawn, patient, tendEligibleNow: ok, retreatingHeldPatient: false);
+				return ok;
 			}
 
-			return distanceOk &&
+			bool ok2 = distanceOk &&
 				IsValidTendTarget(patient, pawn) &&
 				stableTicksOuter >= requiredStableTicksOuter &&
 				CanReserveTendTarget(pawn, patient);
+
+			TraceMedKit("canTendNow_injured_finalGates", pawn, patient, tendEligibleNow: ok2, retreatingHeldPatient: false);
+			return ok2;
 		}
 
 		private struct PatientStabilityState
