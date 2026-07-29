@@ -5366,37 +5366,48 @@ namespace ArgrillianThreat
 			if (hpPct >= 0.80f)
 				return;
 
-			// Hard-stop immediately (before any mode/lock marking) so the pawn can't "wiggle"
-			// by re-entering move-away / attack motion in the same tick.
-			// This is the key for: medic can start Tend reliably; patient won't just drift far enough away.
-			if (patient.CurJob != null)
+			// IMPORTANT:
+			// We only hard-stop combat-like jobs. If the patient is already in a retreat/move-to-cover job,
+			// we must not nuke their queued retreat plan, or Tend start will be unstable.
+			if (cur != null && cur.def != null)
 			{
-				patient.jobs?.StopAll(true);
-				patient.jobs?.ClearQueuedJobs();
-				patient.pather?.StopDead();
+				string dn = cur.def.defName?.ToLowerInvariant() ?? "";
+
+				bool combatLike =
+					dn.Contains("attack") ||
+					dn.Contains("shoot") ||
+					dn.Contains("fight") ||
+					dn.Contains("melee") ||
+					dn.Contains("range") ||
+					dn.Contains("tactic") ||
+					dn.Contains("chase");
+
+				// Also treat crawl-like and move-like as interfering with “patient reaches tend-spot” reliability.
+				bool crawlOrMoveLike = IsCrawlLikeJob(cur) || IsMoveLikeJob(cur);
+
+				bool interfere = combatLike || crawlOrMoveLike;
+
+				if (interfere)
+				{
+					// Hard-stop immediately (before any mode/lock marking) so the pawn can’t "wiggle"
+					// by re-entering move-away / attack motion in the same tick.
+					patient.jobs?.StopAll(true);
+					patient.jobs?.ClearQueuedJobs();
+					patient.pather?.StopDead();
+				}
 			}
 
 			// If already job-compatible, don’t stomp it further.
 			if (cur != null && cur.def != null)
 			{
-				if (cur.def == JobDefOf.TendPatient || cur.def == JobDefOf.Rescue || cur.def == JobDefOf.Wait)
+				// If they’re already in a job that won’t prevent tending, leave it alone.
+				if (IsAllowedDownPawnJob(cur))
+					return;
+
+				// If the current job looks non-interfering for tend, leave it alone.
+				if (!IsInterferingJobForTend(patient))
 					return;
 			}
-
-			// Force patient retreat behavior so Tend can start reliably instead of re-entering combat motion.
-			ArgrillianThreatState.ModeTickCache.MarkMode(patient, 1); // 1 = patient-retreat
-
-			// Prevent immediate combat “commit/reacquire” churn during the same window.
-			ArgrillianThreatState.CombatLock.Clear(patient);
-			ArgrillianThreatState.CombatCommit.Clear(patient);
-
-			// Also mark threat tick to ensure the retreat/tend arbiter sees this decision immediately.
-			ArgrillianThreatState.ThreatTickCache.MarkNow(patient);
-
-			// Crucial: stop AND clear queued jobs so we don’t bounce back into queued haul/go-to-bed.
-			patient.jobs?.StopAll(true);
-			patient.jobs?.ClearQueuedJobs();
-			patient.pather?.StopDead();
 		}
 
 		private static bool IsJobNameContains(Job j, string part)
