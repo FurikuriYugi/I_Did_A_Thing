@@ -962,7 +962,7 @@ namespace ArgrillianThreat
 			// Medic thingID -> cached patientId (int only; Pawn resolved via ArgrillianAlertSystem lookup)
 			private static readonly Dictionary<int, int> patientIdByMedic = new Dictionary<int, int>();
 
-			// NEW: patientId -> medicId (int only) so arbitration can answer in O(1)
+			// patientId -> medicId (int only) so we can block other job arbitration in O(1)
 			private static readonly Dictionary<int, int> medicIdByPatientId = new Dictionary<int, int>();
 
 			public static Pawn GetHeldPatient(Pawn medic)
@@ -981,7 +981,7 @@ namespace ArgrillianThreat
 				return ArgrillianAlertSystem.TryGetPatientFromCachedCall(medic.Map, patientId);
 			}
 
-			// NEW: arbitration guard used by other jobgivers to avoid “wiggle” while tend/rescue is pending/completing.
+			// Used by other job arbitration to avoid "patient wiggle" while medic tend/rescue is pending.
 			public static bool IsPatientHeldForTend(Pawn patient)
 			{
 				if (patient == null) return false;
@@ -1010,9 +1010,6 @@ namespace ArgrillianThreat
 
 				patientIdByMedic[medicId] = patientId;
 				medicIdByPatientId[patientId] = medicId;
-
-				// (Optional) keep it silent for performance; we’ll add trace once you point me to
-				// the exact tend/rescue pipeline method you want the logs on.
 			}
 
 			// Release by medic only; resolves nothing; no scanning.
