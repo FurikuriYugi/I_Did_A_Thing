@@ -3200,14 +3200,41 @@ namespace ArgrillianThreat
 				}
 			}
 
-			// NOTE: IMPORTANT release policy change:
-			// HeldPatient release is NOT allowed here.
-			// Only Tend/Rescue resolution inside JobGiver_TendRetreatingAllies is allowed to clear the hold,
-			// to eliminate early wiggle / eligibility-flap release.
+			// HARD HOLD RELEASE ARBITRATION (single-owner):
+			// Prevent early "wiggle" / eligibility-flap release.
+			//
+			// While medic is not actively doing Tend/Rescue right now, we only release when the urgent patient state
+			// is clearly resolved: not downed and not bleeding (BloodLoss).
+			// No retreat/80% redirection logic belongs here; this is strictly release gating.
+			if (IsArgrillianMedicPawn(pawn))
+			{
+				Pawn held = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
+				if (held != null && !held.Dead && held.Spawned && held.Map == pawn.Map)
+				{
+					Job cur = pawn.CurJob;
+					bool medicInTendOrRescueNow = cur != null && (cur.def == JobDefOf.TendPatient || cur.def == JobDefOf.Rescue);
+
+					// If they are in tend/rescue already, we don't touch hold here.
+					if (!medicInTendOrRescueNow)
+					{
+						bool patientStillDown = held.Downed;
+						bool patientBleeding =
+							held.health != null
+							&& held.health.hediffSet != null
+							&& held.health.hediffSet.HasHediff(HediffDefOf.BloodLoss);
+
+						// Keep hold until true completion moment.
+						if (!patientStillDown && !patientBleeding)
+						{
+							// Release by medic only; only this path is allowed to clear heldPatient.
+							Log.Message($"[Argrillian] HOLD release requested (ExecuteAlertedMode). Medic={pawn?.LabelShort ?? "null"} HeldPatient={held.LabelShort} reason=down=false & BloodLoss=false");
+							ArgrillianMedicalState.PatientMedicHold.ReleaseForMedic(pawn);
+						}
+					}
+				}
+			}
 
 			Map map = pawn.Map;
-
-			// ---- existing code continues exactly as-is below this point ----
 
 			bool highAlert = ArgrillianThreatState.AwarenessCache.IsHighAlert(pawn);
 			bool sharedInvestigate = ArgrillianThreatState.AwarenessCache.IsSharedInvestigate(pawn);
@@ -3267,12 +3294,41 @@ namespace ArgrillianThreat
 			if (!lastKnown.IsValid)
 			{
 				ArgrillianThreatState.ThreatTickCache.MarkNow(pawn);
-				// (rest of original method continues unchanged)
+				return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, pawn.Position);
 			}
 
-			// --- IMPORTANT ---
-			// I’m not reprinting the remainder of the method here because your instruction says code edits should be minimal.
-			// Make sure you only delete the earlier HOLD release arbitration block and do not change the remaining logic.
+			if (TryPickCoverCellFromLastKnown(pawn, lastKnown, desiredCombatDistanceNow, losBreakBonus, out IntVec3 coverCell))
+			{
+				ArgrillianThreatState.ThreatTickCache.MarkNow(pawn);
+				var keep = ArgrillianGotoHelper.KeepIfSameGoto(pawn, coverCell);
+				if (keep != null) return keep;
+
+				return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, coverCell);
+			}
+
+			if (lastKnownInvestigateRadius > 0f)
+			{
+				Vector3 dir = (lastKnown.ToVector3Shifted() - pawn.Position.ToVector3Shifted());
+				dir.y = 0f;
+
+				if (dir.sqrMagnitude > 0.001f)
+				{
+					dir.Normalize();
+
+					float dist = Mathf.Clamp(lastKnownInvestigateRadius, 1f, 10f);
+					Vector3 stepV = pawn.Position.ToVector3Shifted() + (dir * dist);
+					IntVec3 step = stepV.ToIntVec3();
+
+					if (TryPickNearestWalkableStandable(pawn, step, 6, out IntVec3 picked))
+					{
+						ArgrillianThreatState.ThreatTickCache.MarkNow(pawn);
+						return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, picked);
+					}
+				}
+			}
+
+			ArgrillianThreatState.ThreatTickCache.MarkNow(pawn);
+			return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, pawn.Position);
 		}
 
 
