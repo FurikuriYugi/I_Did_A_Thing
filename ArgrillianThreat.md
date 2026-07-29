@@ -5346,67 +5346,46 @@ namespace ArgrillianThreat
 		{
 			if (patient == null || patient.Dead) return;
 
-			Job cur = patient.CurJob;
-
-			// If downed, must be tendable immediately by combat medics.
+			// If downed, we only need to prevent re-entering combat-like behavior so medic can start Rescue/Tend pipeline.
 			if (patient.Downed)
 			{
-				if (cur != null && IsAllowedDownPawnJob(cur))
-					return;
-
 				patient.jobs?.StopAll(true);
 				patient.jobs?.ClearQueuedJobs();
 				patient.pather?.StopDead();
 				return;
 			}
 
-			// Injured (not downed): HP<80% => tend-eligible precondition.
 			float hpPct = patient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
 
+			// This helper is only supposed to help tend preconditions; it should not “decide retreat”.
+			// However it should still stop combat-like motions when the patient is in the tend window.
 			if (hpPct >= 0.80f)
 				return;
 
-			// IMPORTANT:
-			// We only hard-stop combat-like jobs. If the patient is already in a retreat/move-to-cover job,
-			// we must not nuke their queued retreat plan, or Tend start will be unstable.
-			if (cur != null && cur.def != null)
+			Job cur = patient.CurJob;
+
+			if (cur == null || cur.def == null)
+				return;
+
+			string dn = cur.def.defName?.ToLowerInvariant() ?? "";
+
+			bool combatLike =
+				dn.Contains("attack") ||
+				dn.Contains("shoot") ||
+				dn.Contains("fight") ||
+				dn.Contains("melee") ||
+				dn.Contains("range") ||
+				dn.Contains("chase") ||
+				dn.Contains("tactic");
+
+			bool crawlOrMoveLike = IsCrawlLikeJob(cur) || IsMoveLikeJob(cur);
+
+			// Only stop interfering motion so the patient’s next-think can transition into the normal retreat planner.
+			if (combatLike || crawlOrMoveLike)
 			{
-				string dn = cur.def.defName?.ToLowerInvariant() ?? "";
-
-				bool combatLike =
-					dn.Contains("attack") ||
-					dn.Contains("shoot") ||
-					dn.Contains("fight") ||
-					dn.Contains("melee") ||
-					dn.Contains("range") ||
-					dn.Contains("tactic") ||
-					dn.Contains("chase");
-
-				// Also treat crawl-like and move-like as interfering with “patient reaches tend-spot” reliability.
-				bool crawlOrMoveLike = IsCrawlLikeJob(cur) || IsMoveLikeJob(cur);
-
-				bool interfere = combatLike || crawlOrMoveLike;
-
-				if (interfere)
-				{
-					// Hard-stop immediately (before any mode/lock marking) so the pawn can’t "wiggle"
-					// by re-entering move-away / attack motion in the same tick.
-					patient.jobs?.StopAll(true);
-					patient.jobs?.ClearQueuedJobs();
-					patient.pather?.StopDead();
-				}
-			}
-
-			// If already job-compatible, don’t stomp it further.
-			if (cur != null && cur.def != null)
-			{
-				// If they’re already in a job that won’t prevent tending, leave it alone.
-				if (IsAllowedDownPawnJob(cur))
-					return;
-
-				// If the current job looks non-interfering for tend, leave it alone.
-				if (!IsInterferingJobForTend(patient))
-					return;
+				patient.jobs?.StopAll(true);
+				patient.jobs?.ClearQueuedJobs();
+				patient.pather?.StopDead();
 			}
 		}
 
