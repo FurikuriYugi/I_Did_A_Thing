@@ -5990,14 +5990,17 @@ namespace ArgrillianThreat
 						if (def == JobDefOf.TendPatient && heldPatient.Downed)
 						{
 							if (!TryGetRescueBedForPatient(pawn, heldPatient, out Building_Bed bed) || bed == null)
-								return null;
+							{
+								// Stay committed to the downed heldPatient instead of falling back to combat.
+								// We’ll retry Rescue creation next tick once bed reservation becomes possible.
+								return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
+							}
 
 							Job rescueJob = JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
 							rescueJob.count = 1;
 							rescueJob.targetB = bed;
 							return rescueJob;
 						}
-
 						return cur;
 					}
 				}
