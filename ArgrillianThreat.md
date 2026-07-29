@@ -5362,19 +5362,21 @@ namespace ArgrillianThreat
 
 			// Injured (not downed): HP<80% => tend-eligible precondition.
 			float hpPct = patient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
+
 			if (hpPct >= 0.80f)
 				return;
 
-			// If the patient is currently on an interfering job (attack/chase/flee/haul/etc),
-			// stop it hard so Tend can begin reliably.
-			if (IsInterferingJobForTend(patient))
+			// Hard-stop immediately (before any mode/lock marking) so the pawn can't "wiggle"
+			// by re-entering move-away / attack motion in the same tick.
+			// This is the key for: medic can start Tend reliably; patient won't just drift far enough away.
+			if (patient.CurJob != null)
 			{
 				patient.jobs?.StopAll(true);
 				patient.jobs?.ClearQueuedJobs();
 				patient.pather?.StopDead();
 			}
 
-			// If already job-compatible, don’t stomp it.
+			// If already job-compatible, don’t stomp it further.
 			if (cur != null && cur.def != null)
 			{
 				if (cur.def == JobDefOf.TendPatient || cur.def == JobDefOf.Rescue || cur.def == JobDefOf.Wait)
@@ -5387,6 +5389,9 @@ namespace ArgrillianThreat
 			// Prevent immediate combat “commit/reacquire” churn during the same window.
 			ArgrillianThreatState.CombatLock.Clear(patient);
 			ArgrillianThreatState.CombatCommit.Clear(patient);
+
+			// Also mark threat tick to ensure the retreat/tend arbiter sees this decision immediately.
+			ArgrillianThreatState.ThreatTickCache.MarkNow(patient);
 
 			// Crucial: stop AND clear queued jobs so we don’t bounce back into queued haul/go-to-bed.
 			patient.jobs?.StopAll(true);
