@@ -5465,6 +5465,36 @@ namespace ArgrillianThreat
 		{
 			if (patient == null) return false;
 
+			// NEW: held-for-tend arbitration guard
+			// If this patient is currently held for tend/rescue by the alert/medic pipeline,
+			// all other job churn that could re-enable movement/combat should be treated as interfering.
+			if (ArgrillianMedicalState.PatientMedicHold.IsPatientHeldForTend(patient))
+			{
+				Job heldJob = patient.CurJob;
+				if (heldJob == null || heldJob.def == null) return false;
+
+				if (IsCrawlLikeJob(heldJob) || IsMoveLikeJob(heldJob))
+					return true;
+
+				if (IsCombatAttackLikeJob(heldJob) || IsChaseOrTacticJob(heldJob))
+					return true;
+
+				if (IsHaulJob(heldJob))
+					return true;
+
+				string defName0 = heldJob.def.defName;
+				if (!string.IsNullOrEmpty(defName0))
+				{
+					if (defName0.IndexOf("eat", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+					if (defName0.IndexOf("ingest", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+					if (defName0.IndexOf("meal", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+					if (defName0.IndexOf("consume", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+					if (defName0.IndexOf("rest", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+					if (defName0.IndexOf("grab", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+					if (defName0.IndexOf("pickup", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+				}
+			}
+
 			Job j = patient.CurJob;
 			if (j == null) return false;
 
