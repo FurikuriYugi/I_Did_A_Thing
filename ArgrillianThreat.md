@@ -3162,6 +3162,7 @@ namespace ArgrillianThreat
 		}
 
 		// -------- Alerted mode (UPDATED gate) --------
+		// -------- Alerted mode (UPDATED gate) --------
 		public static Job ExecuteAlertedMode(
 			Pawn pawn,
 			Pawn hostileIfAny,
@@ -3197,6 +3198,40 @@ namespace ArgrillianThreat
 
 						if (jobIsForHeldPatient)
 							return pawn.CurJob;
+					}
+				}
+			}
+
+			// HARD HOLD RELEASE ARBITRATION (single-owner):
+			// Prevent early "wiggle" / eligibility-flap release.
+			//
+			// While medic is not actively doing Tend/Rescue right now, we only release when the urgent patient state
+			// is clearly resolved: not downed and not bleeding (BloodLoss).
+			// No retreat/80% redirection logic belongs here; this is strictly release gating.
+			if (IsArgrillianMedicPawn(pawn))
+			{
+				Pawn held = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
+				if (held != null && !held.Dead && held.Spawned && held.Map == pawn.Map)
+				{
+					Job cur = pawn.CurJob;
+					bool medicInTendOrRescueNow = cur != null && (cur.def == JobDefOf.TendPatient || cur.def == JobDefOf.Rescue);
+
+					// If they are in tend/rescue already, we don't touch hold here.
+					if (!medicInTendOrRescueNow)
+					{
+						bool patientStillDown = held.Downed;
+						bool patientBleeding =
+							held.health != null
+							&& held.health.hediffSet != null
+							&& held.health.hediffSet.HasHediff(HediffDefOf.BloodLoss);
+
+						// Keep hold until true completion moment.
+						if (!patientStillDown && !patientBleeding)
+						{
+							// Release by medic only; only this path is allowed to clear heldPatient.
+							Log.Message($"[Argrillian] HOLD release requested (ExecuteAlertedMode). Medic={pawn?.LabelShort ?? "null"} HeldPatient={held.LabelShort} reason=down=false & BloodLoss=false");
+							ArgrillianMedicalState.PatientMedicHold.ReleaseForMedic(pawn);
+						}
 					}
 				}
 			}
@@ -3297,6 +3332,7 @@ namespace ArgrillianThreat
 			ArgrillianThreatState.ThreatTickCache.MarkNow(pawn);
 			return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, pawn.Position);
 		}
+
 
 		private static bool TryPickCoverCellFromLastKnown(
 			Pawn pawn,
