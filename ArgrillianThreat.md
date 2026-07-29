@@ -5937,6 +5937,7 @@ namespace ArgrillianThreat
 
 			var medicComp = pawn.GetComp<CompArgrillianMedicSettings>();
 			if (medicComp == null || !medicComp.isMedic) return null;
+
 			if (!medicComp.combatMedic) return null;
 
 			Pawn heldPatient = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
@@ -5958,6 +5959,48 @@ namespace ArgrillianThreat
 			// ----------------------------
 			if (!heldPatient.Downed)
 				TryStopPatientToAllowTend(heldPatient);
+
+			// ----------------------------
+			// 1.5) RESYNC ESCALATION: if patient worsens to <= 75% during retreat
+			// Force medic to break away from combat NOW and re-sync to Tend/Rescue heldPatient.
+			// ----------------------------
+			if (!heldPatient.Downed)
+			{
+				float heldHpPct = heldPatient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
+				if (heldHpPct <= 0.75f)
+				{
+					Job cur = pawn.CurJob;
+					if (cur != null && cur.def != null && !(
+							cur.def == JobDefOf.TendPatient ||
+							cur.def == JobDefOf.Rescue ||
+							cur.def == JobDefOf.Wait ||
+							cur.def == JobDefOf.LayDown))
+					{
+						string dn = cur.def.defName?.ToLowerInvariant() ?? "";
+
+						bool isCombatLike =
+							dn.Contains("attack") ||
+							dn.Contains("shoot") ||
+							dn.Contains("fight") ||
+							dn.Contains("melee") ||
+							dn.Contains("range");
+
+						if (isCombatLike)
+						{
+							// Break away from fight and re-route to heldPatient for tending.
+							pawn.jobs?.StopAll(true);
+							pawn.jobs?.ClearQueuedJobs();
+							pawn.pather?.StopDead();
+
+							ArgrillianThreatState.CombatLock.Clear(pawn);
+							ArgrillianThreatState.CombatCommit.Clear(pawn);
+
+							// Move back into tend range / re-sync.
+							return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
+						}
+					}
+				}
+			}
 
 			// ----------------------------
 			// 2) KEEP-ACTIVE-JOB GUARD
@@ -5991,6 +6034,7 @@ namespace ArgrillianThreat
 
 						return rescueJob;
 					}
+
 					return cur;
 				}
 			}
@@ -6028,7 +6072,7 @@ namespace ArgrillianThreat
 
 				return rescueJob;
 			}
-			
+
 			return JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
 		}
 
