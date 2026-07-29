@@ -1022,6 +1022,8 @@ namespace ArgrillianThreat
 				if (!patientIdByMedic.TryGetValue(medicId, out int patientId))
 					return;
 
+				Pawn patient = GetHeldPatient(medic);
+
 				patientIdByMedic.Remove(medicId);
 
 				// Clear reverse index only if it still points to this medic.
@@ -1030,10 +1032,26 @@ namespace ArgrillianThreat
 
 				ArgrillianAlertSystem.ReleaseMedicHold(medic);
 
-				// Preserve your existing “stop drift” behavior without clearing queued jobs.
-				Pawn patient = GetHeldPatient(medic);
-				if (patient != null && !patient.Dead)
+				// NEW: clear the patient's queued/wait behavior on release so they don't
+				// remain stuck in JobDefOf.Wait (and so PathFollower doesn't get forced
+				// into unwalkable recovery while we're already done tending).
+				if (patient != null && !patient.Dead && patient.Spawned)
+				{
+					if (patient.CurJob != null && patient.CurJob.def == JobDefOf.Wait)
+					{
+						patient.jobs?.EndCurrentJob(JobCondition.InterruptForced);
+					}
+
+					// Preserve your existing “stop drift” behavior without clearing queued jobs.
 					patient.pather?.StopDead();
+				}
+				else
+				{
+					// Preserve your existing “stop drift” behavior without clearing queued jobs.
+					Pawn heldPatient = GetHeldPatient(medic);
+					if (heldPatient != null && !heldPatient.Dead)
+						heldPatient.pather?.StopDead();
+				}
 			}
 		}
 	}
