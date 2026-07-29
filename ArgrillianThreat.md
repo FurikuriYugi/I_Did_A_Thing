@@ -5991,7 +5991,12 @@ namespace ArgrillianThreat
 
 							Job rescueJob = JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
 							rescueJob.count = 1;
-							rescueJob.targetB = bed;
+
+							// Explicitly set both targets to match RimWorld expectations:
+							rescueJob.targetA = heldPatient; // carry thing = patient
+							rescueJob.targetB = bed;          // destination = bed
+							rescueJob.targetC = null;
+
 							return rescueJob;
 						}
 						return cur;
@@ -6025,8 +6030,10 @@ namespace ArgrillianThreat
 				Job rescueJob = JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
 				rescueJob.count = 1;
 
-				// Vanilla Rescue/TakeToBed pipeline expects the bed as targetB.
-				rescueJob.targetB = bed;
+				// Explicitly set both targets to match RimWorld expectations:
+				rescueJob.targetA = heldPatient; // carry thing = patient
+				rescueJob.targetB = bed;          // destination = bed
+				rescueJob.targetC = null;
 
 				return rescueJob;
 			}
