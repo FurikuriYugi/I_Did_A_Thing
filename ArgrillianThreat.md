@@ -6028,7 +6028,7 @@ namespace ArgrillianThreat
 
 				return rescueJob;
 			}
-
+			
 			return JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
 		}
 
