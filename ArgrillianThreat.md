@@ -5382,38 +5382,16 @@ namespace ArgrillianThreat
 				return;
 			}
 
-			float hpPct = patient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
-
-			// This helper is only supposed to help tend preconditions; it should not “decide retreat”.
-			// However it should still stop combat-like motions when the patient is in the tend window.
-			if (hpPct >= 0.80f)
-				return;
-
 			Job cur = patient.CurJob;
 
 			if (cur == null || cur.def == null)
 				return;
 
-			string dn = cur.def.defName?.ToLowerInvariant() ?? "";
-
-			bool combatLike =
-				dn.Contains("attack") ||
-				dn.Contains("shoot") ||
-				dn.Contains("fight") ||
-				dn.Contains("melee") ||
-				dn.Contains("range") ||
-				dn.Contains("chase") ||
-				dn.Contains("tactic");
-
-			bool crawlOrMoveLike = IsCrawlLikeJob(cur) || IsMoveLikeJob(cur);
-
-			// Only stop interfering motion so the patient’s next-think can transition into the normal retreat planner.
-			if (combatLike || crawlOrMoveLike)
-			{
-				patient.jobs?.StopAll(true);
-				patient.jobs?.ClearQueuedJobs();
-				patient.pather?.StopDead();
-			}
+			patient.jobs?.StopAll(true);
+			patient.jobs?.ClearQueuedJobs();
+			patient.pather?.StopDead();
+			// Add a wait job here.
+			return;
 		}
 
 		private static bool IsJobNameContains(Job j, string part)
