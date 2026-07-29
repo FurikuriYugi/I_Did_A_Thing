@@ -1013,14 +1013,9 @@ namespace ArgrillianThreat
 
 				// Required trace: hold acquired + confirmation of identity lock.
 				Log.Message(
-					$"[ArgrillianThreat][PatientMedicHold] HOLD ACQUIRED: medic={medicId} patient={patientId} " +
-					$"(heldMedicId now={medicIdByPatientId[patientId]})");
+					$"[ArgrillianThreat][PatientMedicHold] HOLD ACQUIRED: medic={medicId} patient={patientId} heldMedicIdNow={medicIdByPatientId[patientId]}");
 			}
 
-			// Release by medic only.
-			// IMPORTANT: this is the single-owner release point that must NOT clear heldPatient
-			// based on eligibility flapping. It only releases when the medic is no longer in the
-			// tend/rescue job pipeline.
 			public static void ReleaseForMedic(Pawn medic)
 			{
 				if (medic == null) return;
@@ -1032,40 +1027,44 @@ namespace ArgrillianThreat
 
 				Pawn heldPatientBeforeRelease = GetHeldPatient(medic);
 
-				// Required trace: release requested + which codepath gate blocked it.
-				JobDef curDef = medic.CurJob?.def;
+				Job curJob = medic.CurJob;
+				JobDef curJobDef = curJob != null ? curJob.def : null;
 
-				bool medicCurrentlyInMedicalPipeline =
-					curDef == JobDefOf.TendPatient ||
-					curDef == JobDefOf.Rescue;
+				bool medicInTendOrRescuePipeline =
+					curJobDef == JobDefOf.TendPatient ||
+					curJobDef == JobDefOf.Rescue;
 
+				// Required trace: release requested (and exactly which gate blocks it).
 				Log.Message(
 					$"[ArgrillianThreat][PatientMedicHold] RELEASE REQUESTED: medic={medicId} patientId={patientId} " +
-					$"curJobDef={(medic.CurJob != null ? medic.CurJob.def?.defName : "null")} " +
-					$"medicCurrentlyInMedicalPipeline={medicCurrentlyInMedicalPipeline}");
+					$"curJobDef={(curJobDef != null ? curJobDef.defName : "null")} " +
+					$"medicInTendOrRescuePipeline={medicInTendOrRescuePipeline}");
 
-				// If medic is still in/near the tend-rescue pipeline, do not release.
-				if (medicCurrentlyInMedicalPipeline)
+				// Hard ownership: do NOT release until tend/rescue is actually finished.
+				if (medicInTendOrRescuePipeline)
 					return;
 
-				// Single-owner: now that tend/rescue is done (medic job is no longer medical), release.
+				// Single-owner release point:
+				// Only proceed now that the medic is no longer in/near the tend/rescue pipeline.
 				patientIdByMedic.Remove(medicId);
 
 				// Clear reverse index only if it still points to this medic.
 				if (medicIdByPatientId.TryGetValue(patientId, out int heldMedicId) && heldMedicId == medicId)
 					medicIdByPatientId.Remove(patientId);
 
-				// Required trace: identity flip/clear reason.
+				// Required trace: hold release + identity flip/clear reason (based on pipeline exit gate).
 				Log.Message(
 					$"[ArgrillianThreat][PatientMedicHold] HOLD RELEASED: medic={medicId} patientId={patientId} " +
-					$"(heldPatientBeforeRelease={(heldPatientBeforeRelease != null ? heldPatientBeforeRelease.thingIDNumber : -1)})");
+					$"reason=pipelineEnded(medicInTendOrRescuePipeline=false) " +
+					$"heldPatientBeforeReleaseThingId={(heldPatientBeforeRelease != null ? heldPatientBeforeRelease.thingIDNumber : -1)}");
 
 				// Release the alert-system medic hold too (now that tend/rescue completed).
 				ArgrillianAlertSystem.ReleaseMedicHold(medic);
 
-				// IMPORTANT: do NOT stop/interrupt patient jobs here.
-				// Patient stationary enforcement during tend/rescue is the held/locked arbitration guard.
-				// Any movement/combat eligibility should resume only after hold is released.
+				// IMPORTANT (bootstrap invariant):
+				// Do NOT implement stop+retreat/redirection here.
+				// No extra "wiggle" fixes by interrupting other job states.
+				// The held-for-tend arbitration guard prevents combat/move oscillation until release time.
 			}
 		}
 	}
