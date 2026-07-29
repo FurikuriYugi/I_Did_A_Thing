@@ -5427,10 +5427,15 @@ namespace ArgrillianThreat
 			// MUST ONLY stop + hold so the medic/combat medic can finish Tend/Rescue.
 			// No retreat-at-80% decisions here.
 
-			// If already waiting, don't churn.
+			// If already waiting, we still must interrupt/clear the Wait job when it's the
+			// same pawn that will start Tend/Rescue (otherwise you get "already having job Wait"
+			// when StartJob(TendPatient) happens).
 			Job cur = patient.CurJob;
 			if (cur != null && cur.def != null && cur.def == JobDefOf.Wait)
-				return;
+			{
+				// End the existing Wait job so Tend/Rescue can start cleanly.
+				patient.jobs?.EndCurrentJob(JobCondition.InterruptForced);
+			}
 
 			// Stop competing behavior.
 			patient.jobs?.StopAll(true);
