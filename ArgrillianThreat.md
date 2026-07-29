@@ -5356,17 +5356,22 @@ namespace ArgrillianThreat
 				if (cur != null && IsAllowedDownPawnJob(cur))
 					return;
 
-				// Patient is downed but on a non-tendable job:
-				// Stop + clear queued jobs to prevent stand/haul oscillation
-				// until the medic's Tend/Rescue pipeline completes.
 				patient.jobs?.StopAll(true);
 				patient.jobs?.ClearQueuedJobs();
 				patient.pather?.StopDead();
+
+				// Anchor: keep from re-pathing/transport immediately.
+				if (patient.jobs != null)
+				{
+					Job wait = JobMaker.MakeJob(JobDefOf.Wait);
+					wait.count = 1;
+					patient.jobs.TryTakeOrderedJob(wait, JobTag.Misc);
+				}
+
 				return;
 			}
 
 			// Injured (not downed): HP<80% => force stop/retreat-eligible state
-			// so Tend can start reliably (and so the pawn doesn’t bounce into queued haul/bed jobs).
 			float hpPct = patient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
 			if (hpPct >= 0.80f) return;
 
@@ -5377,18 +5382,25 @@ namespace ArgrillianThreat
 					return;
 			}
 
-			// Force patient retreat behavior so the next combat tick yields move-to-safety,
-			// instead of just a momentary StopAll that combat can immediately re-hand off.
-			ArgrillianThreatState.ModeTickCache.MarkMode(patient, 1); // 1 = patient-retreat
-
-			// Prevent immediate combat “commit/reacquire” churn during the same window.
+			// Prevent immediate combat “commit/reacquire” churn
 			ArgrillianThreatState.CombatLock.Clear(patient);
 			ArgrillianThreatState.CombatCommit.Clear(patient);
 
-			// Crucial: stop AND clear queued jobs so we don’t immediately bounce back to haul/bed.
+			// Keep using patient-retreat mode (so hostile-aware logic yields toward safety)
+			ArgrillianThreatState.ModeTickCache.MarkMode(patient, 1); // 1 = patient-retreat
+
+			// Crucial: stop AND clear queued jobs so we don’t immediately bounce back to haul/bed
 			patient.jobs?.StopAll(true);
 			patient.jobs?.ClearQueuedJobs();
 			patient.pather?.StopDead();
+
+			// Anchor in place so Tend doesn’t get interrupted by tiny “haul/go-to-bed” wiggling.
+			if (patient.jobs != null)
+			{
+				Job wait = JobMaker.MakeJob(JobDefOf.Wait);
+				wait.count = 1;
+				patient.jobs.TryTakeOrderedJob(wait, JobTag.Misc);
+			}
 		}
 
 		private static void TryStopPatientToAllowTendIfChasingOrAttacking(Pawn patient)
