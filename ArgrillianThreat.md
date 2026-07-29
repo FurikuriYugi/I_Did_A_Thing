@@ -5350,7 +5350,7 @@ namespace ArgrillianThreat
 
 			Job cur = patient.CurJob;
 
-			// Downed: must be immediately tendable.
+			// If downed, must be tendable immediately by combat medics.
 			if (patient.Downed)
 			{
 				if (cur != null && IsAllowedDownPawnJob(cur))
@@ -5359,63 +5359,41 @@ namespace ArgrillianThreat
 				patient.jobs?.StopAll(true);
 				patient.jobs?.ClearQueuedJobs();
 				patient.pather?.StopDead();
-
-				// Anchor: keep from re-pathing/transport immediately.
-				if (patient.jobs != null)
-				{
-					Job wait = JobMaker.MakeJob(JobDefOf.Wait);
-					wait.count = 1;
-					patient.jobs.TryTakeOrderedJob(wait, JobTag.Misc);
-				}
-
 				return;
 			}
 
-			// Injured (not downed): HP<80% => force stop/retreat-eligible state
+			// Injured (not downed): HP<80% => tend-eligible precondition.
 			float hpPct = patient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
-			if (hpPct >= 0.80f) return;
+			if (hpPct >= 0.80f)
+				return;
 
-			// If already job-compatible with the tend/rescue pipeline, don’t stomp it.
+			// If the patient is currently on an interfering job (attack/chase/flee/haul/etc),
+			// stop it hard so Tend can begin reliably.
+			if (IsInterferingJobForTend(patient))
+			{
+				patient.jobs?.StopAll(true);
+				patient.jobs?.ClearQueuedJobs();
+				patient.pather?.StopDead();
+			}
+
+			// If already job-compatible, don’t stomp it.
 			if (cur != null && cur.def != null)
 			{
 				if (cur.def == JobDefOf.TendPatient || cur.def == JobDefOf.Rescue || cur.def == JobDefOf.Wait)
 					return;
 			}
 
-			// Prevent immediate combat “commit/reacquire” churn
+			// Force patient retreat behavior so Tend can start reliably instead of re-entering combat motion.
+			ArgrillianThreatState.ModeTickCache.MarkMode(patient, 1); // 1 = patient-retreat
+
+			// Prevent immediate combat “commit/reacquire” churn during the same window.
 			ArgrillianThreatState.CombatLock.Clear(patient);
 			ArgrillianThreatState.CombatCommit.Clear(patient);
 
-			// Keep using patient-retreat mode (so hostile-aware logic yields toward safety)
-			ArgrillianThreatState.ModeTickCache.MarkMode(patient, 1); // 1 = patient-retreat
-
-			// Crucial: stop AND clear queued jobs so we don’t immediately bounce back to haul/bed
+			// Crucial: stop AND clear queued jobs so we don’t bounce back into queued haul/go-to-bed.
 			patient.jobs?.StopAll(true);
 			patient.jobs?.ClearQueuedJobs();
 			patient.pather?.StopDead();
-
-			// Anchor in place so Tend doesn’t get interrupted by tiny “haul/go-to-bed” wiggling.
-			if (patient.jobs != null)
-			{
-				Job wait = JobMaker.MakeJob(JobDefOf.Wait);
-				wait.count = 1;
-				patient.jobs.TryTakeOrderedJob(wait, JobTag.Misc);
-			}
-		}
-
-		private static void TryStopPatientToAllowTendIfChasingOrAttacking(Pawn patient)
-		{
-			if (patient == null || patient.Dead) return;
-			if (patient.Downed) return;
-
-			Job j = patient.CurJob;
-			if (j == null || j.def == null) return;
-
-			if (IsCombatAttackLikeJob(j) || IsChaseOrTacticJob(j) || IsFleeLikeJob(j))
-			{
-				patient.jobs?.StopAll(true);
-				patient.pather?.StopDead();
-			}
 		}
 
 		private static bool IsJobNameContains(Job j, string part)
