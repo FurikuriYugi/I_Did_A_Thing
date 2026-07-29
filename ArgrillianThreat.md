@@ -5967,6 +5967,16 @@ namespace ArgrillianThreat
 
 			ArgrillianMedicalState.PatientMedicHold.Lock(medic, patient);
 
+			// Real trace requirement: log when patient hold is acquired (heldPatient set + patient hold lock confirmation).
+			// Only log when the hold actually stuck.
+			Pawn held = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(medic);
+			if (held != null && held.thingIDNumber == patient.thingIDNumber)
+			{
+				Log.Message(
+					$"[ArgrillianThreat][HOLD] patientHoldAcquired medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} mapOk={(medic?.Map == patient?.Map)}"
+				);
+			}
+
 			// Do NOT stop the patient here.
 			// The patient must keep retreating / repositioning toward safety and/or toward the medic,
 			// so that the tend job can actually succeed when eligibility is reached.
