@@ -3163,15 +3163,15 @@ namespace ArgrillianThreat
 
 		// -------- Alerted mode (UPDATED gate) --------
 		public static Job ExecuteAlertedMode(
-	Pawn pawn,
-	Pawn hostileIfAny,
-	float desiredCombatDistanceNow,
-	float losBreakBonus,
-	bool isRanged,
-	int minHighAlertTicksToMove,
-	float scanRange,
-	float retreatMinHealthPercent,
-	float lastKnownInvestigateRadius = 12f)
+			Pawn pawn,
+			Pawn hostileIfAny,
+			float desiredCombatDistanceNow,
+			float losBreakBonus,
+			bool isRanged,
+			int minHighAlertTicksToMove,
+			float scanRange,
+			float retreatMinHealthPercent,
+			float lastKnownInvestigateRadius = 12f)
 		{
 			if (pawn == null || pawn.Dead || pawn.Map == null) return null;
 			if (pawn.Downed) return null;
@@ -3197,39 +3197,6 @@ namespace ArgrillianThreat
 
 						if (jobIsForHeldPatient)
 							return pawn.CurJob;
-					}
-				}
-			}
-
-			// HARD HOLD RELEASE ARBITRATION:
-			// If we have a held patient, do NOT release just because eligibility gates flap.
-			// Release only when the patient is clearly no longer in the "needs tend/rescue" resolved state.
-			//
-			// This is the single mechanism that prevents early hold release => early movement/wiggle.
-			if (IsArgrillianMedicPawn(pawn))
-			{
-				Pawn held = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
-
-				if (held != null && !held.Dead && held.Spawned && held.Map == pawn.Map)
-				{
-					// If medic is not actively performing tend/rescue right now, we can only release on true completion.
-					Job cur = pawn.CurJob;
-					bool medicInTendOrRescueNow = cur != null && (cur.def == JobDefOf.TendPatient || cur.def == JobDefOf.Rescue);
-
-					if (!medicInTendOrRescueNow)
-					{
-						bool patientStillDown = held.Downed;
-
-						bool patientBleeding = held.health?.hediffSet != null
-							&& held.health.hediffSet.HasHediff(HediffDefOf.BloodLoss);
-
-						// Release ONLY when downed/bleed is resolved.
-						if (!patientStillDown && !patientBleeding)
-						{
-							// Release by medic only (single-owner). This is where heldPatient is cleared.
-							ArgrillianMedicalState.PatientMedicHold.ReleaseForMedic(pawn);
-						}
-						// else: keep hold; any non-tend/rescue logic should be blocked elsewhere.
 					}
 				}
 			}
@@ -3282,13 +3249,53 @@ namespace ArgrillianThreat
 					if (attackJob != null)
 						return attackJob;
 
-					// ... (rest of your existing method continues unchanged)
+					// If we can't hit yet, fall through to cover/last-known reposition logic below.
+				}
+
+				// injuredCombatMedicStop OR no-LOS:
+				// fall through to investigate/reposition logic below (won't initiate attack).
+			}
+
+			// Otherwise investigate/reposition
+			IntVec3 lastKnown = ArgrillianThreatState.AwarenessCache.GetLastKnownCell(pawn);
+			if (!lastKnown.IsValid)
+			{
+				ArgrillianThreatState.ThreatTickCache.MarkNow(pawn);
+				return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, pawn.Position);
+			}
+
+			if (TryPickCoverCellFromLastKnown(pawn, lastKnown, desiredCombatDistanceNow, losBreakBonus, out IntVec3 coverCell))
+			{
+				ArgrillianThreatState.ThreatTickCache.MarkNow(pawn);
+				var keep = ArgrillianGotoHelper.KeepIfSameGoto(pawn, coverCell);
+				if (keep != null) return keep;
+
+				return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, coverCell);
+			}
+
+			if (lastKnownInvestigateRadius > 0f)
+			{
+				Vector3 dir = (lastKnown.ToVector3Shifted() - pawn.Position.ToVector3Shifted());
+				dir.y = 0f;
+
+				if (dir.sqrMagnitude > 0.001f)
+				{
+					dir.Normalize();
+
+					float dist = Mathf.Clamp(lastKnownInvestigateRadius, 1f, 10f);
+					Vector3 stepV = pawn.Position.ToVector3Shifted() + (dir * dist);
+					IntVec3 step = stepV.ToIntVec3();
+
+					if (TryPickNearestWalkableStandable(pawn, step, 6, out IntVec3 picked))
+					{
+						ArgrillianThreatState.ThreatTickCache.MarkNow(pawn);
+						return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, picked);
+					}
 				}
 			}
 
-			// If you pasted this chunk, ensure the remainder of the original method body remains as-is.
-			// (I kept only the medic hold arbitration edits; the rest should match your current file.)
-			return null;
+			ArgrillianThreatState.ThreatTickCache.MarkNow(pawn);
+			return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, pawn.Position);
 		}
 
 		private static bool TryPickCoverCellFromLastKnown(
