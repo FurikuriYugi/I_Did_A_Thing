@@ -5371,27 +5371,29 @@ namespace ArgrillianThreat
 
 		private static void TryStopPatientToAllowTend(Pawn patient)
 		{
-			if (patient == null || patient.Dead) return;
-
-			// If downed, we only need to prevent re-entering combat-like behavior so medic can start Rescue/Tend pipeline.
-			if (patient.Downed)
-			{
-				patient.jobs?.StopAll(true);
-				patient.jobs?.ClearQueuedJobs();
-				patient.pather?.StopDead();
+			if (patient == null || patient.Dead)
 				return;
-			}
 
+			// MUST ONLY stop + hold so the medic/combat medic can finish Tend/Rescue.
+			// No retreat-at-80% decisions here.
+
+			// If already waiting, don't churn.
 			Job cur = patient.CurJob;
-
-			if (cur == null || cur.def == null)
+			if (cur != null && cur.def != null && cur.def == JobDefOf.Wait)
 				return;
 
+			// Stop competing behavior.
 			patient.jobs?.StopAll(true);
 			patient.jobs?.ClearQueuedJobs();
 			patient.pather?.StopDead();
-			// Add a wait job here.
-			return;
+
+			// Hold in place until the medic pipeline finishes tending and releases afterwards.
+			// Medic/jobgiver is responsible for release/redirect back to battle or full retreat.
+			IntVec3 here = patient.Position;
+			Job hold = JobMaker.MakeJob(JobDefOf.Wait, here);
+			hold.count = 1;
+
+			patient.jobs?.StartJob(hold, JobCondition.InterruptForced);
 		}
 
 		private static bool IsJobNameContains(Job j, string part)
