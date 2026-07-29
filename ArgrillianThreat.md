@@ -3205,15 +3205,15 @@ namespace ArgrillianThreat
 		}
 
 		public static Job ExecuteAlertedMode(
-			Pawn pawn,
-			Pawn hostileIfAny,
-			float desiredCombatDistanceNow,
-			float losBreakBonus,
-			bool isRanged,
-			int minHighAlertTicksToMove,
-			float scanRange,
-			float retreatMinHealthPercent,
-			float lastKnownInvestigateRadius = 12f)
+	Pawn pawn,
+	Pawn hostileIfAny,
+	float desiredCombatDistanceNow,
+	float losBreakBonus,
+	bool isRanged,
+	int minHighAlertTicksToMove,
+	float scanRange,
+	float retreatMinHealthPercent,
+	float lastKnownInvestigateRadius = 12f)
 		{
 			if (pawn == null || pawn.Dead || pawn.Map == null) return null;
 			if (pawn.Downed) return null;
@@ -3243,39 +3243,10 @@ namespace ArgrillianThreat
 				}
 			}
 
-			// HARD HOLD RELEASE ARBITRATION (single-owner):
-			// Prevent early "wiggle" / eligibility-flap release.
-			//
-			// While medic is not actively doing Tend/Rescue right now, we only release when the urgent patient state
-			// is clearly resolved: not downed and not bleeding (BloodLoss).
-			// No retreat/80% redirection logic belongs here; this is strictly release gating.
-			if (IsArgrillianMedicPawn(pawn))
-			{
-				Pawn held = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
-				if (held != null && !held.Dead && held.Spawned && held.Map == pawn.Map)
-				{
-					Job cur = pawn.CurJob;
-					bool medicInTendOrRescueNow = cur != null && (cur.def == JobDefOf.TendPatient || cur.def == JobDefOf.Rescue);
-
-					// If they are in tend/rescue already, we don't touch hold here.
-					if (!medicInTendOrRescueNow)
-					{
-						bool patientStillDown = held.Downed;
-						bool patientBleeding =
-							held.health != null
-							&& held.health.hediffSet != null
-							&& held.health.hediffSet.HasHediff(HediffDefOf.BloodLoss);
-
-						// Keep hold until true completion moment.
-						if (!patientStillDown && !patientBleeding)
-						{
-							// Release by medic only; only this path is allowed to clear heldPatient.
-							Log.Message($"[Argrillian] HOLD release requested (ExecuteAlertedMode). Medic={pawn?.LabelShort ?? "null"} HeldPatient={held.LabelShort} reason=down=false & BloodLoss=false");
-							ArgrillianMedicalState.PatientMedicHold.ReleaseForMedic(pawn);
-						}
-					}
-				}
-			}
+			// HARD HOLD RELEASE ARBITRATION REMOVED:
+			// Do not release heldPatient from here.
+			// The single-owner rule is enforced by the tend/rescue completion path only.
+			// This prevents the medic from "bouncing" and causing the held patient to re-enter combat/attacks while tend/rescue isn't resolved.
 
 			Map map = pawn.Map;
 
@@ -3292,6 +3263,8 @@ namespace ArgrillianThreat
 				bool injuredCombatMedicStop = false;
 
 				var medicComp = pawn.GetComp<CompArgrillianMedicSettings>();
+				bool isCombatMedic = medicComp != null && medicComp.isMedic && medicComp.combatMedic;
+
 				if (medicComp != null && medicComp.isMedic && medicComp.combatMedic)
 				{
 					injuredCombatMedicStop = IsInjuredPatientOrInjuredMedicStopAttacking(
