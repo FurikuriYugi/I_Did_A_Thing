@@ -2258,11 +2258,7 @@ namespace ArgrillianThreat
 		/// - Weapon-range/imminent-threat gating must be handled when choosing the ATTACK job,
 		///   not when acquiring/locking the hostile.
 		/// </summary>
-		public static bool TryAcquireHostileFromExistingSystems(
-	Pawn pawn,
-	ThreatContext tctx,
-	ArgrillianThreatHostileAcquireContext acquireCtx,
-	out HostileContext hctx)
+		public static bool TryAcquireHostileFromExistingSystems(Pawn pawn, ThreatContext tctx, ArgrillianThreatHostileAcquireContext acquireCtx, out HostileContext hctx)
 		{
 			hctx = default;
 
@@ -5581,11 +5577,6 @@ namespace ArgrillianThreat
 			return false;
 		}
 
-		private static void TryStopPatientToAllowTend(Pawn patient)
-		{
-			TryStopPatientToAllowTend(null, patient);
-		}
-
 		private static void TryStopPatientToAllowTend(Pawn medic, Pawn patient)
 		{
 			if (patient == null || patient.Dead)
@@ -5631,26 +5622,12 @@ namespace ArgrillianThreat
 			}
 			else
 			{
-				// IMPORTANT FIX for your logs:
-				// If called without medic context, we previously skipped stop/hold entirely,
-				// which lets the injured pawn fall through to "consume meal / queued haul / bed".
-				//
-				// When the patient is already held-for-tend (heldPatient arbitration is active),
-				// we MUST proceed with the stop/hold even without a medic reference.
-				// This preserves the invariant: "held-for-tend pipeline owns stationarity until Tend/Rescue resolution".
-				bool heldForTend = ArgrillianMedicalState.PatientMedicHold.IsPatientHeldForTend(patient);
-
-				if (!heldForTend)
-				{
-					Log.Message(
-						$"[ArgrillianThreat][TryStopPatientToAllowTend] medic context missing -> skipping stop/hold: medic=null patient={patient.thingIDNumber}"
-					);
-					return;
-				}
-
+				// If we somehow got here without medic context, do nothing.
+				// We intentionally removed the patient-only overload so this call site must always pass medic.
 				Log.Message(
-					$"[ArgrillianThreat][TryStopPatientToAllowTend] medic context missing but patient is held-for-tend -> forcing STOP+HOLD: patient={patient.thingIDNumber}"
+					$"[ArgrillianThreat][TryStopPatientToAllowTend] medic context missing -> no stop/hold (medic=null patient={patient?.thingIDNumber ?? -1})"
 				);
+				return;
 			}
 
 			// MUST ONLY stop + hold so the medic/combat medic can finish Tend/Rescue.
@@ -6288,7 +6265,7 @@ namespace ArgrillianThreat
 			// ----------------------------
 			// If patient isn't downed, they still need to stop fighting / position for tend to start.
 			if (!heldPatient.Downed)
-				TryStopPatientToAllowTend(heldPatient);
+				TryStopPatientToAllowTend(pawn, heldPatient);
 
 			// ----------------------------
 			// 1.25) ESCORT objective gate + near-hostile permission gate (two-gates)
@@ -6436,7 +6413,7 @@ namespace ArgrillianThreat
 			{
 				// Ensure patient is held-positioned correctly (existing behavior).
 				if (!heldPatient.Downed)
-					TryStopPatientToAllowTend(heldPatient);
+					TryStopPatientToAllowTend(pawn, heldPatient);
 
 				// NEW: stop arbitration churn (rest/meal/haul queued) while we are waiting to become tend-eligible.
 				// This ensures the medic does NOT bounce and the patient doesn't get “freed” into consume/haul pipeline behavior.
@@ -6450,7 +6427,7 @@ namespace ArgrillianThreat
 
 			// Start-eligible now: hard-stop right before we start Tend/Rescue.
 			if (!heldPatient.Downed)
-				TryStopPatientToAllowTend(heldPatient);
+				TryStopPatientToAllowTend(pawn, heldPatient);
 
 			// Ensure medic is committed to this held patient.
 			LockPatientToMedic(pawn, heldPatient);
