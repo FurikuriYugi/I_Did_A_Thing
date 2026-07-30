@@ -1091,8 +1091,6 @@ namespace ArgrillianThreat
 
 					if (heldPatientBeforeRelease == null)
 					{
-						// If we can't resolve the held pawn identity, be conservative and treat as pipeline only when the
-						// job is clearly missing/invalid. But since heldPatientBeforeRelease is usually resolvable, keep this strict.
 						medicInTendOrRescuePipeline = false;
 						pipelineReason = "Haul job but heldPatient null";
 					}
@@ -1125,8 +1123,8 @@ namespace ArgrillianThreat
 					$"pipeline(medicInTendOrRescuePipeline)={medicInTendOrRescuePipeline} pipelineReason={pipelineReason} " +
 					$"recentlyTookTendTask={recentlyTookTendTask}");
 
-				// Hard ownership rule: do NOT clear heldPatient while tend/rescue pipeline is still active.
-				// (Now also blocked by recent-tend stickiness override above.)
+				// Hard ownership rule: do NOT clear heldPatient while the medic is still actively part of the held
+				// patient's medical pipeline.
 				if (medicInTendOrRescuePipeline)
 				{
 					Log.Message(
@@ -1146,6 +1144,23 @@ namespace ArgrillianThreat
 				Log.Message(
 					$"[ArgrillianThreat][PatientMedicHold] HOLD RELEASED: medic={medicId} patientId={patientId} " +
 					$"reason=tend/rescue pipeline complete heldPatientBeforeReleaseThingId={(heldPatientBeforeRelease != null ? heldPatientBeforeRelease.thingIDNumber : -1)}");
+
+				// NEW: after tend/rescue completion, clear the temporary patient Wait so they can resume combat logic.
+				// Also bias their cached mode back to combat so the next tick does "combat if possible, otherwise retreat".
+				if (heldPatientBeforeRelease != null && !heldPatientBeforeRelease.Dead && heldPatientBeforeRelease.Spawned && heldPatientBeforeRelease.Map != null)
+				{
+					Job hpCur = heldPatientBeforeRelease.CurJob;
+					if (hpCur != null && hpCur.def == JobDefOf.Wait)
+					{
+						Log.Message(
+							$"[ArgrillianThreat][PatientMedicHold] WAIT CLEAR REQUESTED: patient={heldPatientBeforeRelease.thingIDNumber} " +
+							$"because tend/rescue completed (medic={medicId}).");
+						heldPatientBeforeRelease.jobs?.EndCurrentJob(JobCondition.InterruptForced);
+					}
+
+					// Force next decision toward combat mode first.
+					ArgrillianThreatState.ModeTickCache.MarkMode(heldPatientBeforeRelease, 0);
+				}
 
 				// Release the alert-system medic hold too (now that tend/rescue completed).
 				ArgrillianAlertSystem.ReleaseMedicHold(medic);
