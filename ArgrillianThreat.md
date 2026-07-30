@@ -1049,53 +1049,71 @@ namespace ArgrillianThreat
 				// Hard ownership rule: do NOT clear heldPatient while the medic is still actively part of the held
 				// patient's medical pipeline.
 				//
-				// Your observed bug suggests CurJobDef can temporarily be something other than TendPatient/Rescue
-				// while still belonging to the tend/rescue pipeline. So we treat additional pipeline-relevant jobs
-				// as "still in pipeline", gated to the held patient identity when possible.
+				// Your observed symptom ("tried to tend", patient wiggles, then goes to rest)
+				// matches a specific failure mode: during the tend/rescue pipeline, the medic's CurJobDef can
+				// briefly flicker away from TendPatient/Rescue/haul-to-* (e.g., to Wait/Rest), causing
+				// medicInTendOrRescuePipeline=false and thus early release.
+				//
+				// Fix: add a Tend/Rescue pipeline "stickiness" gate, so a momentary CurJobDef flicker
+				// cannot cause hold release until the medic has truly left the tend/rescue task recently.
+				bool stickinessSaysInPipeline =
+					MedicTendTaskStickiness.RecentlyTookTendTask(medic, stickinessTicks: 120);
+
+				// Your code also treats pipeline-relevant jobs as pipeline when they target the held patient identity.
 				bool medicInTendOrRescuePipeline = false;
 				string pipelineReason = "none";
 
-				if (curJobDef == JobDefOf.TendPatient)
+				if (stickinessSaysInPipeline)
 				{
 					medicInTendOrRescuePipeline = true;
-					pipelineReason = "CurJobDef==TendPatient";
+					pipelineReason = "MedicTendTaskStickiness recent tend task (covers CurJobDef flicker)";
 				}
-				else if (curJobDef == JobDefOf.Rescue)
-				{
-					medicInTendOrRescuePipeline = true;
-					pipelineReason = "CurJobDef==Rescue";
-				}
-				else if (curJobDef == JobDefOf.HaulToCell || curJobDef == JobDefOf.HaulToContainer)
-				{
-					// Some pipelines queue hauling as part of the rescue/tend flow.
-					// Only treat it as pipeline if it is actually targeting the held patient identity.
-					Pawn jobPatient = heldPatientBeforeRelease != null ? ArgillianThreatPatientTuning.GetPatientFromJob(curJob) : null;
 
-					if (heldPatientBeforeRelease == null)
-					{
-						// If we can't resolve the held pawn identity, be conservative and treat as pipeline only when the
-						// job is clearly missing/invalid. But since heldPatientBeforeRelease is usually resolvable, keep this strict.
-						medicInTendOrRescuePipeline = false;
-						pipelineReason = "Haul job but heldPatient null";
-					}
-					else if (jobPatient == heldPatientBeforeRelease)
+				if (!medicInTendOrRescuePipeline)
+				{
+					// Some pipelines queue jobs as part of the rescue/tend flow.
+					// Only treat it as pipeline if it is actually targeting the held patient identity when possible.
+					if (curJobDef == JobDefOf.TendPatient)
 					{
 						medicInTendOrRescuePipeline = true;
-						pipelineReason = $"CurJobDef=={curJobDef.defName} targeting heldPatient";
+						pipelineReason = "CurJobDef==TendPatient";
+					}
+					else if (curJobDef == JobDefOf.Rescue)
+					{
+						medicInTendOrRescuePipeline = true;
+						pipelineReason = "CurJobDef==Rescue";
+					}
+					else if (curJobDef == JobDefOf.HaulToCell || curJobDef == JobDefOf.HaulToContainer)
+					{
+						// Only treat it as pipeline if it is targeting the held patient identity.
+						Pawn jobPatient = heldPatientBeforeRelease != null ? ArgillianThreatPatientTuning.GetPatientFromJob(curJob) : null;
+
+						if (heldPatientBeforeRelease == null)
+						{
+							// If we can't resolve the held pawn identity, be conservative and treat as pipeline only when the
+							// job is clearly missing/invalid. But since heldPatientBeforeRelease is usually resolvable, keep this strict.
+							medicInTendOrRescuePipeline = false;
+							pipelineReason = "Haul job but heldPatient null";
+						}
+						else if (jobPatient == heldPatientBeforeRelease)
+						{
+							medicInTendOrRescuePipeline = true;
+							pipelineReason = $"CurJobDef=={curJobDef.defName} targeting heldPatient";
+						}
+						else
+						{
+							medicInTendOrRescuePipeline = false;
+							pipelineReason = $"CurJobDef=={curJobDef.defName} not targeting heldPatient";
+						}
 					}
 					else
 					{
-						medicInTendOrRescuePipeline = false;
-						pipelineReason = $"CurJobDef=={curJobDef.defName} not targeting heldPatient";
-					}
-				}
-				else
-				{
-					// Generic check: if cur job is a medical job that targets the held patient, treat it as pipeline.
-					if (heldPatientBeforeRelease != null && curJob != null && ArgillianThreatPatientTuning.JobIsMedicalForPatient(curJob, heldPatientBeforeRelease))
-					{
-						medicInTendOrRescuePipeline = true;
-						pipelineReason = $"JobIsMedicalForPatient({curJobDef?.defName})";
+						// Generic check: if cur job is a medical job that targets the held patient, treat it as pipeline.
+						if (heldPatientBeforeRelease != null && curJob != null && ArgillianThreatPatientTuning.JobIsMedicalForPatient(curJob, heldPatientBeforeRelease))
+						{
+							medicInTendOrRescuePipeline = true;
+							pipelineReason = $"JobIsMedicalForPatient({curJobDef?.defName})";
+						}
 					}
 				}
 
