@@ -5539,8 +5539,55 @@ namespace ArgrillianThreat
 
 		private static void TryStopPatientToAllowTend(Pawn patient)
 		{
+			TryStopPatientToAllowTend(null, patient);
+		}
+
+		private static void TryStopPatientToAllowTend(Pawn medic, Pawn patient)
+		{
 			if (patient == null || patient.Dead)
 				return;
+
+			// Required behavior: combat medic must not stop the injured pawn too early.
+			// Only stop/hold when the medic is almost in range to tend (use RimWorld reach logic).
+			bool canEvaluateMedicRange = medic != null && !medic.Dead && medic.Spawned && medic.Map != null && patient.Map != null;
+			if (canEvaluateMedicRange)
+			{
+				// This is the "almost in range" gate; do NOT implement retreat/80% redirection here.
+				// We just decide whether we are close enough to safely interrupt/hold for tend/rescue.
+				bool medicAlmostInTendRange = medic.CanReach(patient, PathEndMode.Touch, Danger.None);
+
+				if (!medicAlmostInTendRange)
+				{
+					JobGiver_ArgrillianThreatResponse.TraceMedKit(
+						"TryStopPatientToAllowTend_skipNotAlmostInRange",
+						medic,
+						patient,
+						tendEligibleNow: false,
+						retreatingHeldPatient: false
+					);
+
+					Log.Message(
+						$"[ArgrillianThreat][TryStopPatientToAllowTend] NOT stopping yet: medic={medic.thingIDNumber} patient={patient.thingIDNumber} (medicAlmostInTendRange=false)"
+					);
+
+					return;
+				}
+				else
+				{
+					Log.Message(
+						$"[ArgrillianThreat][TryStopPatientToAllowTend] STOP+HOLD allowed (almost-in-range): medic={medic.thingIDNumber} patient={patient.thingIDNumber}"
+					);
+				}
+			}
+			else
+			{
+				// If called without medic context, do not hard-stop too aggressively.
+				// This keeps you from reproducing the "medic=null STOP+HOLD" failure mode in your logs.
+				Log.Message(
+					$"[ArgrillianThreat][TryStopPatientToAllowTend] medic context missing -> skipping stop/hold: medic=null patient={patient.thingIDNumber}"
+				);
+				return;
+			}
 
 			// MUST ONLY stop + hold so the medic/combat medic can finish Tend/Rescue.
 			// No retreat-at-80% decisions here.
@@ -5551,17 +5598,14 @@ namespace ArgrillianThreat
 			Job cur = patient.CurJob;
 			if (cur != null && cur.def != null && cur.def == JobDefOf.Wait)
 			{
-				// End the existing Wait job so Tend/Rescue can start cleanly.
 				patient.jobs?.EndCurrentJob(JobCondition.InterruptForced);
 			}
 
-			// Stop competing behavior.
 			patient.jobs?.StopAll(true);
 			patient.jobs?.ClearQueuedJobs();
+
 			patient.pather?.StopDead();
 
-			// Hold in place until the medic pipeline finishes tending and releases afterwards.
-			// Medic/jobgiver is responsible for release/redirect back to battle or full retreat.
 			IntVec3 here = patient.Position;
 			Job hold = JobMaker.MakeJob(JobDefOf.Wait, here);
 			hold.count = 1;
