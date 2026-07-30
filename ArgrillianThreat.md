@@ -1068,6 +1068,26 @@ namespace ArgrillianThreat
 					return;
 				}
 
+				// NEW: prevent early release into "consume/eat" transient stages.
+				// Even if medic curJob isn't Tend/Rescue right now, a held-down patient transitioning into consume
+				// is a common failure mode for "Tend aborted => medic switches to meal/haul arbitration".
+				if (heldPatientBeforeRelease != null && heldPatientBeforeRelease.CurJob != null && heldPatientBeforeRelease.CurJob.def != null)
+				{
+					string pCurJobDefName = heldPatientBeforeRelease.CurJob.def.defName;
+					bool looksLikeConsumption =
+						!string.IsNullOrEmpty(pCurJobDefName) &&
+						(pCurJobDefName.IndexOf("consume", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+						 pCurJobDefName.IndexOf("eat", System.StringComparison.OrdinalIgnoreCase) >= 0);
+
+					if (looksLikeConsumption)
+					{
+						Log.Message(
+							$"[ArgrillianThreat][PatientMedicHold] HOLD RELEASE BLOCKED: patient is in consume/eat stage " +
+							$"(medic={medicId} patientId={patientId} heldPatient={heldPatientBeforeRelease.thingIDNumber} pCurJobDefName={pCurJobDefName}).");
+						return;
+					}
+				}
+
 				// Hard ownership rule: do NOT clear heldPatient while the medic is still actively part of the held
 				// patient's medical pipeline.
 				bool medicInTendOrRescuePipeline = false;
