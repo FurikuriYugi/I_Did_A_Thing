@@ -1036,6 +1036,16 @@ namespace ArgrillianThreat
 				Job curJob = medic.CurJob;
 				JobDef curJobDef = curJob != null ? curJob.def : null;
 
+				// NEW: extra “stationary for tend/rescue” ownership gate.
+				// Even if CurJobDef flickers, we must not release while the held patient is still down.
+				if (heldPatientBeforeRelease != null && !heldPatientBeforeRelease.Dead && heldPatientBeforeRelease.Downed)
+				{
+					Log.Message(
+						$"[ArgrillianThreat][PatientMedicHold] HOLD RELEASE BLOCKED: patient still down " +
+						$"(medic={medicId} patientId={patientId} heldPatient={heldPatientBeforeRelease.thingIDNumber}).");
+					return;
+				}
+
 				bool medicInTendOrRescuePipeline =
 					curJobDef == JobDefOf.TendPatient ||
 					curJobDef == JobDefOf.Rescue;
