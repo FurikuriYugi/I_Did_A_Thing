@@ -6105,7 +6105,9 @@ namespace ArgrillianThreat
 			// Medic gating: non-combat medics don't do threat response.
 			var medicThreatSettings = pawn?.GetComp<CompArgrillianMedicSettings>();
 			if (medicThreatSettings != null && medicThreatSettings.isMedic && !medicThreatSettings.combatMedic)
+			{
 				return null;
+			}
 
 			if (pawn == null || pawn.Dead || pawn.Map == null) return null;
 			if (pawn.Downed) return null;
@@ -6147,12 +6149,12 @@ namespace ArgrillianThreat
 
 			// ----------------------------
 			// 1.25) ESCORT objective gate + near-hostile permission gate (two-gates)
+			// ----------------------------
 			// HARD: while in retreating HeldPatient stage and NOT tend-eligible yet,
 			//       medic should stay escort/follow (no chase). Any combat job must be aborted
 			//       unless the hostile is "near enough" for short opportunistic action.
 			// SOFT: allow staying in/keeping a combat job only when a hostile is within
 			//       medicEscortCombatRadius of the patient and/or medic (and line-of-sight holds).
-			// ----------------------------
 			if (retreatingHeldPatient && !tendEligibleNow)
 			{
 				Job cur = pawn.CurJob;
@@ -6282,12 +6284,24 @@ namespace ArgrillianThreat
 			}
 
 			// Core: canTendNow should only decide "start Tend/Rescue now" vs "move into tend position".
+			//
+			// FIX FOR YOUR BOUNCING/MEAL+HAUL-QUEUED FAILURE:
+			// When tendEligibleNow is false, we must prevent RimWorld from switching the medic
+			// into meal/consume/haul/rest/combat-like jobs while the patient is held-for-tend.
+			// So we hard-stop and clear queued jobs before issuing our Goto.
 			if (!tendEligibleNow)
 			{
-				// Patient already forced above; just move into tend distance without churn.
+				// Ensure patient is held-positioned correctly (existing behavior).
 				if (!heldPatient.Downed)
 					TryStopPatientToAllowTend(heldPatient);
 
+				// NEW: stop arbitration churn (rest/meal/haul queued) while we are waiting to become tend-eligible.
+				// This ensures the medic does NOT bounce and the patient doesn't get “freed” into consume/haul pipeline behavior.
+				pawn.jobs?.StopAll(true);
+				pawn.jobs?.ClearQueuedJobs();
+				pawn.pather?.StopDead();
+
+				// Ensure we’re still targeting the held patient's tend position.
 				return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
 			}
 
