@@ -1046,22 +1046,72 @@ namespace ArgrillianThreat
 					return;
 				}
 
-				bool medicInTendOrRescuePipeline =
-					curJobDef == JobDefOf.TendPatient ||
-					curJobDef == JobDefOf.Rescue;
+				// Hard ownership rule: do NOT clear heldPatient while the medic is still actively part of the held
+				// patient's medical pipeline.
+				//
+				// Your observed bug suggests CurJobDef can temporarily be something other than TendPatient/Rescue
+				// while still belonging to the tend/rescue pipeline. So we treat additional pipeline-relevant jobs
+				// as "still in pipeline", gated to the held patient identity when possible.
+				bool medicInTendOrRescuePipeline = false;
+				string pipelineReason = "none";
+
+				if (curJobDef == JobDefOf.TendPatient)
+				{
+					medicInTendOrRescuePipeline = true;
+					pipelineReason = "CurJobDef==TendPatient";
+				}
+				else if (curJobDef == JobDefOf.Rescue)
+				{
+					medicInTendOrRescuePipeline = true;
+					pipelineReason = "CurJobDef==Rescue";
+				}
+				else if (curJobDef == JobDefOf.HaulToCell || curJobDef == JobDefOf.HaulToContainer)
+				{
+					// Some pipelines queue hauling as part of the rescue/tend flow.
+					// Only treat it as pipeline if it is actually targeting the held patient identity.
+					Pawn jobPatient = heldPatientBeforeRelease != null ? ArgillianThreatPatientTuning.GetPatientFromJob(curJob) : null;
+
+					if (heldPatientBeforeRelease == null)
+					{
+						// If we can't resolve the held pawn identity, be conservative and treat as pipeline only when the
+						// job is clearly missing/invalid. But since heldPatientBeforeRelease is usually resolvable, keep this strict.
+						medicInTendOrRescuePipeline = false;
+						pipelineReason = "Haul job but heldPatient null";
+					}
+					else if (jobPatient == heldPatientBeforeRelease)
+					{
+						medicInTendOrRescuePipeline = true;
+						pipelineReason = $"CurJobDef=={curJobDef.defName} targeting heldPatient";
+					}
+					else
+					{
+						medicInTendOrRescuePipeline = false;
+						pipelineReason = $"CurJobDef=={curJobDef.defName} not targeting heldPatient";
+					}
+				}
+				else
+				{
+					// Generic check: if cur job is a medical job that targets the held patient, treat it as pipeline.
+					if (heldPatientBeforeRelease != null && curJob != null && ArgillianThreatPatientTuning.JobIsMedicalForPatient(curJob, heldPatientBeforeRelease))
+					{
+						medicInTendOrRescuePipeline = true;
+						pipelineReason = $"JobIsMedicalForPatient({curJobDef?.defName})";
+					}
+				}
 
 				// Required trace: when release is requested and which gate blocks it.
 				Log.Message(
 					$"[ArgrillianThreat][PatientMedicHold] RELEASE REQUESTED: medic={medicId} patientId={patientId} " +
 					$"curJobDef={(curJobDef != null ? curJobDef.defName : "null")} " +
-					$"gate(medicInTendOrRescuePipeline)={medicInTendOrRescuePipeline}");
+					$"heldPatient={(heldPatientBeforeRelease != null ? heldPatientBeforeRelease.thingIDNumber.ToString() : "null")} " +
+					$"pipeline(medicInTendOrRescuePipeline)={medicInTendOrRescuePipeline} pipelineReason={pipelineReason}");
 
 				// Hard ownership rule: do NOT clear heldPatient while tend/rescue pipeline is still active.
 				if (medicInTendOrRescuePipeline)
 				{
 					Log.Message(
 						$"[ArgrillianThreat][PatientMedicHold] HOLD RELEASE BLOCKED: medic still in tend/rescue pipeline " +
-						$"(medic={medicId} patientId={patientId}).");
+						$"(medic={medicId} patientId={patientId}) reason={pipelineReason}");
 					return;
 				}
 
@@ -1075,7 +1125,7 @@ namespace ArgrillianThreat
 				// Required trace: heldPatient identity flip/clear reason.
 				Log.Message(
 					$"[ArgrillianThreat][PatientMedicHold] HOLD RELEASED: medic={medicId} patientId={patientId} " +
-					$"reason=medicLeftTendOrRescuePipeline heldPatientBeforeReleaseThingId={(heldPatientBeforeRelease != null ? heldPatientBeforeRelease.thingIDNumber : -1)}");
+					$"reason=medicNoLongerInTendOrRescuePipeline heldPatientBeforeReleaseThingId={(heldPatientBeforeRelease != null ? heldPatientBeforeRelease.thingIDNumber : -1)}");
 
 				// Release the alert-system medic hold too (now that tend/rescue completed).
 				ArgrillianAlertSystem.ReleaseMedicHold(medic);
@@ -1088,7 +1138,8 @@ namespace ArgrillianThreat
 		}
 	}
 
-	// NEW: Event Driven Alert System
+	// NEW: Event Driven Alert System.
+	// 	- The brain and dispatch center.
 	public static class ArgrillianAlertSystem
 	{
 		private sealed class MapCache
