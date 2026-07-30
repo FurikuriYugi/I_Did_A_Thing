@@ -1106,6 +1106,7 @@ namespace ArgrillianThreat
 				else if (curJobDef == JobDefOf.HaulToCell || curJobDef == JobDefOf.HaulToContainer)
 				{
 					// Some pipelines queue hauling as part of the rescue/tend flow.
+
 					// Only treat it as pipeline if it is actually targeting the held patient identity.
 					Pawn jobPatient = heldPatientBeforeRelease != null ? ArgillianThreatPatientTuning.GetPatientFromJob(curJob) : null;
 
@@ -1165,8 +1166,7 @@ namespace ArgrillianThreat
 					$"[ArgrillianThreat][PatientMedicHold] HOLD RELEASED: medic={medicId} patientId={patientId} " +
 					$"reason=tend/rescue pipeline complete heldPatientBeforeReleaseThingId={(heldPatientBeforeRelease != null ? heldPatientBeforeRelease.thingIDNumber : -1)}");
 
-				// NEW: after tend/rescue completion, clear the temporary patient Wait so they can resume combat logic.
-				// Also bias their cached mode back to combat so the next tick does "combat if possible, otherwise retreat".
+				// After tend/rescue completion, clear the temporary patient Wait so they can resume combat logic.
 				if (heldPatientBeforeRelease != null && !heldPatientBeforeRelease.Dead && heldPatientBeforeRelease.Spawned && heldPatientBeforeRelease.Map != null)
 				{
 					Job hpCur = heldPatientBeforeRelease.CurJob;
@@ -1178,8 +1178,10 @@ namespace ArgrillianThreat
 						heldPatientBeforeRelease.jobs?.EndCurrentJob(JobCondition.InterruptForced);
 					}
 
-					// Force next decision toward combat mode first.
-					ArgrillianThreatState.ModeTickCache.MarkMode(heldPatientBeforeRelease, 0);
+					// IMPORTANT: do not force the patient's post-medical mode here.
+					// Let the normal fight-vs-retreat arbitration decide, so patients either:
+					// - resume fighting if conditions allow, or
+					// - perform full retreat to base otherwise.
 				}
 
 				// Release the alert-system medic hold too (now that tend/rescue completed).
