@@ -965,6 +965,11 @@ namespace ArgrillianThreat
 			// patientId -> medicId (int only) so we can block other job arbitration in O(1)
 			private static readonly Dictionary<int, int> medicIdByPatientId = new Dictionary<int, int>();
 
+			// NEW: fallback pawn cache so held invariants don't depend on the alert-system call staying present.
+			// This fixes the symptom where hold lock is acquired, but canTendNow doesn't treat the patient as held
+			// (because GetHeldPatient returned null when ArgrillianAlertSystem cache entry was missing/cleared).
+			private static readonly Dictionary<int, Pawn> pawnByPatientId = new Dictionary<int, Pawn>();
+
 			public static Pawn GetHeldPatient(Pawn medic)
 			{
 				if (medic == null) return null;
@@ -977,8 +982,20 @@ namespace ArgrillianThreat
 				if (!patientIdByMedic.TryGetValue(medicId, out int patientId))
 					return null;
 
-				// Resolve from alert cache (no map scans).
-				return ArgrillianAlertSystem.TryGetPatientFromCachedCall(medic.Map, patientId);
+				// Primary resolve: alert-system cache as authority (no map scans).
+				Pawn resolved = ArgrillianAlertSystem.TryGetPatientFromCachedCall(medic.Map, patientId);
+				if (resolved != null)
+					return resolved;
+
+				// Fallback: if we still have a live cached pawn reference, use it.
+				// This preserves the held invariant even if the alert call entry was coalesced/removed.
+				if (pawnByPatientId.TryGetValue(patientId, out Pawn cached) && cached != null)
+				{
+					if (!cached.Dead && cached.Spawned && cached.Map == medic.Map && cached.thingIDNumber == patientId)
+						return cached;
+				}
+
+				return null;
 			}
 
 			// Used by other job arbitration to avoid "patient wiggle" while medic tend/rescue is pending.
@@ -1011,6 +1028,9 @@ namespace ArgrillianThreat
 
 				patientIdByMedic[medicId] = patientId;
 				medicIdByPatientId[patientId] = medicId;
+
+				// NEW: store fallback pawn reference for held invariants.
+				pawnByPatientId[patientId] = patient;
 
 				// Required trace: hold acquired + confirmation of identity lock.
 				Log.Message(
@@ -1106,7 +1126,6 @@ namespace ArgrillianThreat
 				else if (curJobDef == JobDefOf.HaulToCell || curJobDef == JobDefOf.HaulToContainer)
 				{
 					// Some pipelines queue hauling as part of the rescue/tend flow.
-
 					// Only treat it as pipeline if it is actually targeting the held patient identity.
 					Pawn jobPatient = heldPatientBeforeRelease != null ? ArgillianThreatPatientTuning.GetPatientFromJob(curJob) : null;
 
@@ -1160,6 +1179,9 @@ namespace ArgrillianThreat
 				// Clear reverse index only if it still points to this medic.
 				if (medicIdByPatientId.TryGetValue(patientId, out int heldMedicId) && heldMedicId == medicId)
 					medicIdByPatientId.Remove(patientId);
+
+				// Cleanup fallback pawn cache.
+				pawnByPatientId.Remove(patientId);
 
 				// Required trace: heldPatient identity flip/clear reason.
 				Log.Message(
