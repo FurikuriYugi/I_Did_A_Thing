@@ -6346,7 +6346,7 @@ namespace ArgrillianThreat
 
 			// KEEP-ACTIVE-JOB GUARD:
 			// If the medic is already running the correct Tend/Rescue job for the held/assigned patient,
-			// do not let transient movement/stability/distance flips cause the job giver to abandon it.
+			// do not let transient movement/stability/distance flips cause the job g iver to abandon it.
 			Job cur = pawn.CurJob;
 			if (cur != null && cur.def != null)
 			{
@@ -6384,6 +6384,13 @@ namespace ArgrillianThreat
 
 			// Held patient invariant: if this patient is locked into this medic's medical pipeline,
 			// tend/rescue eligibility should NOT be blocked by the patient's current combat job.
+			//
+			// FIX for your symptom:
+			// - Previously, heldActive returned only IsValidTendTarget(...), which can still flip false
+			//   when the patient's job state changed (consume/haul queued), causing the medic to
+			//   quit Tend and transition to other jobs.
+			// - Now we run the full gate evaluation (distance/stability/reserve/etc), but still bypass
+			//   the "patient combat-like job" block.
 			if (combatMedic)
 			{
 				Pawn heldPatient = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
@@ -6395,21 +6402,57 @@ namespace ArgrillianThreat
 
 				if (holdActive)
 				{
-					bool ok = IsValidTendTarget(patient, pawn);
+					// Use the same stability math as the normal path, but bypass the patient combat-like-job exclusion.
+					int stableTicksOuter = GetPatientStableTicksForTend(patient);
+					int requiredStableTicksOuter = patient.Downed ? 0 : patientStableTicksRequired;
+
+					// NEW: combat medics should tend injured targets immediately enough
+					// (skip stability wait) to prevent “stand briefly -> switch to other jobs”.
+					if (!patient.Downed)
+					{
+						float hpPct = patient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
+						if (hpPct <= combatMedicInjuredHPPercentThreshold)
+							requiredStableTicksOuter = 0;
+					}
+
+					bool distanceOk = patient.Downed ? true : pawn.Position.DistanceTo(patient.Position) <= combatTendMaxDistance;
+
+					if (patient.Downed)
+					{
+						bool ok = distanceOk &&
+							IsValidTendTarget(patient, pawn) &&
+							stableTicksOuter >= requiredStableTicksOuter;
+
+						JobGiver_ArgrillianThreatResponse.TraceMedKit(
+							"canTendNow_heldInvariant_downedFinalGates",
+							pawn,
+							patient,
+							tendEligibleNow: ok,
+							retreatingHeldPatient: false
+						);
+						return ok;
+					}
+
+					bool isValid = IsValidTendTarget(patient, pawn);
+					bool canReserve = CanReserveTendTarget(pawn, patient);
+					bool stableOk = stableTicksOuter >= requiredStableTicksOuter;
+
+					bool ok3 = distanceOk && isValid && stableOk && canReserve;
+
 					JobGiver_ArgrillianThreatResponse.TraceMedKit(
-						"canTendNow_heldInvariant",
+						"canTendNow_heldInvariant_injuredFinalGates",
 						pawn,
 						patient,
-						tendEligibleNow: ok,
+						tendEligibleNow: ok3,
 						retreatingHeldPatient: false
 					);
-					return ok;
+					return ok3;
 				}
 			}
 
 			// Normal (not-held) case keeps the stricter checks you already had.
-			int stableTicksOuter = GetPatientStableTicksForTend(patient);
-			int requiredStableTicksOuter = patient.Downed ? 0 : patientStableTicksRequired;
+			int stableTicksOuter2 = GetPatientStableTicksForTend(patient);
+			int requiredStableTicksOuter2 = patient.Downed ? 0 : patientStableTicksRequired;
 
 			// NEW: combat medics should tend injured targets immediately enough (skip stability wait)
 			// to prevent “stand briefly while hostile awareness transitions” and to ensure retreat/tend flow starts.
@@ -6417,7 +6460,7 @@ namespace ArgrillianThreat
 			{
 				float hpPct = patient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
 				if (hpPct <= combatMedicInjuredHPPercentThreshold)
-					requiredStableTicksOuter = 0;
+					requiredStableTicksOuter2 = 0;
 			}
 
 			// If the medic is treating this as an urgent injured target, don't block Tend start just because
@@ -6453,13 +6496,13 @@ namespace ArgrillianThreat
 				}
 			}
 
-			bool distanceOk = patient.Downed ? true : pawn.Position.DistanceTo(patient.Position) <= combatTendMaxDistance;
+			bool distanceOk2 = patient.Downed ? true : pawn.Position.DistanceTo(patient.Position) <= combatTendMaxDistance;
 
 			if (patient.Downed)
 			{
-				bool ok = distanceOk &&
+				bool ok = distanceOk2 &&
 					IsValidTendTarget(patient, pawn) &&
-					stableTicksOuter >= requiredStableTicksOuter;
+					stableTicksOuter2 >= requiredStableTicksOuter2;
 
 				JobGiver_ArgrillianThreatResponse.TraceMedKit(
 					"canTendNow_downed_finalGates",
@@ -6471,14 +6514,14 @@ namespace ArgrillianThreat
 				return ok;
 			}
 
-			bool isValid = IsValidTendTarget(patient, pawn);
-			bool canReserve = CanReserveTendTarget(pawn, patient);
-			bool stableOk = stableTicksOuter >= requiredStableTicksOuter;
+			bool isValid2 = IsValidTendTarget(patient, pawn);
+			bool canReserve2 = CanReserveTendTarget(pawn, patient);
+			bool stableOk2 = stableTicksOuter2 >= requiredStableTicksOuter2;
 
-			bool ok2 = distanceOk &&
-				isValid &&
-				stableOk &&
-				canReserve;
+			bool ok2 = distanceOk2 &&
+				isValid2 &&
+				stableOk2 &&
+				canReserve2;
 
 			// NEW: explicit breakdown when Tend is NOT eligible (this is what we need next).
 			if (!ok2)
@@ -6492,13 +6535,12 @@ namespace ArgrillianThreat
 				);
 
 				// Use existing TraceMedKit channel only; embed details in the same trace line format.
-				// (If your TraceMedKit signature supports only the fixed args, these will get emitted by log text below.)
 				Verse.Log.Message(
 					$"[ArgrillianThreat][TRACE] canTendNow_gateDetails medic={pawn.thingIDNumber} patient={patient.thingIDNumber} " +
 					$"hp={patient.health?.summaryHealth?.SummaryHealthPercent ?? -1f:F2} " +
-					$"distanceOk={distanceOk} dist2={pawn.Position.DistanceTo(patient.Position):F2} maxDist={combatTendMaxDistance:F2} " +
-					$"isValidTarget={isValid} stableTicksOuter={stableTicksOuter} requiredStableTicksOuter={requiredStableTicksOuter} stableOk={stableOk} " +
-					$"canReserveTendTarget={canReserve}"
+					$"distanceOk={distanceOk2} dist2={pawn.Position.DistanceTo(patient.Position):F2} maxDist={combatTendMaxDistance:F2} " +
+					$"isValidTarget={isValid2} stableTicksOuter={stableTicksOuter2} requiredStableTicksOuter={requiredStableTicksOuter2} stableOk={stableOk2} " +
+					$"canReserveTendTarget={canReserve2}"
 				);
 			}
 
