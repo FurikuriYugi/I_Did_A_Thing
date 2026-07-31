@@ -1078,6 +1078,15 @@ namespace ArgrillianThreat
 					$"curJobDef={(curJobDef != null ? curJobDef.defName : "null")} heldPatient={(heldPatientBeforeRelease != null ? heldPatientBeforeRelease.thingIDNumber.ToString() : "null")} " +
 					$"holdAcquiredTick={heldAcquiredTick} now={now}");
 
+				// HARD AUTHORITY GATE (core requirement):
+				// PatientMedicHold must NOT release based on local eligibility/job flapping.
+				// Only the medic/combat medic authority (terminal completion contract) can make the medic available.
+				if (!ArgrillianAlertSystem.IsMedicAvailableForHoldRelease(medic))
+				{
+					Log.Message($"[ArgrillianThreat][PatientMedicHold] HOLD RELEASE BLOCKED: medic authority not available " + $(heldPatientBeforeRelease != null ? $"(medic={medicId} patientId={patientId} heldPatient={heldPatientBeforeRelease.thingIDNumber})" : $"(medic={medicId} patientId={patientId} heldPatient=null)"));
+					return;
+				}
+
 				// NEW: hard grace window to prevent “hold acquired, tendEligibleNow still false, then release”.
 				// This is specifically for the case where tend eligibility becomes true only once the medic is almost-in-range.
 				if (heldAcquiredTick >= 0)
@@ -2436,6 +2445,19 @@ namespace ArgrillianThreat
 			// Default: if we never saw a report, treat as available.
 			if (!availabilityByMedicId.TryGetValue(mid, out bool avail))
 				return true;
+
+			return avail;
+		}
+
+		public static bool IsMedicAvailableForHoldRelease(Pawn medic)
+		{
+			if (medic == null) return false;
+			if (medic.Dead) return false;
+
+			int mid = medic.thingIDNumber;
+
+			if (!availabilityByMedicId.TryGetValue(mid, out bool avail))
+				return true; // matches existing internal default semantics
 
 			return avail;
 		}
