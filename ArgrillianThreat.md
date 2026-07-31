@@ -2224,7 +2224,7 @@ namespace ArgrillianThreat
 		// ----------------------------
 		// Medic assignment + completion reporting (NEW)
 		// ----------------------------
-		private enum MedicJobStage : byte
+		public enum MedicJobStage : byte
 		{
 			Idle = 0,
 			Assigned = 1,   // has a patientcall assigned (reservation intent already handled elsewhere)
