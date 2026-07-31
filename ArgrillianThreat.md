@@ -5534,7 +5534,19 @@ namespace ArgrillianThreat
 			if (!medic.Spawned || medic.Map == null) return false;
 			if (patient.Map == null || patient.Map != medic.Map) return false;
 
-			return medic.CanReserve(patient, 1, -1, null, false);
+			// Primary reservation check.
+			if (medic.CanReserve(patient, 1, -1, null, false))
+				return true;
+
+			// Held/locked arbitration sometimes leaves the patient reserved by the same medic.
+			// If we are already the reserver, allow Tend/Rescue to start (prevents hold->release->rest bounce).
+			//
+			// Uses existing helper logic in this file that can resolve who reserved the thing.
+			Pawn reservedBy = GetWhoReserved(patient);
+			if (reservedBy != null && reservedBy == medic)
+				return true;
+
+			return false;
 		}
 
 		private static bool IsMedicineThing(Thing thing)
