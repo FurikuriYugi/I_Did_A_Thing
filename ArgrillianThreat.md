@@ -2418,6 +2418,51 @@ namespace ArgrillianThreat
 			return IsMedicAvailableInternal(medic);
 		}
 
+		// ==== EDIT 1: ArgrillianAlertSystem — add cached severity accessor ====
+		// File: ArgrillianThreat.md (inside ArgrillianAlertSystem)
+
+		public enum PatientCallSeverityPublic : byte
+		{
+			Injured = 0,
+			Downed = 1,
+			Bleed = 2
+		}
+
+		public static bool TryGetCachedPatientCallSeverity(Map map, Pawn patient, out PatientCallSeverityPublic severity)
+		{
+			severity = PatientCallSeverityPublic.Injured;
+
+			if (map == null || patient == null)
+				return false;
+			if (patient.Dead || !patient.Spawned)
+				return false;
+			if (patient.Map == null || patient.Map != map)
+				return false;
+
+			// Use the authoritative cached-call lookup (no map scanning).
+			PatientCallEntry e = TryGetPatientCallEntry(map, patient.thingIDNumber);
+			if (e == null)
+				return false;
+
+			switch (e.severity)
+			{
+				case PatientCallSeverity.Injured:
+					severity = PatientCallSeverityPublic.Injured;
+					break;
+				case PatientCallSeverity.Downed:
+					severity = PatientCallSeverityPublic.Downed;
+					break;
+				case PatientCallSeverity.Bleed:
+					severity = PatientCallSeverityPublic.Bleed;
+					break;
+				default:
+					severity = PatientCallSeverityPublic.Injured;
+					break;
+			}
+
+			return true;
+		}
+
 	}
 
 	public readonly struct ArgrillianThreatHostileAcquireContext
