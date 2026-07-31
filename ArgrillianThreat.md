@@ -1053,7 +1053,7 @@ namespace ArgrillianThreat
 			// Single-owner release point:
 			// This method MUST NOT release early based on eligibility flapping.
 			// It only releases once the medic is no longer in the tend/rescue pipeline.
-			public static void ReleaseForMedic(Pawn medic)
+			private static void ReleaseForMedic(Pawn medic)
 			{
 				if (medic == null) return;
 
@@ -1072,14 +1072,11 @@ namespace ArgrillianThreat
 				if (holdAcquiredTickByMedic.TryGetValue(medicId, out int t))
 					heldAcquiredTick = t;
 
-				// Required trace: show release entry + current curJobDef every time we consider releasing.
 				Log.Message(
 					$"[ArgrillianThreat][PatientMedicHold] RELEASE REQUESTED ENTRY: medic={medicId} patientId={patientId} " +
 					$"curJobDef={(curJobDef != null ? curJobDef.defName : "null")} heldPatient={(heldPatientBeforeRelease != null ? heldPatientBeforeRelease.thingIDNumber.ToString() : "null")} " +
 					$"holdAcquiredTick={heldAcquiredTick} now={now}");
 
-				// NEW: hard grace window to prevent “hold acquired, tendEligibleNow still false, then release”.
-				// This is specifically for the case where tend eligibility becomes true only once the medic is almost-in-range.
 				if (heldAcquiredTick >= 0)
 				{
 					int age = now - heldAcquiredTick;
@@ -1092,8 +1089,6 @@ namespace ArgrillianThreat
 					}
 				}
 
-				// Harder stickiness override to prevent “release while tend pipeline still effectively active”
-				// (which then allows medic to switch back into fighting).
 				const int recentTendStickinessTicks = 600;
 				bool recentlyTookTendTask =
 					MedicTendTaskStickiness.RecentlyTookTendTask(medic, recentTendStickinessTicks);
@@ -1106,7 +1101,6 @@ namespace ArgrillianThreat
 					return;
 				}
 
-				// Extra stationary safety: if the held patient is still down, do not release.
 				if (heldPatientBeforeRelease != null && !heldPatientBeforeRelease.Dead && heldPatientBeforeRelease.Downed)
 				{
 					Log.Message(
@@ -1115,11 +1109,8 @@ namespace ArgrillianThreat
 					return;
 				}
 
-				// If we can still identify the held patient, block release if medic is currently doing
-				// any tend/rescue-like work that still targets that patient.
 				if (heldPatientBeforeRelease != null && curJobDef != null)
 				{
-					// Immediate hard block for active tend/rescue job defs.
 					if (curJobDef == JobDefOf.TendPatient || curJobDef == JobDefOf.Rescue)
 					{
 						Log.Message(
@@ -1128,7 +1119,6 @@ namespace ArgrillianThreat
 						return;
 					}
 
-					// If the job is medical-for-the-held-patient, keep holding.
 					if (ArgillianThreatPatientTuning.JobIsMedicalForPatient(curJob, heldPatientBeforeRelease))
 					{
 						Log.Message(
@@ -1138,10 +1128,6 @@ namespace ArgrillianThreat
 					}
 				}
 
-				// SAFETY GUARD (fix for observed “hold breaks during tend/hold window”):
-				// If the medic is not currently a valid tend target for this held patient, we can allow release.
-				// But if this helper exists in the same type scope, it will compile and enforce the intended “almost-in-range” authority.
-				// If the helper is not in scope, remove this block (compiler will tell you).
 				if (heldPatientBeforeRelease != null && !heldPatientBeforeRelease.Dead)
 				{
 					if (!JobGiver_TendRetreatingAllies.IsValidTendTarget(heldPatientBeforeRelease, medic))
@@ -1153,8 +1139,6 @@ namespace ArgrillianThreat
 					}
 				}
 
-				// If we reach here, allow release only when medic is NOT doing ANY tend/rescue pipeline work.
-				// Also require that the heldPatient identity is still the same (prevents identity flip releasing wrong target).
 				Pawn heldNow = GetHeldPatient(medic);
 				if (heldNow == null)
 				{
@@ -1180,20 +1164,16 @@ namespace ArgrillianThreat
 					}
 				}
 
-				// Single-owner release now that tend/rescue is over.
 				Log.Message(
 					$"[ArgrillianThreat][PatientMedicHold] HOLD RELEASE FINAL: medic={medicId} patientId={patientId} releasingHeldPatient={(heldPatientBeforeRelease != null ? heldPatientBeforeRelease.thingIDNumber.ToString() : "null")}");
 
 				patientIdByMedic.Remove(medicId);
 
-				// Clear reverse index only if it still points to this medic.
 				if (medicIdByPatientId.TryGetValue(patientId, out int heldMedicId) && heldMedicId == medicId)
 					medicIdByPatientId.Remove(patientId);
 
-				// Cleanup fallback pawn cache.
 				pawnByPatientId.Remove(patientId);
 
-				// Cleanup hold acquisition tick.
 				holdAcquiredTickByMedic.Remove(medicId);
 			}
 		}
