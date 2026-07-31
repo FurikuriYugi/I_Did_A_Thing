@@ -6014,6 +6014,19 @@ namespace ArgrillianThreat
 			// But if the patient is doing anything interfering, we must stop them anyway to protect the tend pipeline.
 			bool patientInterferingNow = IsInterferingJobForTend(patient);
 
+			// CRITICAL FIX FOR YOUR LOGS:
+			// Your logs show: canTendNow_enter ... tendEligibleNow=False
+			// BUT TryStopPatientToAllowTend still logs "STOP+HOLD allowed".
+			// Enforce: if tendEligibleNow == false, we only stop/hold when the patient is actually interfering now.
+			bool tendEligibleNow = canTendNow(medic, patient);
+			if (!tendEligibleNow && !patientInterferingNow)
+			{
+				Log.Message(
+					$"[ArgrillianThreat][TryStopPatientToAllowTend] ABORT because tendEligibleNow=false and patientInterferingNow=false medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber}"
+				);
+				return;
+			}
+
 			if (canEvaluateMedicRange)
 			{
 				if (!medicAlmostInTendRange)
@@ -6022,12 +6035,12 @@ namespace ArgrillianThreat
 						"TryStopPatientToAllowTend_skipNotAlmostInRange",
 						medic,
 						patient,
-						tendEligibleNow: false,
+						tendEligibleNow: tendEligibleNow,
 						retreatingHeldPatient: false
 					);
 
 					Log.Message(
-						$"[ArgrillianThreat][TryStopPatientToAllowTend] medicAlmostInTendRange=false, patientInterferingNow={patientInterferingNow} medic={medic.thingIDNumber} patient={patient.thingIDNumber}"
+						$"[ArgrillianThreat][TryStopPatientToAllowTend] medicAlmostInTendRange=false, tendEligibleNow={tendEligibleNow} patientInterferingNow={patientInterferingNow} medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber}"
 					);
 
 					// NEW: if the patient is trying to run an interfering job, enforce hold anyway.
@@ -6037,7 +6050,7 @@ namespace ArgrillianThreat
 				else
 				{
 					Log.Message(
-						$"[ArgrillianThreat][TryStopPatientToAllowTend] STOP+HOLD allowed (almost-in-range): medic={medic.thingIDNumber} patient={patient.thingIDNumber}"
+						$"[ArgrillianThreat][TryStopPatientToAllowTend] STOP+HOLD allowed (almost-in-range): medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} tendEligibleNow={tendEligibleNow}"
 					);
 				}
 			}
