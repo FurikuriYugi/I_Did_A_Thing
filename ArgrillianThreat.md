@@ -5914,6 +5914,9 @@ namespace ArgrillianThreat
 
 			// Required behavior: combat medic must not stop the injured pawn too early.
 			// Only stop/hold when the medic is almost in range to tend (use RimWorld reach logic).
+			// To prevent "too early" holds (which can look like early release/churn),
+			// we align the almost-in-range gate with the same tend-target reach logic
+			// used elsewhere (downed ClosestTouch + combat-medic danger behavior).
 			bool canEvaluateMedicRange =
 				medic != null &&
 				!medic.Dead &&
@@ -5923,9 +5926,10 @@ namespace ArgrillianThreat
 
 			if (canEvaluateMedicRange)
 			{
-				// This is the "almost in range" gate; do NOT implement retreat/80% redirection here.
-				// We just decide whether we are close enough to safely interrupt/hold for tend/rescue.
-				bool medicAlmostInTendRange = medic.CanReach(patient, PathEndMode.Touch, Danger.None);
+				// "Almost in range" should mean "valid tend target by reach rules",
+				// not just CanReach(...Touch...) with Danger.None.
+				// This keeps STOP+HOLD from firing in cases where Tend is not actually eligible.
+				bool medicAlmostInTendRange = IsValidTendTarget(patient, medic);
 
 				if (!medicAlmostInTendRange)
 				{
