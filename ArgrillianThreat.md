@@ -6468,6 +6468,37 @@ namespace ArgrillianThreat
 				return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 
 			// ----------------------------
+			// 0) TERMINAL COMPLETION CHECK (wires 0E+ completion contract)
+			// ----------------------------
+			// "Terminal" here is defined as: patient is in bed + sufficiently stabilized to re-enter combat.
+			float patientHP = heldPatient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
+
+			bool patientInBedAndFullyTended =
+				heldPatient.InBed() &&
+				!heldPatient.Downed &&
+				!(heldPatient.health?.hediffSet != null && heldPatient.health.hediffSet.HasHediff(HediffDefOf.BloodLoss));
+
+			bool patientClearedForCombat = patientHP >= 0.8f && patientInBedAndFullyTended && !heldPatient.Downed;
+			bool escortToMedicalRequired = !patientClearedForCombat;
+
+			if (patientInBedAndFullyTended)
+			{
+				// Tell the alert system this medic/patient pair reached terminal completion.
+				ArgrillianAlertSystem.NotifyMedicPatientCallTerminalCompletion(
+					pawn,
+					heldPatient,
+					patientHP,
+					patientInBedAndFullyTended,
+					patientClearedForCombat,
+					escortToMedicalRequired
+				);
+
+				// After terminal completion, fall back to normal threat job logic.
+				// (Alert system will keep medic unavailable until terminal completion is satisfied.)
+				return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
+			}
+
+			// ----------------------------
 			// 0) Gate state detection (used by both gates)
 			// ----------------------------
 			// IMPORTANT: keep this driven by call severity semantics (Bleed/Downed outranks),
@@ -6500,6 +6531,7 @@ namespace ArgrillianThreat
 			if (retreatingHeldPatient && !tendEligibleNow)
 			{
 				Job cur = pawn.CurJob;
+
 				if (cur != null && cur.def != null)
 				{
 					JobGiver_ArgrillianThreatResponse.TraceMedKit("TryGiveJob_enterEscortRetreatGate", pawn, heldPatient, tendEligibleNow, retreatingHeldPatient);
@@ -6554,6 +6586,7 @@ namespace ArgrillianThreat
 			// ----------------------------
 			// 1.5) RESYNC ESCALATION
 			// OLD behavior used raw HP% <= 0.75f.
+			// ----------------------------
 			// NEW behavior: treat escalation as an alert-severity semantic (Downed or Bleed)
 			// so the medic/combat medic response follows the alert-system worsening intent.
 			// ----------------------------
@@ -6613,6 +6646,7 @@ namespace ArgrillianThreat
 					// switch to Rescue immediately (don't let it fall through to combat).
 					if (def == JobDefOf.TendPatient && heldPatient.Downed)
 					{
+						// Prevent TakeToBed NRE: ensure we have a valid, reservable bed at job creation time.
 						if (!TryGetRescueBedForPatient(pawn, heldPatient, out Building_Bed bed) || bed == null)
 						{
 							// Stay committed to the downed heldPatient instead of falling back to combat.
@@ -7038,6 +7072,26 @@ namespace ArgrillianThreat
 				|| n.Contains("stalk")
 				|| n.Contains("tactic")
 				|| n.Contains("seek");
+		}
+
+		private static bool IsPawnBurningNow(Pawn p)
+		{
+			if (p == null || p.Dead) return false;
+			if (p.health?.hediffSet == null) return false;
+
+			// RimWorld 1.6: Burning hediff def is typically "Burn"
+			return p.health.hediffSet.HasHediff(HediffDefOf.Burn)
+				|| p.health.hediffSet.HasHediff(HediffDefOf.Burning);
+		}
+
+		private static bool IsFarEnoughFromFire(Pawn patient, IntVec3 bedCell, Map map, float minBlocksFromFire)
+		{
+			if (patient == null || map == null) return false;
+
+			// Approximation: use patient.Position as "fire source reference" as requested.
+			// (If later you want “true fire cell” from burning flame/region, we can replace this.)
+			float d = bedCell.DistanceTo(patient.Position);
+			return d >= minBlocksFromFire;
 		}
 	}
 }
