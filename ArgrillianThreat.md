@@ -5995,11 +5995,13 @@ namespace ArgrillianThreat
 				return;
 			}
 
+			// If we can't evaluate reach, we still enforce the held-job discipline:
+			// while held-for-tend, prevent patient from resuming other jobs that would interrupt tend.
+			bool isHeldForTend = ArgrillianMedicalState.PatientMedicHold.IsPatientHeldForTend(patient);
+
 			// Required behavior: combat medic must not stop the injured pawn too early.
-			// Only stop/hold when the medic is almost in range to tend (use RimWorld reach logic).
-			// To prevent "too early" holds (which can look like early release/churn),
-			// we align the almost-in-range gate with the same tend-target reach logic
-			// used elsewhere (downed ClosestTouch + combat-medic danger behavior).
+			// However, "too early" must not allow the patient to restart other jobs; that breaks tend.
+			// Fix: only enforce StopAll/hold when the patient is currently doing an interfering job.
 			bool canEvaluateMedicRange =
 				medic != null &&
 				!medic.Dead &&
@@ -6007,11 +6009,28 @@ namespace ArgrillianThreat
 				medic.Map != null &&
 				patient.Map != null;
 
+			bool medicAlmostInTendRange = false;
 			if (canEvaluateMedicRange)
 			{
-				// "Almost in range" should mean "valid tend target by reach rules".
-				bool medicAlmostInTendRange = IsValidTendTarget(patient, medic);
+				medicAlmostInTendRange = IsValidTendTarget(patient, medic);
+			}
+			else
+			{
+				// Can't compute reach: treat as not-almost-in-range, but still allow held discipline enforcement
+				// when interfering job churn exists.
+				medicAlmostInTendRange = false;
+			}
 
+			// If not held, do nothing (this method is authority-only).
+			if (!isHeldForTend)
+				return;
+
+			// If medic is not almost-in-range, we do NOT want to spam-stop/hold when the patient is already quiet.
+			// But if the patient is doing anything interfering, we must stop them anyway to protect the tend pipeline.
+			bool patientInterferingNow = IsInterferingJobForTend(patient);
+
+			if (canEvaluateMedicRange)
+			{
 				if (!medicAlmostInTendRange)
 				{
 					JobGiver_ArgrillianThreatResponse.TraceMedKit(
@@ -6023,10 +6042,12 @@ namespace ArgrillianThreat
 					);
 
 					Log.Message(
-						$"[ArgrillianThreat][TryStopPatientToAllowTend] NOT stopping yet: medic={medic.thingIDNumber} patient={patient.thingIDNumber} (medicAlmostInTendRange=false)"
+						$"[ArgrillianThreat][TryStopPatientToAllowTend] medicAlmostInTendRange=false, patientInterferingNow={patientInterferingNow} medic={medic.thingIDNumber} patient={patient.thingIDNumber}"
 					);
 
-					return;
+					// NEW: if the patient is trying to run an interfering job, enforce hold anyway.
+					if (!patientInterferingNow)
+						return;
 				}
 				else
 				{
@@ -6037,15 +6058,18 @@ namespace ArgrillianThreat
 			}
 			else
 			{
-				Log.Message(
-					$"[ArgrillianThreat][TryStopPatientToAllowTend] medic context missing -> no stop/hold (medic=null patient={patient?.thingIDNumber ?? -1})"
-				);
-				return;
+				// No reach evaluation; enforce hold only if interfering.
+				if (!patientInterferingNow)
+				{
+					Log.Message(
+						$"[ArgrillianThreat][TryStopPatientToAllowTend] cannotEvaluateMedicRange, skipping because patientInterferingNow=false medic={(medic != null ? medic.thingIDNumber.ToString() : "null")} patient={patient.thingIDNumber}"
+					);
+					return;
+				}
 			}
 
 			// MUST ONLY stop + hold so the medic/combat medic can finish Tend/Rescue.
 			// No retreat-at-80% decisions here.
-
 			// If already waiting, we still must interrupt/clear the Wait job when it's the
 			// same pawn that will start Tend/Rescue (otherwise you get "already having job Wait"
 			// when StartJob(TendPatient) happens).
