@@ -1403,7 +1403,7 @@ namespace ArgrillianThreat
 		{
 			if (patient == null) return PatientCallSeverity.Injured;
 
-			if (IsPawnBurningNow(patient))
+			if (JobGiver_TendRetreatingAllies.IsPawnBurningNow(patient))
 				return PatientCallSeverity.Fire;
 
 			if (patient.Downed) return PatientCallSeverity.Downed;
@@ -1580,8 +1580,37 @@ namespace ArgrillianThreat
 			entry.lastUpdateTick = now;
 
 			// Upgrade severity if needed (Fire > Bleed > downed > injured)
+			PatientCallSeverity prevSev = entry.severity;
 			if (newSev > entry.severity)
 				entry.severity = newSev;
+
+			bool fireEscalatedNow = (prevSev != PatientCallSeverity.Fire) && (entry.severity == PatientCallSeverity.Fire);
+			bool upgradedThisCall = (newSev > prevSev) && fireEscalatedNow;
+
+			// NEW FIRE ESCALATION ROUTING (no map scans, no heldPatient/job churn):
+			// If this patient is already reserved/held by a medic, keep that same medic on-duty
+			// and force them into the non-available dedicated lane for this escalation.
+			if (upgradedThisCall)
+			{
+				if (medicIdByPatientId.TryGetValue(patientId, out int heldMedicId))
+				{
+					// Keep medic dedicated until terminal completion contract clears it.
+					availabilityByMedicId[heldMedicId] = false;
+
+					// If they were already assigned/tending, keep them tending; otherwise just mark assigned.
+					if (stageByMedicId.TryGetValue(heldMedicId, out MedicJobStage prevStage))
+					{
+						if (prevStage == MedicJobStage.Tending || prevStage == MedicJobStage.Rescuing)
+							stageByMedicId[heldMedicId] = MedicJobStage.Tending;
+						else
+							stageByMedicId[heldMedicId] = MedicJobStage.Assigned;
+					}
+					else
+					{
+						stageByMedicId[heldMedicId] = MedicJobStage.Assigned;
+					}
+				}
+			}
 
 			// NEW: always update ACK when we accept a call (including worsening).
 			// This is the “alert system replies to the pawns that call” in a cache sense:
@@ -1879,7 +1908,7 @@ namespace ArgrillianThreat
 			if (isInjuredLowHP) cur |= 4;
 
 			// NEW: extend state with “fire” bit (burning)
-			bool isBurningNow = IsPawnBurningNow(pawn);
+			bool isBurningNow = JobGiver_TendRetreatingAllies.IsPawnBurningNow(pawn);
 			if (isBurningNow) cur |= 8;
 
 			if (cur == prev) return;
@@ -1926,7 +1955,7 @@ namespace ArgrillianThreat
 				&& hpPct <= PatientInjuredHPPercentThreshold;
 
 			// NEW: burning/on fire
-			bool isBurning = IsPawnBurningNow(target);
+			bool isBurning = JobGiver_TendRetreatingAllies.IsPawnBurningNow(target);
 
 			if (!isDowned && !isBleeding && !isInjuredLowHP && !isBurning)
 				return;
@@ -7174,7 +7203,7 @@ namespace ArgrillianThreat
 				|| n.Contains("seek");
 		}
 
-		private static bool IsPawnBurningNow(Pawn p)
+		public static bool IsPawnBurningNow(Pawn p)
 		{
 			if (p == null || p.Dead) return false;
 			if (p.health?.hediffSet == null) return false;
