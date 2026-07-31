@@ -5402,31 +5402,38 @@ namespace ArgrillianThreat
 				int now = Find.TickManager != null ? Find.TickManager.TicksGame : 0;
 				if (now - lastTick <= medicCacheTtlTicks)
 				{
-					// Avoid map-wide scans. Confirm medic id via cached combat medics only.
-					if (medicId >= 0)
-					{
-						var combatMedics = CompArgrillianMedicSettings.GetCombatMedics(map);
-						if (combatMedics != null)
-						{
-							for (int i = 0; i < combatMedics.Count; i++)
-							{
-								Pawn medic = combatMedics[i];
-								if (medic == null || medic.Dead) continue;
-								if (!medic.Spawned || medic.Map != map) continue;
+					if (medicId < 0)
+						return null;
 
-								if (medic.thingIDNumber == medicId)
-									return medic;
-							}
+					// Avoid map-wide scans; confirm medic id via cached combat medics only.
+					var combatMedics = CompArgrillianMedicSettings.GetCombatMedics(map);
+					if (combatMedics != null)
+					{
+						for (int i = 0; i < combatMedics.Count; i++)
+						{
+							Pawn medic = combatMedics[i];
+							if (medic == null || medic.Dead) continue;
+							if (!medic.Spawned || medic.Map != map) continue;
+
+							if (medic.thingIDNumber == medicId)
+								return medic;
 						}
 					}
 
-					// Cached id stale/gone => fall through to refresh.
+					// Cached medicId points at a stale/gone pawn; treat as unassigned until next refresh event.
+					return null;
 				}
+
+				// Cache expired: do NOT refresh by scanning medics.
+				// Alert-system direction: resolve strictly from its cached assignment mapping.
+				// (We still return cached mapping if medic is currently findable via the role list below.)
 			}
 
-			// Refresh: iterate only cached combat medics on this map (no AllPawnsSpawned / no spawnedThings).
-			Pawn found = null;
+			// Use the cached assignment mapping (event/dispatcher cache as authority).
+			if (!medicThingIdByPatientId.TryGetValue(patientId, out int cachedMedicId) || cachedMedicId < 0)
+				return null;
 
+			// Confirm current pawn instance from the combat-medic role list (no map-wide patient scans).
 			var combatMedics2 = CompArgrillianMedicSettings.GetCombatMedics(map);
 			if (combatMedics2 != null && combatMedics2.Count > 0)
 			{
@@ -5435,7 +5442,7 @@ namespace ArgrillianThreat
 					Pawn medic = combatMedics2[i];
 					if (medic == null || medic.Dead) continue;
 					if (!medic.Spawned || medic.Map != map) continue;
-					if (patient.Faction != null && medic.Faction != patient.Faction) continue;
+					if (medic.Faction != null && patient.Faction != null && medic.Faction != patient.Faction) continue;
 
 					var medicComp = medic.GetComp<CompArgrillianMedicSettings>();
 					if (medicComp == null || !medicComp.isMedic || !medicComp.combatMedic) continue;
@@ -5443,17 +5450,18 @@ namespace ArgrillianThreat
 					// assignment is already stored on the medic
 					if (medicComp.assignedPawnThingID == patientId)
 					{
-						found = medic;
-						break;
+						// keep the mapping cache warm
+						medicThingIdByPatientId[patientId] = medic.thingIDNumber;
+						medicCacheLastTickByPatientId[patientId] = Find.TickManager != null ? Find.TickManager.TicksGame : 0;
+						return medic;
 					}
 				}
 			}
 
-			// Update cache (cache null as -1 to avoid repeated refresh within TTL).
-			medicThingIdByPatientId[patientId] = found != null ? found.thingIDNumber : -1;
+			// If we couldn't confirm the cached medic id, invalidate without scanning.
+			medicThingIdByPatientId[patientId] = -1;
 			medicCacheLastTickByPatientId[patientId] = Find.TickManager != null ? Find.TickManager.TicksGame : 0;
-
-			return found;
+			return null;
 		}
 
 		private static bool IsValidTendTarget(Pawn patient, Pawn medic)
