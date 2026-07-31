@@ -5969,8 +5969,8 @@ namespace ArgrillianThreat
 
 			// Hard authority rule:
 			// Only the medic/combat medic that currently OWNS the held patient may stop/hold the patient for Tend/Rescue.
-			// Otherwise, other AI (including patient-side jobgers like resting/laying down) can legitimately take over,
-			// which shows up exactly as "patient stops standing and switches to resting".
+			// Otherwise, other AI (including patient-side jobgers like resting/laying down) can take over,
+			// which matches your symptom ("breaking loose").
 			Pawn heldPatientByMedic = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(medic);
 			if (heldPatientByMedic == null || heldPatientByMedic != patient)
 			{
@@ -5980,99 +5980,26 @@ namespace ArgrillianThreat
 				return;
 			}
 
-			// If we can't evaluate reach, we still enforce the held-job discipline:
-			// while held-for-tend, prevent patient from resuming other jobs that would interrupt tend.
+			// If patient isn't held for tend, don't interfere with normal job arbitration.
 			bool isHeldForTend = ArgrillianMedicalState.PatientMedicHold.IsPatientHeldForTend(patient);
-
-			// Required behavior: combat medic must not stop the injured pawn too early.
-			// However, "too early" must not allow the patient to restart other jobs; that breaks tend.
-			// Fix: only enforce StopAll/hold when the patient is currently doing an interfering job.
-			bool canEvaluateMedicRange =
-				medic != null &&
-				!medic.Dead &&
-				medic.Spawned &&
-				medic.Map != null &&
-				patient.Map != null;
-
-			bool medicAlmostInTendRange = false;
-			if (canEvaluateMedicRange)
-			{
-				medicAlmostInTendRange = IsValidTendTarget(patient, medic);
-			}
-			else
-			{
-				// Can't compute reach: treat as not-almost-in-range, but still allow held discipline enforcement
-				// when interfering job churn exists.
-				medicAlmostInTendRange = false;
-			}
-
-			// If not held, do nothing (this method is authority-only).
 			if (!isHeldForTend)
 				return;
 
-			// If medic is not almost-in-range, we do NOT want to spam-stop/hold when the patient is already quiet.
-			// But if the patient is doing anything interfering, we must stop them anyway to protect the tend pipeline.
+			// Enforce: only stop/hold if the patient is currently running an interfering job.
+			// This prevents early/incorrect STOP+HOLD spam that can desync the tend pipeline (and lets patient-side logic "win").
 			bool patientInterferingNow = IsInterferingJobForTend(patient);
-
-			// CRITICAL FIX FOR YOUR LOGS:
-			// Your logs show: canTendNow_enter ... tendEligibleNow=False
-			// BUT TryStopPatientToAllowTend still logs "STOP+HOLD allowed".
-			// Enforce: if tendEligibleNow == false, we only stop/hold when the patient is actually interfering now.
-			bool tendEligibleNow = canTendNow(medic, patient);
-			if (!tendEligibleNow && !patientInterferingNow)
+			if (!patientInterferingNow)
 			{
 				Log.Message(
-					$"[ArgrillianThreat][TryStopPatientToAllowTend] ABORT because tendEligibleNow=false and patientInterferingNow=false medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber}"
+					$"[ArgrillianThreat][TryStopPatientToAllowTend] SKIP no-interference: medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber}"
 				);
 				return;
 			}
 
-			if (canEvaluateMedicRange)
-			{
-				if (!medicAlmostInTendRange)
-				{
-					JobGiver_ArgrillianThreatResponse.TraceMedKit(
-						"TryStopPatientToAllowTend_skipNotAlmostInRange",
-						medic,
-						patient,
-						tendEligibleNow: tendEligibleNow,
-						retreatingHeldPatient: false
-					);
-
-					Log.Message(
-						$"[ArgrillianThreat][TryStopPatientToAllowTend] medicAlmostInTendRange=false, tendEligibleNow={tendEligibleNow} patientInterferingNow={patientInterferingNow} medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber}"
-					);
-
-					// NEW: if the patient is trying to run an interfering job, enforce hold anyway.
-					if (!patientInterferingNow)
-						return;
-				}
-				else
-				{
-					Log.Message(
-						$"[ArgrillianThreat][TryStopPatientToAllowTend] STOP+HOLD allowed (almost-in-range): medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} tendEligibleNow={tendEligibleNow}"
-					);
-				}
-			}
-			else
-			{
-				// No reach evaluation; enforce hold only if interfering.
-				if (!patientInterferingNow)
-				{
-					Log.Message(
-						$"[ArgrillianThreat][TryStopPatientToAllowTend] cannotEvaluateMedicRange, skipping because patientInterferingNow=false medic={(medic != null ? medic.thingIDNumber.ToString() : "null")} patient={patient.thingIDNumber}"
-					);
-					return;
-				}
-			}
-
-			// MUST ONLY stop + hold so the medic/combat medic can finish Tend/Rescue.
-			// No retreat-at-80% decisions here.
-			// If already waiting, we still must interrupt/clear the Wait job when it's the
-			// same pawn that will start Tend/Rescue (otherwise you get "already having job Wait"
-			// when StartJob(TendPatient) happens).
+			// HARD “no new jobs until medic releases” enforcement:
+			// Interrupt current job and clear queued jobs, then force patient into Wait.
 			Job cur = patient.CurJob;
-			if (cur != null && cur.def != null && cur.def == JobDefOf.Wait)
+			if (cur != null && cur.def == JobDefOf.Wait)
 			{
 				patient.jobs?.EndCurrentJob(JobCondition.InterruptForced);
 			}
