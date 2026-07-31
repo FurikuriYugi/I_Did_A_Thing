@@ -6605,11 +6605,11 @@ namespace ArgrillianThreat
 			// ----------------------------
 			if (!heldPatient.Downed)
 			{
-				bool heldIsBleedingNow =
+				bool heldIsBleedingNow2 =
 					heldPatient.health?.hediffSet != null &&
 					heldPatient.health.hediffSet.HasHediff(HediffDefOf.BloodLoss);
 
-				if (heldIsBleedingNow)
+				if (heldIsBleedingNow2)
 				{
 					Job cur = pawn.CurJob;
 					if (cur != null && cur.def != null && !(
@@ -6629,7 +6629,6 @@ namespace ArgrillianThreat
 
 						if (isCombatLike)
 						{
-							// Break away from fight and re-route to heldPatient for tending.
 							pawn.jobs?.StopAll(true);
 							pawn.jobs?.ClearQueuedJobs();
 							pawn.pather?.StopDead();
@@ -6637,7 +6636,6 @@ namespace ArgrillianThreat
 							ArgrillianThreatState.CombatLock.Clear(pawn);
 							ArgrillianThreatState.CombatCommit.Clear(pawn);
 
-							// Move back into tend range / re-sync.
 							return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
 						}
 					}
