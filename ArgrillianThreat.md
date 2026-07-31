@@ -1341,7 +1341,19 @@ namespace ArgrillianThreat
 
 			// TTL is enforced via expiryTick derived from lastUpdateTick each cleanup.
 			public int expiryTick;
+
+			// NEW: ACK + suppression state so callers stop spamming for the same pawn
+			// unless their status has worsened.
+			//
+			// “callerOrObserver” is a pawn; we key ack suppression by caller thingIDNumber.
+			public int lastAckCallerPawnId = -1;
+			public int lastAckTick = -1;
+			public PatientCallSeverity lastAckSeverity = PatientCallSeverity.Injured;
 		}
+
+		// NEW: how long we suppress duplicate calls from the same caller for the same patient
+		// when nothing has worsened.
+		private const int PatientCallAckSuppressTicks = 140;
 
 		// Map-level patient call cache (keyed by patient thingIDNumber)
 		private sealed class PatientMapCache
@@ -1501,8 +1513,50 @@ namespace ArgrillianThreat
 				int ttl = (newSev == PatientCallSeverity.Bleed) ? PatientCallTTL_BleedTicks : PatientCallTTL_DownedTicks;
 				entry.expiryTick = now + ttl;
 
+				// NEW: initial ACK for the caller/observer that triggered this first call
+				// (caller can be null in some trigger paths; guard it).
+				if (callerOrObserver != null && !callerOrObserver.Dead && callerOrObserver.Spawned)
+				{
+					entry.lastAckCallerPawnId = callerOrObserver.thingIDNumber;
+					entry.lastAckTick = now;
+					entry.lastAckSeverity = newSev;
+				}
+
 				cache.byPatientId[patientId] = entry;
 				return;
+			}
+
+			// -----------------------
+			// NEW: ACK + suppression
+			// -----------------------
+			// If the same caller repeats the same-or-weaker severity without worsening,
+			// suppress by early-exit (but still keep TTL fresh on the patient entry).
+			//
+			// If severity worsens, we must not suppress (we want to route the escalation).
+			int callerId = -1;
+			if (callerOrObserver != null && !callerOrObserver.Dead && callerOrObserver.Spawned)
+				callerId = callerOrObserver.thingIDNumber;
+
+			bool sameCaller = (callerId >= 0 && entry.lastAckCallerPawnId == callerId);
+			bool severityIsWorsening = newSev > entry.severity;
+			bool severityMatchesOrIsBetterThanAck = (newSev <= entry.severity);
+
+			if (sameCaller && !severityIsWorsening && severityMatchesOrIsBetterThanAck)
+			{
+				// suppress duplicates only for a short window; if the spam continues much longer,
+				// let the next one “re-ACK” (it won't worsen, but keeps behavior consistent).
+				if (entry.lastAckTick >= 0 && (now - entry.lastAckTick) <= PatientCallAckSuppressTicks)
+				{
+					// Refresh TTL + patient reference so the call remains valid.
+					entry.patient = patient;
+					entry.lastUpdateTick = now;
+
+					int effectiveTtl2 = (entry.severity == PatientCallSeverity.Bleed) ? PatientCallTTL_BleedTicks : PatientCallTTL_DownedTicks;
+					entry.expiryTick = now + effectiveTtl2;
+
+					// Keep ACK fields as-is (we're suppressing, so we don't spam a “new ack”).
+					return;
+				}
 			}
 
 			// Refresh TTL + patient reference
@@ -1512,6 +1566,16 @@ namespace ArgrillianThreat
 			// Upgrade severity if needed (Bleed > downed)
 			if (newSev > entry.severity)
 				entry.severity = newSev;
+
+			// NEW: always update ACK when we accept a call (including worsening).
+			// This is the “alert system replies to the pawns that call” in a cache sense:
+			// the caller can consult the entry (via existing cached-call helpers) to stop re-calling.
+			if (callerOrObserver != null && !callerOrObserver.Dead && callerOrObserver.Spawned && callerId >= 0)
+			{
+				entry.lastAckCallerPawnId = callerId;
+				entry.lastAckTick = now;
+				entry.lastAckSeverity = entry.severity;
+			}
 
 			int effectiveTtl = (entry.severity == PatientCallSeverity.Bleed) ? PatientCallTTL_BleedTicks : PatientCallTTL_DownedTicks;
 			entry.expiryTick = now + effectiveTtl;
