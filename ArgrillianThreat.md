@@ -6963,10 +6963,8 @@ namespace ArgrillianThreat
 			// tend/rescue eligibility should NOT be blocked by the patient's current combat job.
 			//
 			// FIX for your symptom:
-			// When the patient briefly transitions into consume/meal/haul queued while Tend should be pending,
-			// stability/eligibility flapping can temporarily drive tendEligibleNow=false and cause job-abandon.
-			// While held-for-tend, we treat stability as satisfied (stationary enforcement is owned by PatientMedicHold),
-			// and we do not require the tend-stability tick counter.
+			// While held-for-tend, ignore reservation flapping during interim transitions (rest/consume/haul queued).
+			// Reservation can transiently fail even though we must preserve heldPatient stability until Tend/Rescue starts.
 			if (combatMedic)
 			{
 				Pawn heldPatient = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
@@ -6997,9 +6995,10 @@ namespace ArgrillianThreat
 					bool distanceOk = true;
 
 					bool isValid = IsValidTendTarget(patient, pawn);
-					bool canReserve = CanReserveTendTarget(pawn, patient);
 
-					// HARD OVERRIDE: if held-for-tend, ignore stability counter for Tend/Rescue eligibility.
+					// HARD OVERRIDE: if held-for-tend, ignore BOTH stability counter gating AND reservation flapping
+					// for the purpose of Tend/Rescue eligibility (heldPatient owns arbitration).
+					// NOTE: canReserve intentionally ignored here to prevent the bouncing job flip you observed.
 					bool stableOk = true;
 
 					if (patient.Downed)
@@ -7020,7 +7019,10 @@ namespace ArgrillianThreat
 						return okHeld;
 					}
 
-					bool ok3 = distanceOk && isValid && stableOk && canReserve;
+					// INJURED held invariant:
+					// previous code required canReserve, which can oscillate during mid-transition.
+					// Removing it preserves heldPatient stability until Tend/Rescue starts.
+					bool ok3 = distanceOk && isValid && stableOk;
 
 					JobGiver_ArgrillianThreatResponse.TraceMedKit(
 						"canTendNow_heldInvariant_injuredFinalGates",
