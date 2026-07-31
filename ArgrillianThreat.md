@@ -5944,21 +5944,6 @@ namespace ArgrillianThreat
 			//
 			// NOTE: This is patient-held gating; medic authority remains in TryStopPatientToAllowTend(...)
 			// and Release/Unlock controls release timing.
-			if (job.curJobGiver != null)
-			{
-				// no-op: keep original behavior for null-safety; we rely on patient-held check below
-			}
-
-			Pawn heldCheckPatient = null;
-			if (job != null)
-				heldCheckPatient = job.playerForced ? null : null;
-
-			// We can’t reliably get the owning pawn from Job in all RimWorld job types,
-			// so we gate by def-name only when a patient is held via the interfering-job check path.
-			// This method is used as a permissive filter for downed pawns; the hard stop/hold is enforced elsewhere.
-			// Therefore, keep this method strictly about allowed job names while held logic lives in IsInterferingJobForTend(...)
-			// and TryStopPatientToAllowTend(...).
-			// (Do not add conflicting held logic here based on incomplete pawn extraction.)
 
 			if (job.def == JobDefOf.Wait) return true;
 			if (job.def == JobDefOf.LayDown) return true;
