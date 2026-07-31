@@ -1053,7 +1053,7 @@ namespace ArgrillianThreat
 			// Single-owner release point:
 			// This method MUST NOT release early based on eligibility flapping.
 			// It only releases once the medic is no longer in the tend/rescue pipeline.
-			public static class PatientMedicHold
+			public static class ReleaseHold
 			{
 				// Medic thingID -> cached patientId (int only; Pawn resolved via ArgrillianAlertSystem lookup)
 				private static readonly Dictionary<int, int> patientIdByMedic = new Dictionary<int, int>();
