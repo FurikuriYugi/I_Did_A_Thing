@@ -5912,6 +5912,19 @@ namespace ArgrillianThreat
 			if (patient == null || patient.Dead)
 				return;
 
+			// Hard authority rule:
+			// Only the medic/combat medic that currently OWNS the held patient may stop/hold the patient for Tend/Rescue.
+			// Otherwise, other AI (including patient-side jobgers like resting/laying down) can legitimately take over,
+			// which shows up exactly as "patient stops standing and switches to resting".
+			Pawn heldPatientByMedic = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(medic);
+			if (heldPatientByMedic == null || heldPatientByMedic != patient)
+			{
+				Log.Message(
+					$"[ArgrillianThreat][TryStopPatientToAllowTend] ABORT (not held by medic): medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} heldByMedic={(heldPatientByMedic != null ? heldPatientByMedic.thingIDNumber.ToString() : "null")}"
+				);
+				return;
+			}
+
 			// Required behavior: combat medic must not stop the injured pawn too early.
 			// Only stop/hold when the medic is almost in range to tend (use RimWorld reach logic).
 			// To prevent "too early" holds (which can look like early release/churn),
@@ -5926,9 +5939,7 @@ namespace ArgrillianThreat
 
 			if (canEvaluateMedicRange)
 			{
-				// "Almost in range" should mean "valid tend target by reach rules",
-				// not just CanReach(...Touch...) with Danger.None.
-				// This keeps STOP+HOLD from firing in cases where Tend is not actually eligible.
+				// "Almost in range" should mean "valid tend target by reach rules".
 				bool medicAlmostInTendRange = IsValidTendTarget(patient, medic);
 
 				if (!medicAlmostInTendRange)
@@ -5956,8 +5967,6 @@ namespace ArgrillianThreat
 			}
 			else
 			{
-				// If we somehow got here without medic context, do nothing.
-				// We intentionally removed the patient-only overload so this call site must always pass medic.
 				Log.Message(
 					$"[ArgrillianThreat][TryStopPatientToAllowTend] medic context missing -> no stop/hold (medic=null patient={patient?.thingIDNumber ?? -1})"
 				);
