@@ -5445,10 +5445,6 @@ namespace ArgrillianThreat
 			return false;
 		}
 
-		private static readonly Dictionary<int, int> medicThingIdByPatientId = new Dictionary<int, int>();
-		private static readonly Dictionary<int, int> medicCacheLastTickByPatientId = new Dictionary<int, int>();
-		private static int medicCacheTtlTicks = 250; // ~4 sec at 60 ticks/sec
-
 		private static Pawn FindAssignedCombatMedicForPatient(Pawn patient)
 		{
 			if (patient == null || patient.Dead || patient.Map == null)
