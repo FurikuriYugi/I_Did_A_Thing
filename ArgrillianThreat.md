@@ -2216,6 +2216,208 @@ namespace ArgrillianThreat
 				ArgrillianThreatState.AwarenessCache.MarkShared(p, lastKnownCell, hostileId);
 			}
 		}
+
+		// ======================
+		// ArgrillianAlertSystem: medic completion contract (NEW)
+		// ======================
+
+		// ----------------------------
+		// Medic assignment + completion reporting (NEW)
+		// ----------------------------
+		private enum MedicJobStage : byte
+		{
+			Idle = 0,
+			Assigned = 1,   // has a patientcall assigned (reservation intent already handled elsewhere)
+			Tending = 2,
+			Rescuing = 3,
+			Finished = 4,   // medic reports terminal completion
+			EscortToMedical = 5,
+			Resting = 6
+		}
+
+		// medicId -> current assigned patientId (patientcall identity mapping)
+		private static readonly Dictionary<int, int> assignedPatientIdByMedicId = new Dictionary<int, int>();
+
+		// medicId -> current stage (for debug + contract completeness)
+		private static readonly Dictionary<int, MedicJobStage> stageByMedicId = new Dictionary<int, MedicJobStage>();
+
+		// medicId -> availability gate (combat medics dedicated until terminal completion)
+		private static readonly Dictionary<int, bool> availabilityByMedicId = new Dictionary<int, bool>();
+
+		// patientId -> patientcall resolved state (so alert system can avoid re-dispatching chaos)
+		private enum PatientCallResolution : byte
+		{
+			Active = 0,
+			Resolved = 1,
+			EscortedToMedical = 2,
+			ReadyForBed = 3,
+		}
+		private static readonly Dictionary<int, PatientCallResolution> resolutionByPatientId = new Dictionary<int, PatientCallResolution>();
+
+		// Re-check “active duty” threshold based on medic report.
+		// Locked from your task: >= 80% => back to combat; < 80% => escort to hospital/home base.
+		private const float ActiveDutyHPPercentThreshold = 0.80f;
+
+		// If medic reports that they finished but the patient needs bed/doctor, they stay unavailable
+		// until patient is tucked/in-bed + fully tended (medic reports ready again).
+		//
+		// NOTE: “doctor handover” is not created yet; we treat “bed + fully tended” as terminal medic completion.
+		private const float BedTerminalHPPercentThreshold = 0.65f;
+
+		private static bool IsMedicAvailableInternal(Pawn medic)
+		{
+			if (medic == null) return false;
+			int mid = medic.thingIDNumber;
+
+			// Default: if we never saw a report, treat as available.
+			if (!availabilityByMedicId.TryGetValue(mid, out bool avail))
+				return true;
+
+			return avail;
+		}
+
+		// Optionally useful for medic job logic: reserve the assigned mapping in the alert cache.
+		// Call this from the point where you already “decide” a medic is assigned to a cached patientcall.
+		public static void MarkMedicAssignedToPatientCall(Pawn medic, Pawn patient)
+		{
+			if (medic == null || patient == null) return;
+			if (medic.Dead || patient.Dead) return;
+			if (medic.Map == null || patient.Map == null) return;
+			if (medic.Map != patient.Map) return;
+
+			// Patient must exist in cached calls.
+			Pawn cached = TryGetPatientFromCachedCall(medic.Map, patient.thingIDNumber);
+			if (cached == null) return;
+
+			int mid = medic.thingIDNumber;
+			int pid = patient.thingIDNumber;
+
+			assignedPatientIdByMedicId[mid] = pid;
+			stageByMedicId[mid] = MedicJobStage.Assigned;
+			availabilityByMedicId[mid] = false; // dedicate medic once assigned until terminal completion
+		}
+
+		// This is the core end-to-end completion update contract.
+		//
+		// Medic calls this when they have progressed enough that the patient is either:
+		// - fit for active duty (>=80%) -> medic becomes available; patient returns to fighting/combat logic
+		// - not fit (<80%) -> medic escorts to medical base/home base; when patient is in bed + fully tended,
+		//   medic becomes available again and returns/rests/unavailable as per your next-stage logic.
+		//
+		// Alert system responsibilities here:
+		// - acknowledge/keep medic dedicated until terminal completion
+		// - update cached PatientCallEntry severity/resolution (no job churn)
+		// - release medic hold + free medic for next assignment only when terminal condition is met
+		public static void NotifyMedicPatientCallTerminalCompletion(
+			Pawn medic,
+			Pawn patient,
+			float patientHPPercent,
+			bool patientInBedAndFullyTended,
+			bool patientClearedForCombat,   // computed by medic after tending/rescue evaluation
+			bool escortToMedicalRequired)  // computed by medic when patient < 80% at the decision point
+		{
+			if (medic == null) return;
+			if (patient == null) return;
+
+			if (medic.Dead) return;
+			if (patient.Dead) return;
+
+			if (medic.Map == null || patient.Map == null) return;
+			if (medic.Map != patient.Map) return;
+
+			int mid = medic.thingIDNumber;
+			int pid = patient.thingIDNumber;
+
+			// Only accept completion updates for the assigned patient (dedicated medic gate).
+			if (assignedPatientIdByMedicId.TryGetValue(mid, out int assignedPid))
+			{
+				if (assignedPid != pid)
+				{
+					// Ignore out-of-contract completion updates to prevent churn.
+					return;
+				}
+			}
+
+			// Stage bookkeeping (for robustness + logs elsewhere).
+			stageByMedicId[mid] = MedicJobStage.Finished;
+
+			// Terminal completion condition:
+			// - must be in bed AND fully tended to allow medic to become available again
+			// - otherwise, keep them unavailable (medic continues escort/rest job)
+			if (!patientInBedAndFullyTended)
+			{
+				// Keep medic dedicated.
+				availabilityByMedicId[mid] = false;
+
+				// Still allow escalation of patient severity if needed (publish side already handles worsening events).
+				// We do not clear heldPatient / reservations here.
+				return;
+			}
+
+			// Update patient call resolution cache to stop re-dispatch churn.
+			// Decision logic locked by your direction:
+			// - >=80% => active duty
+			// - <80% => escort to hospital/home base (and then bed/fully tended is terminal medic completion)
+			if (escortToMedicalRequired)
+				resolutionByPatientId[pid] = PatientCallResolution.EscortedToMedical;
+			else
+				resolutionByPatientId[pid] = PatientCallResolution.Resolved;
+
+			// If the medic says patient is cleared for combat and patientHPPercent >= 0.80,
+			// then the patient can resume combat; otherwise patient should remain for medical/doctor pipeline.
+			bool eligibleForCombat = patientHPPercent >= ActiveDutyHPPercentThreshold;
+
+			// Guard against inconsistent medic reporting:
+			// - if patientClearedForCombat is true but HP < 0.80, treat as not cleared.
+			if (patientClearedForCombat && !eligibleForCombat)
+				patientClearedForCombat = false;
+
+			// Clear medic holds + dedicated assignment (this is the “medic ready for another patient” moment).
+			//
+			// This is the only time we should free the medic and let other medics claim.
+			ReleaseMedicHold(medic);
+
+			assignedPatientIdByMedicId.Remove(mid);
+			stageByMedicId[mid] = MedicJobStage.Idle;
+			availabilityByMedicId[mid] = true;
+
+			// Also clear stageByMedicId mapping if you want hard reset.
+			// stageByMedicId[mid] = MedicJobStage.Idle;
+		}
+
+		// Convenience: medic can report “still busy” stage progress without triggering availability.
+		public static void NotifyMedicPatientCallProgress(
+			Pawn medic,
+			Pawn patient,
+			MedicJobStage stage)
+		{
+			if (medic == null) return;
+			if (patient == null) return;
+			if (medic.Dead || patient.Dead) return;
+			if (medic.Map == null || patient.Map == null) return;
+			if (medic.Map != patient.Map) return;
+
+			int mid = medic.thingIDNumber;
+			int pid = patient.thingIDNumber;
+
+			// Dedicated medic gate: ignore progress updates for non-assigned patient.
+			if (assignedPatientIdByMedicId.TryGetValue(mid, out int assignedPid))
+			{
+				if (assignedPid != pid)
+					return;
+			}
+
+			stageByMedicId[mid] = stage;
+			availabilityByMedicId[mid] = false; // keep dedicated until terminal completion
+		}
+
+		// Query helpers for medic job arbitration (optional but useful).
+		public static bool IsMedicAvailableForNewPatient(Pawn medic)
+		{
+			if (medic == null) return false;
+			return IsMedicAvailableInternal(medic);
+		}
+
 	}
 
 	public readonly struct ArgrillianThreatHostileAcquireContext
