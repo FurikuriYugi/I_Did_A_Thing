@@ -1084,30 +1084,6 @@ namespace ArgrillianThreat
 					return;
 				}
 
-				// If the medic is currently moving (Goto/Walk/Path/etc.) to the held patient,
-				// we MUST keep the hold until Tend/Rescue becomes eligible; otherwise the patient
-				// can exit “held/locked” behavior and switch to resting/other jobs, breaking Tend.
-				if (heldPatientBeforeRelease != null && curJob != null && curJobDef != null)
-				{
-					bool isMoveLike = IsMoveLikeJob(curJob);
-					if (isMoveLike)
-					{
-						bool jobTargetsHeldPatient =
-							(curJob.targetA.IsValid && curJob.targetA.Thing == heldPatientBeforeRelease) ||
-							(curJob.targetB.IsValid && curJob.targetB.Thing == heldPatientBeforeRelease) ||
-							(curJob.targetC.IsValid && curJob.targetC.Thing == heldPatientBeforeRelease);
-
-						// Only block release when that move job is specifically headed for the held patient.
-						if (jobTargetsHeldPatient)
-						{
-							Log.Message(
-								$"[ArgrillianThreat][PatientMedicHold] HOLD RELEASE BLOCKED: medic is move-like toward held patient " +
-								$"(medic={medicId} patientId={patientId} curJobDef={curJobDef.defName}).");
-							return;
-						}
-					}
-				}
-
 				// If we can still identify the held patient, block release if medic is currently doing
 				// any tend/rescue-like work that still targets that patient.
 				if (heldPatientBeforeRelease != null && curJobDef != null)
