@@ -6453,6 +6453,7 @@ namespace ArgrillianThreat
 			if (!medicComp.combatMedic) return null;
 
 			Pawn heldPatient = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
+
 			if (heldPatient == null)
 			{
 				Pawn bestCandidate = ArgrillianAlertSystem.GetBestPatientFromCalls(pawn, searchRadius);
@@ -6469,8 +6470,13 @@ namespace ArgrillianThreat
 			// ----------------------------
 			// 0) Gate state detection (used by both gates)
 			// ----------------------------
-			float heldHpPct = heldPatient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
-			bool retreatingHeldPatient = !heldPatient.Downed && heldHpPct < 0.80f;
+			// IMPORTANT: keep this driven by call severity semantics (Bleed/Downed outranks),
+			// not by old raw HP heuristics alone.
+			bool heldIsBleedingNow =
+				heldPatient.health?.hediffSet != null &&
+				heldPatient.health.hediffSet.HasHediff(HediffDefOf.BloodLoss);
+
+			bool retreatingHeldPatient = !heldPatient.Downed && !heldIsBleedingNow;
 
 			// Evaluate eligibility early so we can apply escort locks before RimWorld arbitration
 			// gets it "stuck" on attack/fight jobs.
@@ -6490,7 +6496,7 @@ namespace ArgrillianThreat
 			//       medic should stay escort/follow (no chase). Any combat job must be aborted
 			//       unless the hostile is "near enough" for short opportunistic action.
 			// SOFT: allow staying in/keeping a combat job only when a hostile is within
-			//       medicEscortCombatRadius of the patient and/or medic (and line-of-sight holds).
+			// medicEscortCombatRadius of the patient and/or medic (and line-of-sight holds).
 			if (retreatingHeldPatient && !tendEligibleNow)
 			{
 				Job cur = pawn.CurJob;
@@ -6519,11 +6525,15 @@ namespace ArgrillianThreat
 						}
 						else
 						{
-							JobGiver_ArgrillianThreatResponse.TraceMedKit("TryGiveJob_softEscort_AllowCombatBecauseHostileNear", pawn, heldPatient, tendEligibleNow: false, retreatingHeldPatient: retreatingHeldPatient);
+							// No hostiles in range.
+							// hostileNear stays false.
 						}
 
-						// HARD gate enforcement: if not near, stop combat/chase so medic immediately re-enters escort follow.
-						if (!hostileNear)
+						if (hostileNear)
+						{
+							JobGiver_ArgrillianThreatResponse.TraceMedKit("TryGiveJob_softEscort_AllowCombatBecauseHostileNear", pawn, heldPatient, tendEligibleNow: false, retreatingHeldPatient: retreatingHeldPatient);
+						}
+						else
 						{
 							JobGiver_ArgrillianThreatResponse.TraceMedKit("TryGiveJob_hardEscort_StopCombatBecauseHostileNotNear", pawn, heldPatient, tendEligibleNow: false, retreatingHeldPatient: retreatingHeldPatient);
 
@@ -6534,6 +6544,7 @@ namespace ArgrillianThreat
 							ArgrillianThreatState.CombatLock.Clear(pawn);
 							ArgrillianThreatState.CombatCommit.Clear(pawn);
 						}
+
 						// SOFT gate: if hostile is near, we do NOT stop; we rely on the existing architecture
 						// to keep this non-chase (next tick will re-evaluate tend eligibility and re-sync).
 					}
@@ -6541,13 +6552,18 @@ namespace ArgrillianThreat
 			}
 
 			// ----------------------------
-			// 1.5) RESYNC ESCALATION: if patient worsens to <= 75% during retreat
-			// Force medic to break away from combat NOW and re-sync to Tend/Rescue heldPatient.
+			// 1.5) RESYNC ESCALATION
+			// OLD behavior used raw HP% <= 0.75f.
+			// NEW behavior: treat escalation as an alert-severity semantic (Downed or Bleed)
+			// so the medic/combat medic response follows the alert-system worsening intent.
 			// ----------------------------
 			if (!heldPatient.Downed)
 			{
-				float heldHpPctNow = heldPatient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
-				if (heldHpPctNow <= 0.75f)
+				bool heldIsBleedingNow =
+					heldPatient.health?.hediffSet != null &&
+					heldPatient.health.hediffSet.HasHediff(HediffDefOf.BloodLoss);
+
+				if (heldIsBleedingNow)
 				{
 					Job cur = pawn.CurJob;
 					if (cur != null && cur.def != null && !(
@@ -6624,6 +6640,7 @@ namespace ArgrillianThreat
 			// FIX FOR YOUR BOUNCING/MEAL+HAUL-QUEUED FAILURE:
 			// When tendEligibleNow is false, we must prevent RimWorld from switching the medic
 			// into meal/consume/haul/rest/combat-like jobs while the patient is held-for-tend.
+
 			// So we hard-stop and clear queued jobs before issuing our Goto.
 			if (!tendEligibleNow)
 			{
