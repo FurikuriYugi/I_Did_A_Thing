@@ -6888,7 +6888,11 @@ namespace ArgrillianThreat
 							requiredStableTicksOuter = 0;
 					}
 
-					bool distanceOk = patient.Downed ? true : pawn.Position.DistanceTo(patient.Position) <= combatTendMaxDistance;
+					// IMPORTANT FIX:
+					// While held-for-tend, do NOT apply distance gating here.
+					// Your logs show the medic/patient can be "almost in range" for a moment, but
+					// once the hold lock is acquired, tend/rescue must not be rejected (or the patient flips to resting).
+					bool distanceOk = true;
 
 					bool isValid = IsValidTendTarget(patient, pawn);
 					bool canReserve = CanReserveTendTarget(pawn, patient);
