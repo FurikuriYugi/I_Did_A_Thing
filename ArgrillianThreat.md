@@ -1078,6 +1078,22 @@ namespace ArgrillianThreat
 					$"curJobDef={(curJobDef != null ? curJobDef.defName : "null")} heldPatient={(heldPatientBeforeRelease != null ? heldPatientBeforeRelease.thingIDNumber.ToString() : "null")} " +
 					$"holdAcquiredTick={heldAcquiredTick} now={now}");
 
+				// NEW (fix for tend/hold window failure):
+				// If the held patient is not currently "almost-in-range" as defined by the same reach/target logic used for STOP+HOLD,
+				// do not release yet. This prevents the observed sequence where hold was acquired but eligibility remained false,
+				// and the patient then starts other jobs (haul/rest) because the hold got released early.
+				if (heldPatientBeforeRelease != null && !heldPatientBeforeRelease.Dead)
+				{
+					bool heldStillAlmostInTendRange = IsValidTendTarget(heldPatientBeforeRelease, medic);
+					if (!heldStillAlmostInTendRange)
+					{
+						Log.Message(
+							$"[ArgrillianThreat][PatientMedicHold] HOLD RELEASE BLOCKED: notAlmostInTendRange " +
+							$"(medic={medicId} patientId={patientId} heldPatient={heldPatientBeforeRelease.thingIDNumber} whileTendPipelineInactiveOrNotReady).");
+						return;
+					}
+				}
+
 				// NEW: hard grace window to prevent “hold acquired, tendEligibleNow still false, then release”.
 				// This is specifically for the case where tend eligibility becomes true only once the medic is almost-in-range.
 				if (heldAcquiredTick >= 0)
