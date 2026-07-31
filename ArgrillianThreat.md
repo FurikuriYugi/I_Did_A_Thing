@@ -1693,6 +1693,32 @@ namespace ArgrillianThreat
 			return e != null ? e.patient : null;
 		}
 
+		public static bool TryGetAssignedMedicIdForPatient(Map map, int patientId, out int medicId)
+		{
+			medicId = -1;
+
+			if (map == null)
+				return false;
+			if (patientId < 0)
+				return false;
+
+			// Authority: assignment cache is owned by ArgrillianAlertSystem.
+			// We intentionally do NOT do map-wide scanning; this is O(number of medics tracked in cache).
+			foreach (var kvp in assignedPatientIdByMedicId)
+			{
+				int mid = kvp.Key;
+				int pid = kvp.Value;
+
+				if (pid == patientId)
+				{
+					medicId = mid;
+					return true;
+				}
+			}
+
+			return false;
+		}
+
 		// Enforce: at most one medic holds a given patient at a time.
 		// Accepts reservation if:
 		// - patient is in the cached PatientCall set, AND
@@ -5700,42 +5726,29 @@ namespace ArgrillianThreat
 			Map map = patient.Map;
 			int patientId = patient.thingIDNumber;
 
-			// Strict cache authority (no refresh scans).
-			if (medicThingIdByPatientId.TryGetValue(patientId, out int medicId))
+			// Authority: the alert system owns patientcall -> medic assignment mapping.
+			int medicId;
+			if (!ArgrillianAlertSystem.TryGetAssignedMedicIdForPatient(map, patientId, out medicId))
+				return null;
+
+			if (medicId < 0)
+				return null;
+
+			// Validate cached medicId against combat medics list (no map-wide pawn scanning).
+			var combatMedics = CompArgrillianMedicSettings.GetCombatMedics(map);
+			if (combatMedics == null)
+				return null;
+
+			for (int i = 0; i < combatMedics.Count; i++)
 			{
-				int lastTick = 0;
-				medicCacheLastTickByPatientId.TryGetValue(patientId, out lastTick);
+				Pawn medic = combatMedics[i];
+				if (medic == null || medic.Dead) continue;
+				if (!medic.Spawned || medic.Map != map) continue;
 
-				int now = Find.TickManager != null ? Find.TickManager.TicksGame : 0;
-				if (now - lastTick <= medicCacheTtlTicks)
-				{
-					if (medicId < 0)
-						return null;
-
-					// PERF + no map-wide scanning:
-					// We only validate cached medicId by enumerating *combat medics* list,
-					// not by scanning all pawns / all spawnedThings / map pawns.
-					var combatMedics = CompArgrillianMedicSettings.GetCombatMedics(map);
-					if (combatMedics != null)
-					{
-						for (int i = 0; i < combatMedics.Count; i++)
-						{
-							Pawn medic = combatMedics[i];
-							if (medic == null || medic.Dead) continue;
-							if (!medic.Spawned || medic.Map != map) continue;
-
-							if (medic.thingIDNumber == medicId)
-								return medic;
-						}
-					}
-
-					// Cached medicId no longer resolves; treat as unassigned until next authoritative call updates the cache.
-					return null;
-				}
+				if (medic.thingIDNumber == medicId)
+					return medic;
 			}
 
-			// Cache expired: do NOT refresh by scanning medics/patients.
-			// We wait for the alert-system to update the cache via new/merged PatientCall events.
 			return null;
 		}
 
@@ -7079,9 +7092,17 @@ namespace ArgrillianThreat
 			if (p == null || p.Dead) return false;
 			if (p.health?.hediffSet == null) return false;
 
-			// RimWorld 1.6: Burning hediff def is typically "Burn"
-			return p.health.hediffSet.HasHediff(HediffDefOf.Burn)
-				|| p.health.hediffSet.HasHediff(HediffDefOf.Burning);
+			// RimWorld 1.6: defs may not be exposed via HediffDefOf.Burn/Burning
+			// depending on available fields/load order, so resolve by name safely.
+			HediffDef burn = DefDatabase<HediffDef>.GetNamedSilentFail("Burn");
+			if (burn != null && p.health.hediffSet.HasHediff(burn))
+				return true;
+
+			HediffDef burning = DefDatabase<HediffDef>.GetNamedSilentFail("Burning");
+			if (burning != null && p.health.hediffSet.HasHediff(burning))
+				return true;
+
+			return false;
 		}
 
 		private static bool IsFarEnoughFromFire(Pawn patient, IntVec3 bedCell, Map map, float minBlocksFromFire)
