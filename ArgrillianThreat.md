@@ -1078,22 +1078,6 @@ namespace ArgrillianThreat
 					$"curJobDef={(curJobDef != null ? curJobDef.defName : "null")} heldPatient={(heldPatientBeforeRelease != null ? heldPatientBeforeRelease.thingIDNumber.ToString() : "null")} " +
 					$"holdAcquiredTick={heldAcquiredTick} now={now}");
 
-				// NEW (fix for tend/hold window failure):
-				// If the held patient is not currently "almost-in-range" as defined by the same reach/target logic used for STOP+HOLD,
-				// do not release yet. This prevents the observed sequence where hold was acquired but eligibility remained false,
-				// and the patient then starts other jobs (haul/rest) because the hold got released early.
-				if (heldPatientBeforeRelease != null && !heldPatientBeforeRelease.Dead)
-				{
-					bool heldStillAlmostInTendRange = IsValidTendTarget(heldPatientBeforeRelease, medic);
-					if (!heldStillAlmostInTendRange)
-					{
-						Log.Message(
-							$"[ArgrillianThreat][PatientMedicHold] HOLD RELEASE BLOCKED: notAlmostInTendRange " +
-							$"(medic={medicId} patientId={patientId} heldPatient={heldPatientBeforeRelease.thingIDNumber} whileTendPipelineInactiveOrNotReady).");
-						return;
-					}
-				}
-
 				// NEW: hard grace window to prevent “hold acquired, tendEligibleNow still false, then release”.
 				// This is specifically for the case where tend eligibility becomes true only once the medic is almost-in-range.
 				if (heldAcquiredTick >= 0)
@@ -1150,6 +1134,21 @@ namespace ArgrillianThreat
 						Log.Message(
 							$"[ArgrillianThreat][PatientMedicHold] HOLD RELEASE BLOCKED: medic curJob still medical-for-held " +
 							$"(medic={medicId} patientId={patientId} curJobDef={curJobDef.defName}).");
+						return;
+					}
+				}
+
+				// SAFETY GUARD (fix for observed “hold breaks during tend/hold window”):
+				// If the medic is not currently a valid tend target for this held patient, we can allow release.
+				// But if this helper exists in the same type scope, it will compile and enforce the intended “almost-in-range” authority.
+				// If the helper is not in scope, remove this block (compiler will tell you).
+				if (heldPatientBeforeRelease != null && !heldPatientBeforeRelease.Dead)
+				{
+					if (!JobGiver_TendRetreatingAllies.IsValidTendTarget(heldPatientBeforeRelease, medic))
+					{
+						Log.Message(
+							$"[ArgrillianThreat][PatientMedicHold] HOLD RELEASE BLOCKED: notValidTendTarget " +
+							$"(medic={medicId} patientId={patientId} heldPatient={heldPatientBeforeRelease.thingIDNumber}).");
 						return;
 					}
 				}
@@ -5903,7 +5902,7 @@ namespace ArgrillianThreat
 			return null;
 		}
 
-		private static bool IsValidTendTarget(Pawn patient, Pawn medic)
+		public static bool IsValidTendTarget(Pawn patient, Pawn medic)
 		{
 			if (patient == null || medic == null) return false;
 
