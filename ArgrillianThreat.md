@@ -1065,9 +1065,9 @@ namespace ArgrillianThreat
 				// Combat medics sometimes momentarily leave Tend/Rescue job defs (e.g. combat->fight-end transitions)
 				// but still must keep the held patient stationary until Tend/Rescue resolution completes.
 				//
-				// This prevents the observed "held then patient transitions into consume meal + queued haul ->
-				// medic quits Tend and switches" scenario caused by release happening while Tend/Rescue pipeline is still effectively active.
-				const int recentTendStickinessTicks = 180;
+				// This prevents the observed "held then patient transitions into consume meal + medic quits Tend and switches"
+				// scenario caused by release happening while Tend/Rescue pipeline is still effectively active.
+				const int recentTendStickinessTicks = 360; // was 180
 				bool recentlyTookTendTask =
 					MedicTendTaskStickiness.RecentlyTookTendTask(medic, recentTendStickinessTicks);
 
@@ -1187,32 +1187,6 @@ namespace ArgrillianThreat
 				Log.Message(
 					$"[ArgrillianThreat][PatientMedicHold] HOLD RELEASED: medic={medicId} patientId={patientId} " +
 					$"reason=tend/rescue pipeline complete heldPatientBeforeReleaseThingId={(heldPatientBeforeRelease != null ? heldPatientBeforeRelease.thingIDNumber : -1)}");
-
-				// After tend/rescue completion, clear the temporary patient Wait so they can resume combat logic.
-				if (heldPatientBeforeRelease != null && !heldPatientBeforeRelease.Dead && heldPatientBeforeRelease.Spawned && heldPatientBeforeRelease.Map != null)
-				{
-					Job hpCur = heldPatientBeforeRelease.CurJob;
-					if (hpCur != null && hpCur.def == JobDefOf.Wait)
-					{
-						Log.Message(
-							$"[ArgrillianThreat][PatientMedicHold] WAIT CLEAR REQUESTED: patient={heldPatientBeforeRelease.thingIDNumber} " +
-							$"because tend/rescue completed (medic={medicId}).");
-						heldPatientBeforeRelease.jobs?.EndCurrentJob(JobCondition.InterruptForced);
-					}
-
-					// IMPORTANT: do not force the patient's post-medical mode here.
-					// Let the normal fight-vs-retreat arbitration decide, so patients either:
-					// - resume fighting if conditions allow, or
-					// - perform full retreat to base otherwise.
-				}
-
-				// Release the alert-system medic hold too (now that tend/rescue completed).
-				ArgrillianAlertSystem.ReleaseMedicHold(medic);
-
-				// IMPORTANT behavioral ownership:
-				// Do NOT stop/interrupt patient jobs here.
-				// The “stationary during tend/rescue” enforcement must be solely via the hold arbitration guard.
-				// Releasing the hold is what allows patient movement/combat arbitration to resume.
 			}
 		}
 	}
