@@ -1323,7 +1323,8 @@ namespace ArgrillianThreat
 		{
 			Injured = 0,
 			Downed = 1,
-			Bleed = 2
+			Bleed = 2,
+			Fire = 3
 		}
 
 		private sealed class PatientCallEntry
@@ -1336,7 +1337,7 @@ namespace ArgrillianThreat
 
 			// For “event freshness” / coalescing:
 			// - if we receive another call for the same patientThingIdNumber, we refresh TTL
-			// - we only upgrade severity (Bleed > Downed)
+			// - we only upgrade severity (Bleed > downed)
 			public int lastUpdateTick;
 
 			// TTL is enforced via expiryTick derived from lastUpdateTick each cleanup.
@@ -1347,6 +1348,7 @@ namespace ArgrillianThreat
 			//
 			// “callerOrObserver” is a pawn; we key ack suppression by caller thingIDNumber.
 			public int lastAckCallerPawnId = -1;
+
 			public int lastAckTick = -1;
 			public PatientCallSeverity lastAckSeverity = PatientCallSeverity.Injured;
 		}
@@ -1400,6 +1402,9 @@ namespace ArgrillianThreat
 		private static PatientCallSeverity ComputePatientSeverity(Pawn patient)
 		{
 			if (patient == null) return PatientCallSeverity.Injured;
+
+			if (IsPawnBurningNow(patient))
+				return PatientCallSeverity.Fire;
 
 			if (patient.Downed) return PatientCallSeverity.Downed;
 
@@ -1477,16 +1482,18 @@ namespace ArgrillianThreat
 		{
 			if (patient == null) return;
 			if (patient.Dead) return;
+
 			if (patient.Map == null) return;
 			if (!patient.Spawned) return;
 
 			// Only create/update if the pawn is actually downed or bleeding (or caller said it was).
 			PatientCallSeverity newSev = ComputePatientSeverity(patient);
 
-			if (!wasDownedOrBleedingNow && newSev != PatientCallSeverity.Downed)
+			// If caller doesn't assert relevance, we still allow upgrading into Fire/Downed tier
+			// because ComputePatientSeverity already reflects current health-state.
+			if (!wasDownedOrBleedingNow && newSev == PatientCallSeverity.Injured)
 			{
-				// If caller doesn't assert relevance and severity came out as downed-tier,
-				// you can tighten this later; for now keep it simple and allow downed-tier only.
+				// Keep existing behavior: injured-only calls can be restricted later.
 			}
 
 			PatientMapCache cache = GetOrCreatePatientCache(patient.Map);
@@ -1506,11 +1513,16 @@ namespace ArgrillianThreat
 				entry = new PatientCallEntry();
 				entry.patientId = patientId;
 				entry.patientThingIdNumber = patientId;
+
 				entry.patient = patient;
 				entry.lastUpdateTick = now;
 				entry.severity = newSev;
 
-				int ttl = (newSev == PatientCallSeverity.Bleed) ? PatientCallTTL_BleedTicks : PatientCallTTL_DownedTicks;
+				int ttl =
+					(newSev == PatientCallSeverity.Bleed) ? PatientCallTTL_BleedTicks :
+					(newSev == PatientCallSeverity.Fire) ? PatientCallTTL_BleedTicks :
+					PatientCallTTL_DownedTicks;
+
 				entry.expiryTick = now + ttl;
 
 				// NEW: initial ACK for the caller/observer that triggered this first call
@@ -1551,7 +1563,11 @@ namespace ArgrillianThreat
 					entry.patient = patient;
 					entry.lastUpdateTick = now;
 
-					int effectiveTtl2 = (entry.severity == PatientCallSeverity.Bleed) ? PatientCallTTL_BleedTicks : PatientCallTTL_DownedTicks;
+					int effectiveTtl2 =
+						(entry.severity == PatientCallSeverity.Bleed) ? PatientCallTTL_BleedTicks :
+						(entry.severity == PatientCallSeverity.Fire) ? PatientCallTTL_BleedTicks :
+						PatientCallTTL_DownedTicks;
+
 					entry.expiryTick = now + effectiveTtl2;
 
 					// Keep ACK fields as-is (we're suppressing, so we don't spam a “new ack”).
@@ -1563,7 +1579,7 @@ namespace ArgrillianThreat
 			entry.patient = patient;
 			entry.lastUpdateTick = now;
 
-			// Upgrade severity if needed (Bleed > downed)
+			// Upgrade severity if needed (Fire > Bleed > downed > injured)
 			if (newSev > entry.severity)
 				entry.severity = newSev;
 
@@ -1577,12 +1593,16 @@ namespace ArgrillianThreat
 				entry.lastAckSeverity = entry.severity;
 			}
 
-			int effectiveTtl = (entry.severity == PatientCallSeverity.Bleed) ? PatientCallTTL_BleedTicks : PatientCallTTL_DownedTicks;
+			int effectiveTtl =
+				(entry.severity == PatientCallSeverity.Bleed) ? PatientCallTTL_BleedTicks :
+				(entry.severity == PatientCallSeverity.Fire) ? PatientCallTTL_BleedTicks :
+				PatientCallTTL_DownedTicks;
+
 			entry.expiryTick = now + effectiveTtl;
 		}
 
 		// Query: pick the best patient for a medic from cached calls only.
-		// Severity ordering locked: Bleed > downed
+		// Severity ordering locked: Fire > Bleed > downed > injured
 		// heldPatient exclusivity will be handled in JobGiver (next step).
 		public static Pawn GetBestPatientFromCalls(Pawn medic, float searchRadius)
 		{
@@ -1596,16 +1616,20 @@ namespace ArgrillianThreat
 			PrunePatientCalls(cache, medic.Map);
 
 			float r = Mathf.Max(0f, searchRadius);
-			//float bestScore = float.NegativeInfinity;
+
 			Pawn best = null;
 
-			// Two-pass selection makes severity ordering strict:
-			// first pick Bleed, then Downed.
+			Pawn bestFire = null;
+			float bestFireScore = float.NegativeInfinity;
+
 			Pawn bestBleed = null;
 			float bestBleedScore = float.NegativeInfinity;
 
 			Pawn bestDowned = null;
 			float bestDownedScore = float.NegativeInfinity;
+
+			Pawn bestInjured = null;
+			float bestInjuredScore = float.NegativeInfinity;
 
 			foreach (var kv in cache.byPatientId)
 			{
@@ -1620,16 +1644,27 @@ namespace ArgrillianThreat
 				float dist = medic.Position.DistanceTo(p.Position);
 				if (dist > r) continue;
 
-				// Score: severity first, then urgency by HP% / downed
 				float hpPct = p.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
 				float hpUrgency = (1f - hpPct) * 300f;
 
-				float bleedBonus = (e.severity == PatientCallSeverity.Bleed) ? 250f : 0f;
+				float sevBonus = 0f;
+				if (e.severity == PatientCallSeverity.Fire) sevBonus = 1000f;
+				if (e.severity == PatientCallSeverity.Bleed) sevBonus = 250f;
+				if (e.severity == PatientCallSeverity.Downed) sevBonus = 80f;
+
 				float downedBonus = (p.Downed) ? 50f : 0f;
 
-				float score = hpUrgency + bleedBonus + downedBonus;
+				float score = hpUrgency + sevBonus + downedBonus;
 
-				if (e.severity == PatientCallSeverity.Bleed)
+				if (e.severity == PatientCallSeverity.Fire)
+				{
+					if (score > bestFireScore)
+					{
+						bestFireScore = score;
+						bestFire = p;
+					}
+				}
+				else if (e.severity == PatientCallSeverity.Bleed)
 				{
 					if (score > bestBleedScore)
 					{
@@ -1637,7 +1672,7 @@ namespace ArgrillianThreat
 						bestBleed = p;
 					}
 				}
-				else
+				else if (e.severity == PatientCallSeverity.Downed)
 				{
 					if (score > bestDownedScore)
 					{
@@ -1645,11 +1680,21 @@ namespace ArgrillianThreat
 						bestDowned = p;
 					}
 				}
+				else
+				{
+					if (score > bestInjuredScore)
+					{
+						bestInjuredScore = score;
+						bestInjured = p;
+					}
+				}
 			}
 
-			// Locked ordering: Bleed > downed
-			if (bestBleed != null) best = bestBleed;
-			else best = bestDowned;
+			// Locked ordering: Fire > Bleed > downed > injured
+			if (bestFire != null) best = bestFire;
+			else if (bestBleed != null) best = bestBleed;
+			else if (bestDowned != null) best = bestDowned;
+			else best = bestInjured;
 
 			return best;
 		}
@@ -1826,11 +1871,16 @@ namespace ArgrillianThreat
 
 			// NEW: extend state with “injured” bit (low HP but not downed/bleeding)
 			// We'll use bit 4 as an injured marker to keep existing bits intact.
-			bool isInjuredLowHP = !pawn.Downed
+			bool isInjuredLowHP =
+				!pawn.Downed
 				&& !(pawn.health?.hediffSet != null && pawn.health.hediffSet.HasHediff(HediffDefOf.BloodLoss))
 				&& (pawn.health?.summaryHealth?.SummaryHealthPercent ?? 1f) <= PatientInjuredHPPercentThreshold;
 
 			if (isInjuredLowHP) cur |= 4;
+
+			// NEW: extend state with “fire” bit (burning)
+			bool isBurningNow = IsPawnBurningNow(pawn);
+			if (isBurningNow) cur |= 8;
 
 			if (cur == prev) return;
 
@@ -1841,12 +1891,14 @@ namespace ArgrillianThreat
 			// NEW: publish when we enter injured-low-HP state
 			bool enteredInjured = ((cur & 4) != 0) && ((prev & 4) == 0);
 
-			if (enteredDowned || enteredBleeding || enteredInjured)
-			{
-				bool wasDownedOrBleedingNow = enteredDowned || enteredBleeding;
+			// NEW: publish/refresh when we enter burning state (fire escalation)
+			bool enteredFire = ((cur & 8) != 0) && ((prev & 8) == 0);
 
-				// We still pass “wasDownedOrBleedingNow” for compatibility with existing Publish signature.
-				// PublishPatientCall will compute severity from the pawn anyway.
+			if (enteredDowned || enteredBleeding || enteredInjured || enteredFire)
+			{
+				// Preserve existing parameter meaning; severity is computed inside PublishPatientCall.
+				bool wasDownedOrBleedingNow = enteredDowned || enteredBleeding || enteredInjured;
+
 				PublishPatientCall(pawn, pawn, wasDownedOrBleedingNow);
 			}
 
@@ -1868,13 +1920,21 @@ namespace ArgrillianThreat
 
 			// NEW: low-HP injured (non-downed, non-bleeding)
 			float hpPct = target.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
-			bool isInjuredLowHP = !isDowned && !isBleeding && hpPct <= PatientInjuredHPPercentThreshold;
+			bool isInjuredLowHP =
+				!isDowned
+				&& !isBleeding
+				&& hpPct <= PatientInjuredHPPercentThreshold;
 
-			if (!isDowned && !isBleeding && !isInjuredLowHP)
+			// NEW: burning/on fire
+			bool isBurning = IsPawnBurningNow(target);
+
+			if (!isDowned && !isBleeding && !isInjuredLowHP && !isBurning)
 				return;
 
 			// Preserve existing parameter meaning; severity will be computed inside PublishPatientCall.
-			bool wasDownedOrBleedingNow = isDowned || isBleeding;
+			// Fire escalation still goes through PublishPatientCall and will upgrade severity in-place.
+			bool wasDownedOrBleedingNow = isDowned || isBleeding || isInjuredLowHP;
+
 			PublishPatientCall(observer, target, wasDownedOrBleedingNow);
 		}
 		
@@ -6051,6 +6111,12 @@ namespace ArgrillianThreat
 			Building_Bed best = null;
 			float bestScore = float.NegativeInfinity;
 
+			bool patientIsBurning = IsPawnBurningNow(patient);
+
+			// FIRE-SAFE MEDIC TARGETING:
+			// If the patient is on fire, enforce “>= 3 blocks from fire” consistently.
+			const float minBlocksFromFire = 3f;
+
 			foreach (var bed in map.listerBuildings.AllBuildingsColonistOfClass<Building_Bed>())
 			{
 				if (bed == null || bed.Destroyed || !bed.Spawned) continue;
@@ -6062,6 +6128,13 @@ namespace ArgrillianThreat
 				if (!medic.CanReach(bed.Position, PathEndMode.ClosestTouch, Danger.Some)) continue;
 
 				if (!CanReserveThingForPatient(medic, bed, patient)) continue;
+
+				if (patientIsBurning)
+				{
+					// Require fire-safe targeting: >=3 blocks from the (tracked) fire reference.
+					if (!IsFarEnoughFromFire(patient, bed.Position, map, minBlocksFromFire))
+						continue;
+				}
 
 				float score = 0f;
 				if (bed.Medical) score += 1200f;
