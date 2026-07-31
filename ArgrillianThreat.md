@@ -970,6 +970,14 @@ namespace ArgrillianThreat
 			// (because GetHeldPatient returned null when ArgrillianAlertSystem cache entry was missing/cleared).
 			private static readonly Dictionary<int, Pawn> pawnByPatientId = new Dictionary<int, Pawn>();
 
+			// NEW: hold acquisition time so we can prevent early release during the “hold acquired, tend eligibility still false” window.
+			private static readonly Dictionary<int, int> holdAcquiredTickByMedic = new Dictionary<int, int>();
+
+			private static int Now => Find.TickManager.TicksGame;
+
+			// Prevents “HOLD ACQUIRED” then immediate release because tend eligibility is temporarily false (e.g. just not in range yet).
+			private const int ReleaseHoldGraceTicks = 240;
+
 			public static Pawn GetHeldPatient(Pawn medic)
 			{
 				if (medic == null) return null;
@@ -1032,10 +1040,13 @@ namespace ArgrillianThreat
 				// NEW: store fallback pawn reference for held invariants.
 				pawnByPatientId[patientId] = patient;
 
+				// NEW: remember hold acquisition tick for release gating.
+				holdAcquiredTickByMedic[medicId] = Now;
+
 				// Required trace: hold acquired + confirmation of identity lock.
 				Log.Message(
 					$"[ArgrillianThreat][PatientMedicHold] HOLD ACQUIRED: medic={medicId} patient={patientId} " +
-					$"(heldMedicIdNow={medicIdByPatientId[patientId]})");
+					$"(heldMedicIdNow={medicIdByPatientId[patientId]}) tick={holdAcquiredTickByMedic[medicId]}");
 			}
 
 			// Release by medic only.
@@ -1056,10 +1067,30 @@ namespace ArgrillianThreat
 				Job curJob = medic.CurJob;
 				JobDef curJobDef = curJob != null ? curJob.def : null;
 
+				int now = Now;
+				int heldAcquiredTick = -1;
+				if (holdAcquiredTickByMedic.TryGetValue(medicId, out int t))
+					heldAcquiredTick = t;
+
 				// Required trace: show release entry + current curJobDef every time we consider releasing.
 				Log.Message(
 					$"[ArgrillianThreat][PatientMedicHold] RELEASE REQUESTED ENTRY: medic={medicId} patientId={patientId} " +
-					$"curJobDef={(curJobDef != null ? curJobDef.defName : "null")} heldPatient={(heldPatientBeforeRelease != null ? heldPatientBeforeRelease.thingIDNumber.ToString() : "null")}");
+					$"curJobDef={(curJobDef != null ? curJobDef.defName : "null")} heldPatient={(heldPatientBeforeRelease != null ? heldPatientBeforeRelease.thingIDNumber.ToString() : "null")} " +
+					$"holdAcquiredTick={heldAcquiredTick} now={now}");
+
+				// NEW: hard grace window to prevent “hold acquired, tendEligibleNow still false, then release”.
+				// This is specifically for the case where tend eligibility becomes true only once the medic is almost-in-range.
+				if (heldAcquiredTick >= 0)
+				{
+					int age = now - heldAcquiredTick;
+					if (age < ReleaseHoldGraceTicks)
+					{
+						Log.Message(
+							$"[ArgrillianThreat][PatientMedicHold] HOLD RELEASE BLOCKED: within hold grace window " +
+							$"(medic={medicId} patientId={patientId} ageTicks={age} graceTicks={ReleaseHoldGraceTicks}).");
+						return;
+					}
+				}
 
 				// Harder stickiness override to prevent “release while tend pipeline still effectively active”
 				// (which then allows medic to switch back into fighting).
@@ -1146,6 +1177,9 @@ namespace ArgrillianThreat
 
 				// Cleanup fallback pawn cache.
 				pawnByPatientId.Remove(patientId);
+
+				// Cleanup hold acquisition tick.
+				holdAcquiredTickByMedic.Remove(medicId);
 			}
 		}
 	}
