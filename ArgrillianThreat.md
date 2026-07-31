@@ -1144,19 +1144,6 @@ namespace ArgrillianThreat
 						$"[ArgrillianThreat][PatientMedicHold] HOLD ACQUIRED: medic={medicId} patient={patientId} " +
 						$"(heldMedicIdNow={medicIdByPatientId[patientId]}) tick={holdAcquiredTickByMedic[medicId]}");
 				}
-
-				// LEGACY AUTHORITY REMOVED:
-				// Hold release is event-system-only and must happen downstream of:
-				// ArgrillianAlertSystem.NotifyMedicPatientCallTerminalCompletion(...)
-				// Any remaining legacy release entry-point MUST NOT clear held state.
-				private static void ReleaseForMedic(Pawn medic)
-				{
-					Log.Message(
-						$"[ArgrillianThreat][PatientMedicHold] LEGACY ReleaseForMedic BLOCKED (event-only authority). medic={(medic != null ? medic.thingIDNumber.ToString() : "null")}");
-
-					// Intentionally no-op: held release is performed only via the alert-system terminal completion contract.
-					return;
-				}
 			}
 		}
 	}
