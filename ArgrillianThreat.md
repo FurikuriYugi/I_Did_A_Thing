@@ -1061,13 +1061,9 @@ namespace ArgrillianThreat
 					$"[ArgrillianThreat][PatientMedicHold] RELEASE REQUESTED ENTRY: medic={medicId} patientId={patientId} " +
 					$"curJobDef={(curJobDef != null ? curJobDef.defName : "null")} heldPatient={(heldPatientBeforeRelease != null ? heldPatientBeforeRelease.thingIDNumber.ToString() : "null")}");
 
-				// NEW: recent-tend stickiness override:
-				// Combat medics sometimes momentarily leave Tend/Rescue job defs (e.g. combat->fight-end transitions)
-				// but still must keep the held patient stationary until Tend/Rescue resolution completes.
-				//
-				// This prevents the observed "held then patient transitions into consume meal + medic quits Tend and switches"
-				// scenario caused by release happening while Tend/Rescue pipeline is still effectively active.
-				const int recentTendStickinessTicks = 360; // was 180
+				// Harder stickiness override to prevent “release while tend pipeline still effectively active”
+				// (which then allows medic to switch back into fighting).
+				const int recentTendStickinessTicks = 600;
 				bool recentlyTookTendTask =
 					MedicTendTaskStickiness.RecentlyTookTendTask(medic, recentTendStickinessTicks);
 
@@ -1088,92 +1084,60 @@ namespace ArgrillianThreat
 					return;
 				}
 
-				// NEW: prevent early release into "consume/eat" transient stages.
-				// Even if medic curJob isn't Tend/Rescue right now, a held-down patient transitioning into consume
-				// is a common failure mode for "Tend aborted => medic switches to meal/haul arbitration".
-				if (heldPatientBeforeRelease != null && heldPatientBeforeRelease.CurJob != null && heldPatientBeforeRelease.CurJob.def != null)
+				// If we can still identify the held patient, block release if medic is currently doing
+				// any tend/rescue-like work that still targets that patient.
+				if (heldPatientBeforeRelease != null && curJobDef != null)
 				{
-					string pCurJobDefName = heldPatientBeforeRelease.CurJob.def.defName;
-					bool looksLikeConsumption =
-						!string.IsNullOrEmpty(pCurJobDefName) &&
-						(pCurJobDefName.IndexOf("consume", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
-						 pCurJobDefName.IndexOf("eat", System.StringComparison.OrdinalIgnoreCase) >= 0);
-
-					if (looksLikeConsumption)
+					// Immediate hard block for active tend/rescue job defs.
+					if (curJobDef == JobDefOf.TendPatient || curJobDef == JobDefOf.Rescue)
 					{
 						Log.Message(
-							$"[ArgrillianThreat][PatientMedicHold] HOLD RELEASE BLOCKED: patient is in consume/eat stage " +
-							$"(medic={medicId} patientId={patientId} heldPatient={heldPatientBeforeRelease.thingIDNumber} pCurJobDefName={pCurJobDefName}).");
+							$"[ArgrillianThreat][PatientMedicHold] HOLD RELEASE BLOCKED: medic job still Tend/Rescue " +
+							$"(medic={medicId} patientId={patientId} curJobDef={curJobDef.defName}).");
+						return;
+					}
+
+					// If the job is medical-for-the-held-patient, keep holding.
+					if (ArgillianThreatPatientTuning.JobIsMedicalForPatient(curJob, heldPatientBeforeRelease))
+					{
+						Log.Message(
+							$"[ArgrillianThreat][PatientMedicHold] HOLD RELEASE BLOCKED: medic curJob still medical-for-held " +
+							$"(medic={medicId} patientId={patientId} curJobDef={curJobDef.defName}).");
 						return;
 					}
 				}
 
-				// Hard ownership rule: do NOT clear heldPatient while the medic is still actively part of the held
-				// patient's medical pipeline.
-				bool medicInTendOrRescuePipeline = false;
-				string pipelineReason = "none";
-
-				if (curJobDef == JobDefOf.TendPatient)
+				// If we reach here, allow release only when medic is NOT doing ANY tend/rescue pipeline work.
+				// Also require that the heldPatient identity is still the same (prevents identity flip releasing wrong target).
+				Pawn heldNow = GetHeldPatient(medic);
+				if (heldNow == null)
 				{
-					medicInTendOrRescuePipeline = true;
-					pipelineReason = "CurJobDef==TendPatient";
-				}
-				else if (curJobDef == JobDefOf.Rescue)
-				{
-					medicInTendOrRescuePipeline = true;
-					pipelineReason = "CurJobDef==Rescue";
-				}
-				else if (curJobDef == JobDefOf.HaulToCell || curJobDef == JobDefOf.HaulToContainer)
-				{
-					// Some pipelines queue hauling as part of the rescue/tend flow.
-					// Only treat it as pipeline if it is actually targeting the held patient identity.
-					Pawn jobPatient = heldPatientBeforeRelease != null ? ArgillianThreatPatientTuning.GetPatientFromJob(curJob) : null;
-
-					if (heldPatientBeforeRelease == null)
-					{
-						medicInTendOrRescuePipeline = false;
-						pipelineReason = "Haul job but heldPatient null";
-					}
-					else if (jobPatient == heldPatientBeforeRelease)
-					{
-						medicInTendOrRescuePipeline = true;
-						pipelineReason = $"CurJobDef=={curJobDef.defName} targeting heldPatient";
-					}
-					else
-					{
-						medicInTendOrRescuePipeline = false;
-						pipelineReason = $"CurJobDef=={curJobDef.defName} not targeting heldPatient";
-					}
+					Log.Message(
+						$"[ArgrillianThreat][PatientMedicHold] HOLD RELEASE ALLOWED: heldNow is null (medic={medicId} patientId={patientId}).");
 				}
 				else
 				{
-					// Generic check: if cur job is a medical job that targets the held patient, treat it as pipeline.
-					if (heldPatientBeforeRelease != null && curJob != null && ArgillianThreatPatientTuning.JobIsMedicalForPatient(curJob, heldPatientBeforeRelease))
+					if (heldPatientBeforeRelease == null)
 					{
-						medicInTendOrRescuePipeline = true;
-						pipelineReason = $"JobIsMedicalForPatient({curJobDef?.defName})";
+						Log.Message(
+							$"[ArgrillianThreat][PatientMedicHold] HOLD RELEASE BLOCKED: heldPatientBeforeRelease null but heldNow exists " +
+							$"(medic={medicId} patientId={patientId} heldNow={heldNow.thingIDNumber}).");
+						return;
+					}
+
+					if (heldNow.thingIDNumber != patientId)
+					{
+						Log.Message(
+							$"[ArgrillianThreat][PatientMedicHold] HOLD RELEASE BLOCKED: identity mismatch " +
+							$"(medic={medicId} expectedPatientId={patientId} heldNow={heldNow.thingIDNumber}).");
+						return;
 					}
 				}
 
-				// Required trace: when Tend is not eligible or release blocked, we log the final gate(s).
-				Log.Message(
-					$"[ArgrillianThreat][PatientMedicHold] RELEASE REQUESTED: medic={medicId} patientId={patientId} " +
-					$"curJobDef={(curJobDef != null ? curJobDef.defName : "null")} " +
-					$"heldPatient={(heldPatientBeforeRelease != null ? heldPatientBeforeRelease.thingIDNumber.ToString() : "null")} " +
-					$"pipeline(medicInTendOrRescuePipeline)={medicInTendOrRescuePipeline} pipelineReason={pipelineReason} " +
-					$"recentlyTookTendTask={recentlyTookTendTask}");
-
-				// Hard ownership rule: do NOT clear heldPatient while the medic is still actively part of the held
-				// patient's medical pipeline.
-				if (medicInTendOrRescuePipeline)
-				{
-					Log.Message(
-						$"[ArgrillianThreat][PatientMedicHold] HOLD RELEASE BLOCKED: medic still in tend/rescue pipeline " +
-						$"(medic={medicId} patientId={patientId}) reason={pipelineReason}");
-					return;
-				}
-
 				// Single-owner release now that tend/rescue is over.
+				Log.Message(
+					$"[ArgrillianThreat][PatientMedicHold] HOLD RELEASE FINAL: medic={medicId} patientId={patientId} releasingHeldPatient={(heldPatientBeforeRelease != null ? heldPatientBeforeRelease.thingIDNumber.ToString() : "null")}");
+
 				patientIdByMedic.Remove(medicId);
 
 				// Clear reverse index only if it still points to this medic.
@@ -1182,11 +1146,6 @@ namespace ArgrillianThreat
 
 				// Cleanup fallback pawn cache.
 				pawnByPatientId.Remove(patientId);
-
-				// Required trace: heldPatient identity flip/clear reason.
-				Log.Message(
-					$"[ArgrillianThreat][PatientMedicHold] HOLD RELEASED: medic={medicId} patientId={patientId} " +
-					$"reason=tend/rescue pipeline complete heldPatientBeforeReleaseThingId={(heldPatientBeforeRelease != null ? heldPatientBeforeRelease.thingIDNumber : -1)}");
 			}
 		}
 	}
