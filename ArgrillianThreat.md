@@ -5956,11 +5956,13 @@ namespace ArgrillianThreat
 		// But we must clear queued jobs and stop movement so the patient can't swap into haul/rest/etc.
 		Job cur = patient.CurJob;
 
-		bool curIsAllowedHeldJob =
-		cur != null && cur.def != null &&
+		// IMPORTANT CHANGE:
+		// While held, only allow the true Tend/Rescue pipeline jobs.
+		// Do NOT treat Wait/LayDown as "allowed", because those can immediately lead to Rest/Consume/Mem-like behavior next tick.
+		bool curIsPipelineHeldJob =
+		cur != null &&
+		cur.def != null &&
 		(
-			cur.def == JobDefOf.Wait ||
-			cur.def == JobDefOf.LayDown ||
 			cur.def == JobDefOf.Rescue ||
 			cur.def == JobDefOf.TendPatient
 		);
@@ -5970,28 +5972,21 @@ namespace ArgrillianThreat
 
 		// STOP+HOLD decision-point log (required): print both ids + key gating values.
 		Log.Message(
-		$"[ArgrillianThreat][TryStopPatientToAllowTend][DECIDE] medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} heldByMedic={heldPatientByMedic.thingIDNumber} isHeldForTend={isHeldForTend} curAllowed={curIsAllowedHeldJob} patientInterferingNow={patientInterferingNow}"
+		$"[ArgrillianThreat][TryStopPatientToAllowTend][DECIDE] medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} heldByMedic={heldPatientByMedic.thingIDNumber} isHeldForTend={isHeldForTend} curAllowed={curIsPipelineHeldJob} patientInterferingNow={patientInterferingNow}"
 		);
 
 		// We *always* clear queued jobs under held-state; otherwise other jobgivers can enqueue haul/rest
 		// right after a “SKIP no-interference” tick.
 		patient.jobs?.ClearQueuedJobs();
 
-		// If they're not already in an allowed held job, force a Wait to prevent movement/combat churn.
-		// If they're interfering, additionally stop all immediately (this mirrors the old behavior).
-		if (!curIsAllowedHeldJob)
-		{
-		Job existing = patient.CurJob;
-		if (existing != null && existing.def == JobDefOf.Wait)
-		{
-			// Already waiting, but still may have queued jobs; we cleared queues above.
-		}
-		else
-		{
-			patient.jobs?.StopAll(true);
-		}
-
+		// Hard-stop movement + job churn while held to prevent rest/meal/haul transitions.
+		// If they are not already in the Tend/Rescue pipeline job, force Wait.
 		patient.pather?.StopDead();
+
+		if (!curIsPipelineHeldJob)
+		{
+		// Force a hard stop so patient AI can't immediately swap into rest/consume/meal.
+		patient.jobs?.StopAll(true);
 
 		IntVec3 here = patient.Position;
 		Job hold = JobMaker.MakeJob(JobDefOf.Wait, here);
@@ -6000,16 +5995,10 @@ namespace ArgrillianThreat
 		}
 		else
 		{
-		// Allowed held job: keep them still and ensure their pathing isn't driving them away.
-		// (No need to stop all jobs if they're already on the pipeline-allowed job.)
-		patient.pather?.StopDead();
-
-		// If they were about to swap jobs this tick, StopAll(false) could still churn,
-		// so we just make sure the queued set is empty (already cleared).
+		// Allowed pipeline job: keep them still and ensure their pathing isn't driving them away.
+		// If they look interfering (even while cur job is pipeline-allowed), hard-stop to re-stabilize.
 		if (patientInterferingNow)
 		{
-			// Defensive: if IsInterferingJobForTend says interfering even though cur is allowed,
-			// treat it as interference and hard stop.
 			patient.jobs?.StopAll(true);
 
 			IntVec3 here = patient.Position;
@@ -6017,6 +6006,8 @@ namespace ArgrillianThreat
 			hold.count = 1;
 			patient.jobs?.StartJob(hold, JobCondition.InterruptForced);
 		}
+
+		// queued set already cleared above; no further action required for this tick.
 		}
 		}
 
