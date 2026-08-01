@@ -926,196 +926,6 @@ namespace ArgrillianThreat
 				lastCommitTick[Key(medic, patient)] = Now;
 			}
 		}
-
-		public static class PatientMedicHold
-		{
-			// Medic thingID -> cached patientId (int only; Pawn resolved via ArgrillianAlertSystem lookup)
-			private static readonly Dictionary<int, int> patientIdByMedic = new Dictionary<int, int>();
-
-			// patientId -> medicId (int only) so we can block other job arbitration in O(1)
-			private static readonly Dictionary<int, int> medicIdByPatientId = new Dictionary<int, int>();
-
-			// NEW: fallback pawn cache so held invariants don't depend on the alert-system call staying present.
-			// This fixes the symptom where hold lock is acquired, but canTendNow doesn't treat the patient as held
-			// (because GetHeldPatient returned null when ArgrillianAlertSystem cache entry was missing/cleared).
-			private static readonly Dictionary<int, Pawn> pawnByPatientId = new Dictionary<int, Pawn>();
-
-			// NEW: hold acquisition time so we can prevent early release during the “hold acquired, tend eligibility still false” window.
-			private static readonly Dictionary<int, int> holdAcquiredTickByMedic = new Dictionary<int, int>();
-
-			private static int Now => Find.TickManager.TicksGame;
-
-			// Prevents “HOLD ACQUIRED” then immediate release because tend eligibility is temporarily false (e.g. just not in range yet).
-			private const int ReleaseHoldGraceTicks = 240;
-
-			public static Pawn GetHeldPatient(Pawn medic)
-			{
-				if (medic == null) return null;
-				if (medic.Map == null) return null;
-				if (!medic.Spawned) return null;
-				if (medic.Dead) return null;
-
-				int medicId = medic.thingIDNumber;
-
-				if (!patientIdByMedic.TryGetValue(medicId, out int patientId))
-					return null;
-
-				// Primary resolve: alert-system cache as authority (no map scans).
-				Pawn resolved = ArgrillianAlertSystem.TryGetPatientFromCachedCall(medic.Map, patientId);
-				if (resolved != null)
-					return resolved;
-
-				// Fallback: if we still have a live cached pawn reference, use it.
-				// This preserves the held invariant even if the alert call entry was coalesced/removed.
-				if (pawnByPatientId.TryGetValue(patientId, out Pawn cached) && cached != null)
-				{
-					if (!cached.Dead && cached.Spawned && cached.Map == medic.Map && cached.thingIDNumber == patientId)
-						return cached;
-				}
-
-				return null;
-			}
-
-			// Used by other job arbitration to avoid "patient wiggle" while medic tend/rescue is pending.
-			public static bool IsPatientHeldForTend(Pawn patient)
-			{
-				if (patient == null) return false;
-				if (!patient.Spawned) return false;
-				if (patient.Dead) return false;
-				if (patient.Map == null) return false;
-
-				int patientId = patient.thingIDNumber;
-				return medicIdByPatientId.ContainsKey(patientId);
-			}
-
-			public static void Lock(Pawn medic, Pawn patient)
-			{
-				if (medic == null || patient == null) return;
-				if (medic.Dead || patient.Dead) return;
-				if (medic.Map == null || patient.Map == null) return;
-				if (medic.Map != patient.Map) return;
-				if (!medic.Spawned || !patient.Spawned) return;
-
-				int medicId = medic.thingIDNumber;
-				int patientId = patient.thingIDNumber;
-
-				// Enforce exclusivity inside alert system.
-				bool accepted = ArgrillianAlertSystem.TryReserveMedicForPatient(medic, patient);
-				if (!accepted)
-					return;
-
-				patientIdByMedic[medicId] = patientId;
-				medicIdByPatientId[patientId] = medicId;
-
-				// NEW: store fallback pawn reference for held invariants.
-				pawnByPatientId[patientId] = patient;
-
-				// NEW: remember hold acquisition tick for release gating.
-				holdAcquiredTickByMedic[medicId] = Now;
-
-				// Required trace: hold acquired + confirmation of identity lock.
-				Log.Message(
-					$"[ArgrillianThreat][PatientMedicHold] HOLD ACQUIRED: medic={medicId} patient={patientId} " +
-					$"(heldMedicIdNow={medicIdByPatientId[patientId]}) tick={holdAcquiredTickByMedic[medicId]}");
-			}
-
-			// Release by medic only.
-			// Single-owner release point:
-			// This method MUST NOT release early based on eligibility flapping.
-			// It only releases once the medic is no longer in the tend/rescue pipeline.
-			public static class ReleaseHold
-			{
-				// Medic thingID -> cached patientId (int only; Pawn resolved via ArgrillianAlertSystem lookup)
-				private static readonly Dictionary<int, int> patientIdByMedic = new Dictionary<int, int>();
-
-				// patientId -> medicId (int only) so we can block other job arbitration in O(1)
-				private static readonly Dictionary<int, int> medicIdByPatientId = new Dictionary<int, int>();
-
-				// NEW: fallback pawn cache so held invariants don't depend on the alert-system call staying present.
-				// This fixes the symptom where hold lock is acquired, but canTendNow doesn't treat the patient as held
-				// (because GetHeldPatient returned null when ArgrillianAlertSystem cache entry was missing/cleared).
-				private static readonly Dictionary<int, Pawn> pawnByPatientId = new Dictionary<int, Pawn>();
-
-				// NEW: hold acquisition time so we can prevent early release during the “hold acquired, tend eligibility still false” window.
-				private static readonly Dictionary<int, int> holdAcquiredTickByMedic = new Dictionary<int, int>();
-
-				private static int Now => Find.TickManager.TicksGame;
-
-				// Prevents “HOLD ACQUIRED” then immediate release because tend eligibility is temporarily false (e.g. just not in range yet).
-				private const int ReleaseHoldGraceTicks = 240;
-
-				public static Pawn GetHeldPatient(Pawn medic)
-				{
-					if (medic == null) return null;
-					if (medic.Map == null) return null;
-					if (!medic.Spawned) return null;
-					if (medic.Dead) return null;
-
-					int medicId = medic.thingIDNumber;
-
-					if (!patientIdByMedic.TryGetValue(medicId, out int patientId))
-						return null;
-
-					// Primary resolve: alert-system cache as authority (no map scans).
-					Pawn resolved = ArgrillianAlertSystem.TryGetPatientFromCachedCall(medic.Map, patientId);
-					if (resolved != null)
-						return resolved;
-
-					// Fallback: if we still have a live cached pawn reference, use it.
-					// This preserves the held invariant even if the alert call entry was coalesced/removed.
-					if (pawnByPatientId.TryGetValue(patientId, out Pawn cached) && cached != null)
-					{
-						if (!cached.Dead && cached.Spawned && cached.Map == medic.Map && cached.thingIDNumber == patientId)
-							return cached;
-					}
-
-					return null;
-				}
-
-				// Used by other job arbitration to avoid "patient wiggle" while medic tend/rescue is pending.
-				public static bool IsPatientHeldForTend(Pawn patient)
-				{
-					if (patient == null) return false;
-					if (!patient.Spawned) return false;
-					if (patient.Dead) return false;
-					if (patient.Map == null) return false;
-
-					int patientId = patient.thingIDNumber;
-					return medicIdByPatientId.ContainsKey(patientId);
-				}
-
-				public static void Lock(Pawn medic, Pawn patient)
-				{
-					if (medic == null || patient == null) return;
-					if (medic.Dead || patient.Dead) return;
-					if (medic.Map == null || patient.Map == null) return;
-					if (medic.Map != patient.Map) return;
-					if (!medic.Spawned || !patient.Spawned) return;
-
-					int medicId = medic.thingIDNumber;
-					int patientId = patient.thingIDNumber;
-
-					// Enforce exclusivity inside alert system.
-					bool accepted = ArgrillianAlertSystem.TryReserveMedicForPatient(medic, patient);
-					if (!accepted)
-						return;
-
-					patientIdByMedic[medicId] = patientId;
-					medicIdByPatientId[patientId] = medicId;
-
-					// NEW: store fallback pawn reference for held invariants.
-					pawnByPatientId[patientId] = patient;
-
-					// NEW: remember hold acquisition tick for release gating.
-					holdAcquiredTickByMedic[medicId] = Now;
-
-					// Required trace: hold acquired + confirmation of identity lock.
-					Log.Message(
-						$"[ArgrillianThreat][PatientMedicHold] HOLD ACQUIRED: medic={medicId} patient={patientId} " +
-						$"(heldMedicIdNow={medicIdByPatientId[patientId]}) tick={holdAcquiredTickByMedic[medicId]}");
-				}
-			}
-		}
 	}
 
 	// NEW: Event Driven Alert System.
@@ -6009,7 +5819,7 @@ namespace ArgrillianThreat
 		// NEW: held-for-tend arbitration guard
 		// If this patient is currently held for tend/rescue by the alert/medic pipeline,
 		// all other job churn that could re-enable movement/combat should be treated as interfering.
-		if (ArgrillianMedicalState.PatientMedicHold.IsPatientHeldForTend(patient))
+		if (ArgrillianAlertSystem.IsPatientHeldForTend(patient))
 		{
 		Job heldJob = patient.CurJob;
 		if (heldJob == null || heldJob.def == null) return false;
@@ -6689,7 +6499,7 @@ namespace ArgrillianThreat
 		// While the patient is held for tend/rescue, we must keep enforcing held-job stop
 		// even if tendEligibleNow == false, and regardless of heldPatient.Downed.
 		// Otherwise, patient-side job arbitration can "free" the patient into rest/haul/other jobs.
-		if (ArgrillianMedicalState.PatientMedicHold.IsPatientHeldForTend(heldPatient))
+		if (ArgrillianAlertSystem.IsPatientHeldForTend(heldPatient))
 		{
 		TryStopPatientToAllowTend(pawn, heldPatient);
 		}
@@ -6713,7 +6523,7 @@ namespace ArgrillianThreat
 
 			if (cur != null && cur.def != null)
 			{
-				bool isHeldForTend = ArgrillianMedicalState.PatientMedicHold.IsPatientHeldForTend(heldPatient);
+				bool isHeldForTend = ArgrillianAlertSystem.IsPatientHeldForTend(heldPatient);
 
 				JobGiver_ArgrillianThreatResponse.TraceMedKit(
 					"TryGiveJob_enterEscortRetreatGate",
@@ -6899,7 +6709,7 @@ namespace ArgrillianThreat
 		if (!tendEligibleNow)
 		{
 		// Keep the held patient forced/contained for the entire "almost-in-range" window.
-		if (ArgrillianMedicalState.PatientMedicHold.IsPatientHeldForTend(heldPatient))
+		if (ArgrillianAlertSystem.IsPatientHeldForTend(heldPatient))
 			TryStopPatientToAllowTend(pawn, heldPatient);
 
 		// NEW: stop arbitration churn (rest/meal/haul queued) while we are waiting to become tend-eligible.
@@ -6912,7 +6722,7 @@ namespace ArgrillianThreat
 		}
 
 		// Start-eligible now: hard-stop right before we start Tend/Rescue.
-		if (ArgrillianMedicalState.PatientMedicHold.IsPatientHeldForTend(heldPatient))
+		if (ArgrillianAlertSystem.IsPatientHeldForTend(heldPatient))
 		TryStopPatientToAllowTend(pawn, heldPatient);
 
 		// Ensure medic is committed to this held patient.
