@@ -5944,10 +5944,8 @@ namespace ArgrillianThreat
 		// If patient currently runs something actively interfering, we'll do the same hard stop as before.
 		bool patientInterferingNow = IsInterferingJobForTend(patient);
 
-		// Extra safety: if the patient's current job is not in the "allowed while held" set,
-		// force the patient into Wait even if it isn't classified as "interfering".
-		// This prevents haul/rest/consume/other behavior sneaking in while held-for-tend.
-		bool curJobAllowedWhileHeld = (cur == null) ? false : IsAllowedDownPawnJob(cur);
+		// Removed IsAllowedDownPawnJob: held-job allowance is now ONLY pipeline-held jobs.
+		bool curJobAllowedWhileHeld = curIsPipelineHeldJob;
 
 		// STOP+HOLD decision-point log (required): print both ids + key gating values.
 		Log.Message(
@@ -6014,71 +6012,71 @@ namespace ArgrillianThreat
 
 		private static bool IsInterferingJobForTend(Pawn patient)
 		{
-			if (patient == null) return false;
+		if (patient == null) return false;
 
-			// NEW: held-for-tend arbitration guard
-			// If this patient is currently held for tend/rescue by the alert/medic pipeline,
-			// all other job churn that could re-enable movement/combat should be treated as interfering.
-			if (ArgrillianMedicalState.PatientMedicHold.IsPatientHeldForTend(patient))
-			{
-				Job heldJob = patient.CurJob;
-				if (heldJob == null || heldJob.def == null) return false;
+		// NEW: held-for-tend arbitration guard
+		// If this patient is currently held for tend/rescue by the alert/medic pipeline,
+		// all other job churn that could re-enable movement/combat should be treated as interfering.
+		if (ArgrillianMedicalState.PatientMedicHold.IsPatientHeldForTend(patient))
+		{
+		Job heldJob = patient.CurJob;
+		if (heldJob == null || heldJob.def == null) return false;
 
-				if (IsCrawlLikeJob(heldJob) || IsMoveLikeJob(heldJob))
-					return true;
+		if (IsCrawlLikeJob(heldJob) || IsMoveLikeJob(heldJob))
+			return true;
 
-				if (IsCombatAttackLikeJob(heldJob) || IsChaseOrTacticJob(heldJob))
-					return true;
+		if (IsCombatAttackLikeJob(heldJob) || IsChaseOrTacticJob(heldJob))
+			return true;
 
-				if (IsHaulJob(heldJob))
-					return true;
+		if (IsHaulJob(heldJob))
+			return true;
 
-				string defName0 = heldJob.def.defName;
-				if (!string.IsNullOrEmpty(defName0))
-				{
-					if (defName0.IndexOf("eat", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-					if (defName0.IndexOf("ingest", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-					if (defName0.IndexOf("meal", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-					if (defName0.IndexOf("consume", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-					if (defName0.IndexOf("rest", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-					if (defName0.IndexOf("grab", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-					if (defName0.IndexOf("pickup", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-				}
-			}
+		string defName0 = heldJob.def.defName;
+		if (!string.IsNullOrEmpty(defName0))
+		{
+			if (defName0.IndexOf("eat", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+			if (defName0.IndexOf("ingest", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+			if (defName0.IndexOf("meal", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+			if (defName0.IndexOf("consume", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+			if (defName0.IndexOf("rest", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+			if (defName0.IndexOf("grab", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+			if (defName0.IndexOf("pickup", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+		}
+		}
 
-			Job j = patient.CurJob;
-			if (j == null) return false;
+		Job j = patient.CurJob;
+		if (j == null) return false;
 
-			if (patient.Downed && IsAllowedDownPawnJob(j))
-				return false;
+		// Removed IsAllowedDownPawnJob(...) call entirely.
+		// If downed, we treat most non-pipeline churn as interfering so medic can hard-stop and hold.
 
-			if (!patient.Downed)
-				return false;
+		if (!patient.Downed)
+		return false;
 
-			// NEW: if downed pawn is crawling/moving to safety, treat it as interfering so medic can stop it for tending/rescue.
-			if (IsCrawlLikeJob(j) || IsMoveLikeJob(j))
-				return true;
+		// NEW: if downed pawn is crawling/moving to safety, treat it as interfering so medic can stop it for tending/rescue.
+		if (IsCrawlLikeJob(j) || IsMoveLikeJob(j))
+		return true;
 
-			// NEW: if downed pawn is on combat/chase behavior, treat it as interfering so we can stop it for tending.
-			if (IsCombatAttackLikeJob(j) || IsChaseOrTacticJob(j))
-				return true;
+		// NEW: if downed pawn is on combat/chase behavior, treat it as interfering so we can stop it for tending.
+		if (IsCombatAttackLikeJob(j) || IsChaseOrTacticJob(j))
+		return true;
 
-			if (IsHaulJob(j)) return true;
+		if (IsHaulJob(j)) return true;
 
-			string defName = j.def?.defName;
-			if (string.IsNullOrEmpty(defName)) return false;
+		string defName = j.def?.defName;
+		if (string.IsNullOrEmpty(defName)) return false;
 
-			if (defName.IndexOf("eat", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-			if (defName.IndexOf("ingest", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-			if (defName.IndexOf("meal", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-			if (defName.IndexOf("consume", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+		if (defName.IndexOf("eat", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+		if (defName.IndexOf("ingest", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+		if (defName.IndexOf("meal", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+		if (defName.IndexOf("consume", StringComparison.OrdinalIgnoreCase) >= 0) return true;
 
-			if (defName.IndexOf("rest", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+		if (defName.IndexOf("rest", StringComparison.OrdinalIgnoreCase) >= 0) return true;
 
-			if (defName.IndexOf("grab", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-			if (defName.IndexOf("pickup", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+		if (defName.IndexOf("grab", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+		if (defName.IndexOf("pickup", StringComparison.OrdinalIgnoreCase) >= 0) return true;
 
-			return false;
+		return false;
 		}
 
 		private static bool IsHaulJob(Job job)
