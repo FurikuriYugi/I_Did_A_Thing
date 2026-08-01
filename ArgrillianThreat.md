@@ -5926,6 +5926,10 @@ namespace ArgrillianThreat
 
 		private static void TryStopPatientToAllowTend(Pawn medic, Pawn patient)
 		{
+		Log.Message(
+		$"[ArgrillianThreat][TryStopPatientToAllowTend][ENTRY] medic={(medic != null ? medic.thingIDNumber.ToString() : "-1")} patient={(patient != null ? patient.thingIDNumber.ToString() : "-1")}"
+		);
+
 		if (patient == null || patient.Dead)
 		return;
 
@@ -5963,6 +5967,11 @@ namespace ArgrillianThreat
 
 		// If patient currently runs something actively interfering, we'll do the same hard stop as before.
 		bool patientInterferingNow = IsInterferingJobForTend(patient);
+
+		// STOP+HOLD decision-point log (required): print both ids + key gating values.
+		Log.Message(
+		$"[ArgrillianThreat][TryStopPatientToAllowTend][DECIDE] medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} heldByMedic={heldPatientByMedic.thingIDNumber} isHeldForTend={isHeldForTend} curAllowed={curIsAllowedHeldJob} patientInterferingNow={patientInterferingNow}"
+		);
 
 		// We *always* clear queued jobs under held-state; otherwise other jobgivers can enqueue haul/rest
 		// right after a “SKIP no-interference” tick.
