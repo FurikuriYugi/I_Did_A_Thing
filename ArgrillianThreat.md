@@ -6716,57 +6716,99 @@ namespace ArgrillianThreat
 		// medicEscortCombatRadius of the patient and/or medic (and line-of-sight holds).
 		if (retreatingHeldPatient && !tendEligibleNow)
 		{
-		Job cur = pawn.CurJob;
+			Job cur = pawn.CurJob;
 
-		if (cur != null && cur.def != null)
-		{
-			JobGiver_ArgrillianThreatResponse.TraceMedKit("TryGiveJob_enterEscortRetreatGate", pawn, heldPatient, tendEligibleNow, retreatingHeldPatient);
-
-			if (IsCombatAttackLikeJob(cur) || IsChaseOrTacticJob(cur))
+			if (cur != null && cur.def != null)
 			{
-				// Determine if hostiles are "near" for soft permission.
-				Pawn nearestHostile = FindNearestHostile(pawn, radius: medicEscortCombatRadius);
-				bool hostileNear = false;
+				bool isHeldForTend = ArgrillianMedicalState.PatientMedicHold.IsPatientHeldForTend(heldPatient);
 
-				if (nearestHostile != null)
+				JobGiver_ArgrillianThreatResponse.TraceMedKit(
+					"TryGiveJob_enterEscortRetreatGate",
+					pawn,
+					heldPatient,
+					tendEligibleNow,
+					retreatingHeldPatient,
+					isHeldForTend: isHeldForTend,
+					curJobDefName: cur.def.defName
+				);
+
+				if (IsCombatAttackLikeJob(cur) || IsChaseOrTacticJob(cur))
 				{
-					bool los = GenSight.LineOfSight(
-						pawn.Position,
-						nearestHostile.Position,
-						pawn.Map
-					);
+					// Determine if hostiles are "near" for soft permission.
+					Pawn nearestHostile = FindNearestHostile(pawn, radius: medicEscortCombatRadius);
+					bool hostileNear = false;
 
-					float dMed = pawn.Position.DistanceTo(nearestHostile.Position);
-					float dPat = heldPatient.Position.DistanceTo(nearestHostile.Position);
+					if (nearestHostile != null)
+					{
+						bool los = GenSight.LineOfSight(
+							pawn.Position,
+							nearestHostile.Position,
+							pawn.Map
+						);
 
-					hostileNear = los && (dMed <= (medicEscortCombatRadius + 0.1f) || dPat <= (medicEscortCombatRadius + 0.1f));
+						float dMed = pawn.Position.DistanceTo(nearestHostile.Position);
+						float dPat = heldPatient.Position.DistanceTo(nearestHostile.Position);
+
+						hostileNear = los && (dMed <= (medicEscortCombatRadius + 0.1f) || dPat <= (medicEscortCombatRadius + 0.1f));
+					}
+
+					// CRITICAL CONTRACT:
+					// While patient is held-for-tend, never take the "soft allow combat because hostileNear" branch.
+					// Otherwise the medic can wiggle away from the tend pipeline and patient-side job arbitration can run.
+					if (isHeldForTend)
+					{
+						JobGiver_ArgrillianThreatResponse.TraceMedKit(
+							"TryGiveJob_hardEscort_STOPCombat_BecauseHeldForTend",
+							pawn,
+							heldPatient,
+							tendEligibleNow: false,
+							retreatingHeldPatient: retreatingHeldPatient,
+							hostileNear: hostileNear,
+							curJobDefName: cur.def.defName
+						);
+
+						pawn.jobs?.StopAll(true);
+						pawn.jobs?.ClearQueuedJobs();
+						pawn.pather?.StopDead();
+
+						ArgrillianThreatState.CombatLock.Clear(pawn);
+						ArgrillianThreatState.CombatCommit.Clear(pawn);
+					}
+					else
+					{
+						if (hostileNear)
+						{
+							JobGiver_ArgrillianThreatResponse.TraceMedKit(
+								"TryGiveJob_softEscort_AllowCombatBecauseHostileNear",
+								pawn,
+								heldPatient,
+								tendEligibleNow: false,
+								retreatingHeldPatient: retreatingHeldPatient
+							);
+						}
+						else
+						{
+							JobGiver_ArgrillianThreatResponse.TraceMedKit(
+								"TryGiveJob_hardEscort_StopCombatBecauseHostileNotNear",
+								pawn,
+								heldPatient,
+								tendEligibleNow: false,
+								retreatingHeldPatient: retreatingHeldPatient
+							);
+
+							pawn.jobs?.StopAll(true);
+							pawn.jobs?.ClearQueuedJobs();
+							pawn.pather?.StopDead();
+
+							ArgrillianThreatState.CombatLock.Clear(pawn);
+							ArgrillianThreatState.CombatCommit.Clear(pawn);
+						}
+					}
+
+					// SOFT gate: if hostile is near, we do NOT stop; otherwise we stop.
+					// NOTE: when isHeldForTend==true, the soft allow path is suppressed (hard stop above).
 				}
-				else
-				{
-					// No hostiles in range.
-					// hostileNear stays false.
-				}
-
-				if (hostileNear)
-				{
-					JobGiver_ArgrillianThreatResponse.TraceMedKit("TryGiveJob_softEscort_AllowCombatBecauseHostileNear", pawn, heldPatient, tendEligibleNow: false, retreatingHeldPatient: retreatingHeldPatient);
-				}
-				else
-				{
-					JobGiver_ArgrillianThreatResponse.TraceMedKit("TryGiveJob_hardEscort_StopCombatBecauseHostileNotNear", pawn, heldPatient, tendEligibleNow: false, retreatingHeldPatient: retreatingHeldPatient);
-
-					pawn.jobs?.StopAll(true);
-					pawn.jobs?.ClearQueuedJobs();
-					pawn.pather?.StopDead();
-
-					ArgrillianThreatState.CombatLock.Clear(pawn);
-					ArgrillianThreatState.CombatCommit.Clear(pawn);
-				}
-
-				// SOFT gate: if hostile is near, we do NOT stop; we rely on the existing architecture
-				// to keep this non-chase (next tick will re-evaluate tend eligibility and re-sync).
 			}
-		}
 		}
 
 		// ----------------------------
