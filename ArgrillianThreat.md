@@ -6727,14 +6727,12 @@ namespace ArgrillianThreat
 					pawn,
 					heldPatient,
 					tendEligibleNow,
-					retreatingHeldPatient,
-					isHeldForTend: isHeldForTend,
-					curJobDefName: cur.def.defName
+					retreatingHeldPatient
 				);
 
 				if (IsCombatAttackLikeJob(cur) || IsChaseOrTacticJob(cur))
 				{
-					// Determine if hostiles are "near" for soft permission.
+					// Determine if hostiles are "near" (for logging only; soft permission must be blocked when held-for-tend).
 					Pawn nearestHostile = FindNearestHostile(pawn, radius: medicEscortCombatRadius);
 					bool hostileNear = false;
 
@@ -6752,19 +6750,25 @@ namespace ArgrillianThreat
 						hostileNear = los && (dMed <= (medicEscortCombatRadius + 0.1f) || dPat <= (medicEscortCombatRadius + 0.1f));
 					}
 
-					// CRITICAL CONTRACT:
-					// While patient is held-for-tend, never take the "soft allow combat because hostileNear" branch.
-					// Otherwise the medic can wiggle away from the tend pipeline and patient-side job arbitration can run.
+					Verse.Log.Message(
+						$"[ArgrillianThreat][TRACE] escortGateDecision " +
+						$"tick={Find.TickManager.TicksGame} " +
+						$"medic={pawn.thingIDNumber} patient={heldPatient.thingIDNumber} " +
+						$"isHeldForTend={isHeldForTend} " +
+						$"tendEligibleNow={tendEligibleNow} retreatingHeldPatient={retreatingHeldPatient} " +
+						$"curJobDef={cur.def.defName} hostileNear={hostileNear}"
+					);
+
 					if (isHeldForTend)
 					{
+						// HARD CONTRACT:
+						// Patient is already held-for-tend => never allow the "hostileNear soft-allow" path.
 						JobGiver_ArgrillianThreatResponse.TraceMedKit(
-							"TryGiveJob_hardEscort_STOPCombat_BecauseHeldForTend",
+							"TryGiveJob_hardEscort_StopCombatBecauseHeldForTend",
 							pawn,
 							heldPatient,
 							tendEligibleNow: false,
-							retreatingHeldPatient: retreatingHeldPatient,
-							hostileNear: hostileNear,
-							curJobDefName: cur.def.defName
+							retreatingHeldPatient: retreatingHeldPatient
 						);
 
 						pawn.jobs?.StopAll(true);
@@ -6776,6 +6780,7 @@ namespace ArgrillianThreat
 					}
 					else
 					{
+						// Existing behavior when NOT held-for-tend.
 						if (hostileNear)
 						{
 							JobGiver_ArgrillianThreatResponse.TraceMedKit(
@@ -6804,9 +6809,6 @@ namespace ArgrillianThreat
 							ArgrillianThreatState.CombatCommit.Clear(pawn);
 						}
 					}
-
-					// SOFT gate: if hostile is near, we do NOT stop; otherwise we stop.
-					// NOTE: when isHeldForTend==true, the soft allow path is suppressed (hard stop above).
 				}
 			}
 		}
