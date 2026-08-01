@@ -5926,89 +5926,89 @@ namespace ArgrillianThreat
 
 		private static void TryStopPatientToAllowTend(Pawn medic, Pawn patient)
 		{
-			if (patient == null || patient.Dead)
-				return;
+		if (patient == null || patient.Dead)
+		return;
 
-			// Hard authority rule:
-			// Only the medic/combat medic that currently OWNS the held patient may stop/hold the patient for Tend/Rescue.
-			// Otherwise, other AI (including patient-side jobgers like resting/laying down) can take over,
-			// which matches your symptom ("breaking loose").
-			Pawn heldPatientByMedic = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(medic);
-			if (heldPatientByMedic == null || heldPatientByMedic != patient)
-			{
-				Log.Message(
-					$"[ArgrillianThreat][TryStopPatientToAllowTend] ABORT (not held by medic): medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} heldByMedic={(heldPatientByMedic != null ? heldPatientByMedic.thingIDNumber.ToString() : "null")}"
-				);
-				return;
-			}
+		// Hard authority rule:
+		// Only the medic/combat medic that currently OWNS the held patient may stop/hold the patient for Tend/Rescue.
+		// Otherwise, other AI (including patient-side jobgers like resting/laying down) can take over,
+		// which matches your symptom ("breaking loose").
+		Pawn heldPatientByMedic = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(medic);
+		if (heldPatientByMedic == null || heldPatientByMedic != patient)
+		{
+		Log.Message(
+			$"[ArgrillianThreat][TryStopPatientToAllowTend] ABORT (not held by medic): medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} heldByMedic={(heldPatientByMedic != null ? heldPatientByMedic.thingIDNumber.ToString() : "null")}"
+		);
+		return;
+		}
 
-			// If patient isn't held for tend, don't interfere with normal job arbitration.
-			bool isHeldForTend = ArgrillianMedicalState.PatientMedicHold.IsPatientHeldForTend(patient);
-			if (!isHeldForTend)
-				return;
+		// If patient isn't held for tend, don't interfere with normal job arbitration.
+		bool isHeldForTend = ArgrillianMedicalState.PatientMedicHold.IsPatientHeldForTend(patient);
+		if (!isHeldForTend)
+		return;
 
-			// At this point, the patient is *held*; prevent “wiggle” by suppressing all non-held job churn.
-			// We still respect that the patient might already be in an allowed tend/rescue pipeline state.
-			// But we must clear queued jobs and stop movement so the patient can't swap into haul/rest/etc.
-			Job cur = patient.CurJob;
+		// At this point, the patient is *held*; prevent “wiggle” by suppressing all non-held job churn.
+		// We still respect that the patient might already be in an allowed tend/rescue pipeline state.
+		// But we must clear queued jobs and stop movement so the patient can't swap into haul/rest/etc.
+		Job cur = patient.CurJob;
 
-			bool curIsAllowedHeldJob =
-				cur != null && cur.def != null &&
-				(
-					cur.def == JobDefOf.Wait ||
-					cur.def == JobDefOf.LayDown ||
-					cur.def == JobDefOf.Rescue ||
-					cur.def == JobDefOf.TendPatient
-				);
+		bool curIsAllowedHeldJob =
+		cur != null && cur.def != null &&
+		(
+			cur.def == JobDefOf.Wait ||
+			cur.def == JobDefOf.LayDown ||
+			cur.def == JobDefOf.Rescue ||
+			cur.def == JobDefOf.TendPatient
+		);
 
-			// If patient currently runs something actively interfering, we'll do the same hard stop as before.
-			bool patientInterferingNow = IsInterferingJobForTend(patient);
+		// If patient currently runs something actively interfering, we'll do the same hard stop as before.
+		bool patientInterferingNow = IsInterferingJobForTend(patient);
 
-			// We *always* clear queued jobs under held-state; otherwise other jobgivers can enqueue haul/rest
-			// right after a “SKIP no-interference” tick.
-			patient.jobs?.ClearQueuedJobs();
+		// We *always* clear queued jobs under held-state; otherwise other jobgivers can enqueue haul/rest
+		// right after a “SKIP no-interference” tick.
+		patient.jobs?.ClearQueuedJobs();
 
-			// If they're not already in an allowed held job, force a Wait to prevent movement/combat churn.
-			// If they're interfering, additionally stop all immediately (this mirrors the old behavior).
-			if (!curIsAllowedHeldJob)
-			{
-				Job existing = patient.CurJob;
-				if (existing != null && existing.def == JobDefOf.Wait)
-				{
-					// Already waiting, but still may have queued jobs; we cleared queues above.
-				}
-				else
-				{
-					patient.jobs?.StopAll(true);
-				}
+		// If they're not already in an allowed held job, force a Wait to prevent movement/combat churn.
+		// If they're interfering, additionally stop all immediately (this mirrors the old behavior).
+		if (!curIsAllowedHeldJob)
+		{
+		Job existing = patient.CurJob;
+		if (existing != null && existing.def == JobDefOf.Wait)
+		{
+			// Already waiting, but still may have queued jobs; we cleared queues above.
+		}
+		else
+		{
+			patient.jobs?.StopAll(true);
+		}
 
-				patient.pather?.StopDead();
+		patient.pather?.StopDead();
 
-				IntVec3 here = patient.Position;
-				Job hold = JobMaker.MakeJob(JobDefOf.Wait, here);
-				hold.count = 1;
-				patient.jobs?.StartJob(hold, JobCondition.InterruptForced);
-			}
-			else
-			{
-				// Allowed held job: keep them still and ensure their pathing isn't driving them away.
-				// (No need to stop all jobs if they're already on the pipeline-allowed job.)
-				patient.pather?.StopDead();
+		IntVec3 here = patient.Position;
+		Job hold = JobMaker.MakeJob(JobDefOf.Wait, here);
+		hold.count = 1;
+		patient.jobs?.StartJob(hold, JobCondition.InterruptForced);
+		}
+		else
+		{
+		// Allowed held job: keep them still and ensure their pathing isn't driving them away.
+		// (No need to stop all jobs if they're already on the pipeline-allowed job.)
+		patient.pather?.StopDead();
 
-				// If they were about to swap jobs this tick, StopAll(false) could still churn,
-				// so we just make sure the queued set is empty (already cleared).
-				if (patientInterferingNow)
-				{
-					// Defensive: if IsInterferingJobForTend says interfering even though cur is allowed,
-					// treat it as interference and hard stop.
-					patient.jobs?.StopAll(true);
+		// If they were about to swap jobs this tick, StopAll(false) could still churn,
+		// so we just make sure the queued set is empty (already cleared).
+		if (patientInterferingNow)
+		{
+			// Defensive: if IsInterferingJobForTend says interfering even though cur is allowed,
+			// treat it as interference and hard stop.
+			patient.jobs?.StopAll(true);
 
-					IntVec3 here = patient.Position;
-					Job hold = JobMaker.MakeJob(JobDefOf.Wait, here);
-					hold.count = 1;
-					patient.jobs?.StartJob(hold, JobCondition.InterruptForced);
-				}
-			}
+			IntVec3 here = patient.Position;
+			Job hold = JobMaker.MakeJob(JobDefOf.Wait, here);
+			hold.count = 1;
+			patient.jobs?.StartJob(hold, JobCondition.InterruptForced);
+		}
+		}
 		}
 
 		private static bool IsJobNameContains(Job j, string part)
