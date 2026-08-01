@@ -5881,10 +5881,11 @@ namespace ArgrillianThreat
 		// Otherwise, other AI (including patient-side jobgers like resting/laying down) can take over,
 		// which matches your symptom ("breaking loose").
 		Pawn heldPatientByMedic = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(medic);
+
 		if (heldPatientByMedic == null || heldPatientByMedic != patient)
 		{
 		Log.Message(
-			$"[ArgrillianThreat][TryStopPatientToAllowTend] ABORT (not held by medic): medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} heldByMedic={(heldPatientByMedic != null ? heldPatientByMedic.thingIDNumber.ToString() : "null")}"
+		$"[ArgrillianThreat][TryStopPatientToAllowTend] ABORT (not held by medic): medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} heldByMedic={(heldPatientByMedic != null ? heldPatientByMedic.thingIDNumber.ToString() : "null")}"
 		);
 		return;
 		}
@@ -5894,7 +5895,7 @@ namespace ArgrillianThreat
 		if (!isHeldForTend)
 		{
 		Log.Message(
-			$"[ArgrillianThreat][TryStopPatientToAllowTend] ABORT (not held-for-tend): medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} curJob={(patient.CurJob?.def?.defName ?? "null")}"
+		$"[ArgrillianThreat][TryStopPatientToAllowTend] ABORT (not held-for-tend): medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} curJob={(patient.CurJob?.def?.defName ?? "null")}"
 		);
 		return;
 		}
@@ -5914,7 +5915,8 @@ namespace ArgrillianThreat
 		// If patient currently runs something actively interfering, we'll do the same hard stop as before.
 		bool patientInterferingNow = IsInterferingJobForTend(patient);
 
-		// Removed IsAllowedDownPawnJob: held-job allowance is now ONLY pipeline-held jobs.
+		// Removed IsAllowedDownPawnJob(...) call entirely.
+		// If downed, we treat most non-pipeline churn as interfering so medic can hard-stop and hold.
 		bool curJobAllowedWhileHeld = curIsPipelineHeldJob;
 
 		// STOP+HOLD decision-point log (required): print both ids + key gating values.
@@ -5934,7 +5936,15 @@ namespace ArgrillianThreat
 		if (!curIsPipelineHeldJob || !curJobAllowedWhileHeld)
 		{
 		Log.Message(
-			$"[ArgrillianThreat][TryStopPatientToAllowTend][HELD->FORCE_WAIT] medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} curJob={(patient.CurJob?.def?.defName ?? "null")} curIsPipelineHeldJob={curIsPipelineHeldJob} curJobAllowedWhileHeld={curJobAllowedWhileHeld}"
+		$"[ArgrillianThreat][TryStopPatientToAllowTend][HELD->FORCE_WAIT]" +
+		$" medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber}" +
+		$" offenderJobDef={(patient.CurJob?.def?.defName ?? "null")}" +
+		$" offenderReason={!curIsPipelineHeldJob ? "NOT_PIPELINE_JOB" : "JOB_NOT_ALLOWED_WHILE_HELD"}" +
+		$" curIsPipelineHeldJob={curIsPipelineHeldJob} curJobAllowedWhileHeld={curJobAllowedWhileHeld} patientInterferingNow={patientInterferingNow}"
+		);
+
+		Log.Message(
+		$"[ArgrillianThreat][TryStopPatientToAllowTend][HELD->FORCE_WAIT] medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} curJob={(patient.CurJob?.def?.defName ?? "null")} curIsPipelineHeldJob={curIsPipelineHeldJob} curJobAllowedWhileHeld={curJobAllowedWhileHeld}"
 		);
 
 		patient.jobs?.StopAll(true);
@@ -5945,7 +5955,7 @@ namespace ArgrillianThreat
 		patient.jobs?.StartJob(hold, JobCondition.InterruptForced);
 
 		Log.Message(
-			$"[ArgrillianThreat][TryStopPatientToAllowTend][HELD->FORCE_WAIT][AFTER_START] medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} newCurJob={(patient.CurJob?.def?.defName ?? "null")}"
+		$"[ArgrillianThreat][TryStopPatientToAllowTend][HELD->FORCE_WAIT][AFTER_START] medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} newCurJob={(patient.CurJob?.def?.defName ?? "null")}"
 		);
 
 		return;
@@ -5956,7 +5966,14 @@ namespace ArgrillianThreat
 		if (patientInterferingNow)
 		{
 		Log.Message(
-			$"[ArgrillianThreat][TryStopPatientToAllowTend][HELD->FORCE_WAIT_FROM_PIPELINE] medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} curJob={(patient.CurJob?.def?.defName ?? "null")}"
+		$"[ArgrillianThreat][TryStopPatientToAllowTend][HELD->FORCE_WAIT_FROM_PIPELINE]" +
+		$" medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber}" +
+		$" pipelineJobDef={(patient.CurJob?.def?.defName ?? "null")}" +
+		$" offenderReason=INTERFERING_JOB_WHILE_PIPELINEHELD"
+		);
+
+		Log.Message(
+		$"[ArgrillianThreat][TryStopPatientToAllowTend][HELD->FORCE_WAIT_FROM_PIPELINE] medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} curJob={(patient.CurJob?.def?.defName ?? "null")}"
 		);
 
 		patient.jobs?.StopAll(true);
