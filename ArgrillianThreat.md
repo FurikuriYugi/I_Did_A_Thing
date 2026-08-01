@@ -5897,33 +5897,6 @@ namespace ArgrillianThreat
 			return medic.CanReserve(t, 1, -1, null, false);
 		}
 
-		private static bool IsAllowedDownPawnJob(Job job)
-		{
-			if (job == null) return false;
-
-			// While held-for-tend/rescue, only allow the job set that cannot disrupt the Tend/Rescue pipeline.
-			// Anything else risks “patient resumes other behavior”, which interrupts medic tend.
-			//
-			// NOTE: This is patient-held gating; medic authority remains in TryStopPatientToAllowTend(...)
-			// and Release/Unlock controls release timing.
-
-			if (job.def == JobDefOf.Wait) return true;
-			if (job.def == JobDefOf.LayDown) return true;
-			if (job.def == JobDefOf.Rescue) return true;
-			if (job.def == JobDefOf.TendPatient) return true;
-
-			string defName = job.def?.defName;
-			if (string.IsNullOrEmpty(defName)) return false;
-
-			defName = defName.ToLowerInvariant();
-
-			if (defName.Contains("rescue")) return true;
-			if (defName.Contains("lay")) return true;
-			if (defName.Contains("bed")) return true;
-
-			return false;
-		}
-
 		private static void TryStopPatientToAllowTend(Pawn medic, Pawn patient)
 		{
 		Log.Message(
