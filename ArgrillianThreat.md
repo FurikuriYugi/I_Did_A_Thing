@@ -5927,11 +5927,11 @@ namespace ArgrillianThreat
 		private static void TryStopPatientToAllowTend(Pawn medic, Pawn patient)
 		{
 		Log.Message(
-		$"[ArgrillianThreat][TryStopPatientToAllowTend][ENTRY] medic={(medic != null ? medic.thingIDNumber.ToString() : "-1")} patient={(patient != null ? patient.thingIDNumber.ToString() : "-1")}"
+			$"[ArgrillianThreat][TryStopPatientToAllowTend][ENTRY] medic={(medic != null ? medic.thingIDNumber.ToString() : "-1")} patient={(patient != null ? patient.thingIDNumber.ToString() : "-1")}"
 		);
 
 		if (patient == null || patient.Dead)
-		return;
+			return;
 
 		// Hard authority rule:
 		// Only the medic/combat medic that currently OWNS the held patient may stop/hold the patient for Tend/Rescue.
@@ -5940,39 +5940,40 @@ namespace ArgrillianThreat
 		Pawn heldPatientByMedic = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(medic);
 		if (heldPatientByMedic == null || heldPatientByMedic != patient)
 		{
-		Log.Message(
-			$"[ArgrillianThreat][TryStopPatientToAllowTend] ABORT (not held by medic): medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} heldByMedic={(heldPatientByMedic != null ? heldPatientByMedic.thingIDNumber.ToString() : "null")}"
-		);
-		return;
+			Log.Message(
+				$"[ArgrillianThreat][TryStopPatientToAllowTend] ABORT (not held by medic): medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} heldByMedic={(heldPatientByMedic != null ? heldPatientByMedic.thingIDNumber.ToString() : "null")}"
+			);
+			return;
 		}
 
 		// If patient isn't held for tend, don't interfere with normal job arbitration.
 		bool isHeldForTend = ArgrillianMedicalState.PatientMedicHold.IsPatientHeldForTend(patient);
 		if (!isHeldForTend)
-		return;
+		{
+			Log.Message(
+				$"[ArgrillianThreat][TryStopPatientToAllowTend] ABORT (not held-for-tend): medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} curJob={(patient.CurJob?.def?.defName ?? "null")}"
+			);
+			return;
+		}
 
 		// At this point, the patient is *held*; prevent “wiggle” by suppressing all non-held job churn.
 		// We still respect that the patient might already be in an allowed tend/rescue pipeline state.
-		// But we must clear queued jobs and stop movement so the patient can't swap into haul/rest/etc.
 		Job cur = patient.CurJob;
 
-		// IMPORTANT CHANGE:
-		// While held, only allow the true Tend/Rescue pipeline jobs.
-		// Do NOT treat Wait/LayDown as "allowed", because those can immediately lead to Rest/Consume/Mem-like behavior next tick.
 		bool curIsPipelineHeldJob =
-		cur != null &&
-		cur.def != null &&
-		(
-			cur.def == JobDefOf.Rescue ||
-			cur.def == JobDefOf.TendPatient
-		);
+			cur != null &&
+			cur.def != null &&
+			(
+				cur.def == JobDefOf.Rescue ||
+				cur.def == JobDefOf.TendPatient
+			);
 
 		// If patient currently runs something actively interfering, we'll do the same hard stop as before.
 		bool patientInterferingNow = IsInterferingJobForTend(patient);
 
 		// STOP+HOLD decision-point log (required): print both ids + key gating values.
 		Log.Message(
-		$"[ArgrillianThreat][TryStopPatientToAllowTend][DECIDE] medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} heldByMedic={heldPatientByMedic.thingIDNumber} isHeldForTend={isHeldForTend} curAllowed={curIsPipelineHeldJob} patientInterferingNow={patientInterferingNow}"
+			$"[ArgrillianThreat][TryStopPatientToAllowTend][DECIDE] medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} heldByMedic={heldPatientByMedic.thingIDNumber} isHeldForTend={isHeldForTend} curAllowed={curIsPipelineHeldJob} patientInterferingNow={patientInterferingNow} curJobBefore={(patient.CurJob?.def?.defName ?? "null")}"
 		);
 
 		// We *always* clear queued jobs under held-state; otherwise other jobgivers can enqueue haul/rest
@@ -5985,29 +5986,44 @@ namespace ArgrillianThreat
 
 		if (!curIsPipelineHeldJob)
 		{
-		// Force a hard stop so patient AI can't immediately swap into rest/consume/meal.
-		patient.jobs?.StopAll(true);
+			// Force a hard stop so patient AI can't immediately swap into rest/consume/meal.
+			Log.Message(
+				$"[ArgrillianThreat][TryStopPatientToAllowTend][HELD->FORCE_WAIT] medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} curJob={(patient.CurJob?.def?.defName ?? "null")}"
+			);
 
-		IntVec3 here = patient.Position;
-		Job hold = JobMaker.MakeJob(JobDefOf.Wait, here);
-		hold.count = 1;
-		patient.jobs?.StartJob(hold, JobCondition.InterruptForced);
-		}
-		else
-		{
-		// Allowed pipeline job: keep them still and ensure their pathing isn't driving them away.
-		// If they look interfering (even while cur job is pipeline-allowed), hard-stop to re-stabilize.
-		if (patientInterferingNow)
-		{
 			patient.jobs?.StopAll(true);
 
 			IntVec3 here = patient.Position;
 			Job hold = JobMaker.MakeJob(JobDefOf.Wait, here);
 			hold.count = 1;
 			patient.jobs?.StartJob(hold, JobCondition.InterruptForced);
-		}
 
-		// queued set already cleared above; no further action required for this tick.
+			Log.Message(
+				$"[ArgrillianThreat][TryStopPatientToAllowTend][HELD->FORCE_WAIT][AFTER_START] medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} newCurJob={(patient.CurJob?.def?.defName ?? "null")}"
+			);
+		}
+		else
+		{
+			// Allowed pipeline job: keep them still and ensure their pathing isn't driving them away.
+			// If they look interfering (even while cur job is pipeline-allowed), hard-stop to re-stabilize.
+			if (patientInterferingNow)
+			{
+				Log.Message(
+					$"[ArgrillianThreat][TryStopPatientToAllowTend][HELD->FORCE_WAIT_FROM_PIPELINE] medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} curJob={(patient.CurJob?.def?.defName ?? "null")}"
+				);
+
+				patient.jobs?.StopAll(true);
+
+				IntVec3 here = patient.Position;
+				Job hold = JobMaker.MakeJob(JobDefOf.Wait, here);
+				hold.count = 1;
+				patient.jobs?.StartJob(hold, JobCondition.InterruptForced);
+
+				Log.Message(
+					$"[ArgrillianThreat][TryStopPatientToAllowTend][HELD->FORCE_WAIT_FROM_PIPELINE][AFTER_START] medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} newCurJob={(patient.CurJob?.def?.defName ?? "null")}"
+				);
+			}
+			// queued set already cleared above; no further action required for this tick.
 		}
 		}
 
