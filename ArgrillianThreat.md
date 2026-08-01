@@ -6513,6 +6513,7 @@ namespace ArgrillianThreat
 			if (retreatingHeldPatient && !tendEligibleNow)
 			{
 				Job cur = pawn.CurJob;
+				if (heldPatient == null) return null;
 
 				if (cur != null && cur.def != null)
 				{
