@@ -6525,28 +6525,60 @@ namespace ArgrillianThreat
 		// Non-destructive: do NOT StopAll(true) and do NOT inject Wait jobs (they destabilize job arbitration during the transition).
 		private static void LockPatientToMedic(Pawn medic, Pawn patient)
 		{
-			if (patient == null || patient.Dead) return;
+		if (patient == null || patient.Dead) return;
 
-			ArgrillianMedicalState.PatientMedicHold.Lock(medic, patient);
+		ArgrillianMedicalState.PatientMedicHold.Lock(medic, patient);
 
-			// Real trace requirement: log when patient hold is acquired (heldPatient set + patient hold lock confirmation).
-			// Only log when the hold actually stuck.
-			Pawn held = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(medic);
-			if (held != null && held.thingIDNumber == patient.thingIDNumber)
+		// Real trace requirement: log when patient hold is acquired (heldPatient set + patient hold lock confirmation).
+		// Only log when the hold actually stuck.
+		Pawn held = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(medic);
+		if (held != null && held.thingIDNumber == patient.thingIDNumber)
+		{
+		Log.Message(
+			$"[ArgrillianThreat][HOLD] patientHoldAcquired medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} mapOk={(medic?.Map == patient?.Map)}"
+		);
+
+		// IMPORTANT CONTRACT (your Task 1/2/9):
+		// While held-for-tend is active and medic has committed to the tend/rescue pipeline,
+		// the patient must be held in Wait and prevented from starting any other jobs
+		// (including rest/laydown/ingest/haul/consume/etc) until terminal completion releases the hold.
+		//
+		// Previous behavior intentionally avoided stopping the patient here, but that allows
+		// the patient to bounce into other jobs before the tend decision stabilizes.
+		bool isHeldForTendNow = ArgrillianMedicalState.PatientMedicHold.IsPatientHeldForTend(patient);
+		if (isHeldForTendNow)
+		{
+			Job cur = patient.CurJob;
+
+			// If patient is already in a pipeline job, keep it (but still suppress churn).
+			// Otherwise, force into Wait immediately.
+			bool curIsPipelineLike =
+				cur != null &&
+				cur.def != null &&
+				(cur.def == JobDefOf.TendPatient ||
+					cur.def == JobDefOf.Rescue ||
+					cur.def == JobDefOf.Wait ||
+					cur.def == JobDefOf.LayDown);
+
+			// Stop all existing/churn jobs and force Wait to satisfy "no rest/laydown before hold is acquired".
+			// We do this only after hold is confirmed acquired.
+			patient.jobs?.StopAll(true);
+			patient.jobs?.ClearQueuedJobs();
+			patient.pather?.StopDead();
+
+			if (!curIsPipelineLike)
 			{
+				IntVec3 here = patient.Position;
+				Job hold = JobMaker.MakeJob(JobDefOf.Wait, here);
+				hold.count = 1;
+				patient.jobs?.StartJob(hold, JobCondition.InterruptForced);
+
 				Log.Message(
-					$"[ArgrillianThreat][HOLD] patientHoldAcquired medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} mapOk={(medic?.Map == patient?.Map)}"
+					$"[ArgrillianThreat][HOLD] patientForcedWaitOnLock medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} curJob={(cur?.def?.defName ?? "null")}"
 				);
 			}
-
-			// Do NOT stop the patient here.
-			// The patient must keep retreating / repositioning toward safety and/or toward the medic,
-			// so that the tend job can actually succeed when eligibility is reached.
-
-			// Do NOT interrupt/clear the patient’s current job here either.
-			// Interfering too early commonly causes “stuck tending” (medic starts tend but patient never reaches the correct tend state).
-			//
-			// We only hard-stop right before we start Tend/Rescue (inside the heldPatient + canTendNow branch).
+		}
+		}
 		}
 
 		protected override Job TryGiveJob(Pawn pawn)
