@@ -6588,274 +6588,232 @@ namespace ArgrillianThreat
 
 		protected override Job TryGiveJob(Pawn pawn)
 		{
-			// NEW: publish PatientCalls when this pawn enters downed/bleeding states
-			// (edge/transition coalescing is handled inside NotifyPawnSelfState).
-			ArgrillianAlertSystem.NotifyPawnSelfState(pawn);
+		// NEW: publish PatientCalls when this pawn enters downed/bleeding states
+		// (edge/transition coalescing is handled inside NotifyPawnSelfState).
+		ArgrillianAlertSystem.NotifyPawnSelfState(pawn);
 
-			// Medic gating: non-combat medics don't do threat response.
-			var medicThreatSettings = pawn?.GetComp<CompArgrillianMedicSettings>();
-			if (medicThreatSettings != null && medicThreatSettings.isMedic && !medicThreatSettings.combatMedic)
+		// Medic gating: non-combat medics don't do threat response.
+		var medicThreatSettings = pawn?.GetComp<CompArgrillianMedicSettings>();
+		if (medicThreatSettings != null && medicThreatSettings.isMedic && !medicThreatSettings.combatMedic)
+		{
+		return null;
+		}
+
+		if (pawn == null || pawn.Dead || pawn.Map == null) return null;
+		if (pawn.Downed) return null;
+
+		var medicComp = pawn.GetComp<CompArgrillianMedicSettings>();
+		if (medicComp == null || !medicComp.isMedic) return null;
+		if (!medicComp.combatMedic) return null;
+
+		Pawn heldPatient = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
+
+		if (heldPatient == null)
+		{
+		Pawn bestCandidate = ArgrillianAlertSystem.GetBestPatientFromCalls(pawn, searchRadius);
+		if (bestCandidate != null)
+		{
+			ArgrillianMedicalState.PatientMedicHold.Lock(pawn, bestCandidate);
+			heldPatient = bestCandidate;
+		}
+		}
+
+		if (heldPatient == null)
+		return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
+
+		// ----------------------------
+		// 0) TERMINAL COMPLETION CHECK (wires 0E+ completion contract)
+		// ----------------------------
+		// "Terminal" here is defined as: patient is in bed + sufficiently stabilized to re-enter combat.
+		float patientHP = heldPatient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
+
+		bool patientInBedAndFullyTended =
+		heldPatient.InBed() &&
+		!heldPatient.Downed &&
+		!(heldPatient.health?.hediffSet != null && heldPatient.health.hediffSet.HasHediff(HediffDefOf.BloodLoss));
+
+		bool patientClearedForCombat = patientHP >= 0.8f && patientInBedAndFullyTended && !heldPatient.Downed;
+		bool escortToMedicalRequired = !patientClearedForCombat;
+
+		if (patientInBedAndFullyTended)
+		{
+		// Tell the alert system this medic/patient pair reached terminal completion.
+		ArgrillianAlertSystem.NotifyMedicPatientCallTerminalCompletion(
+			pawn,
+			heldPatient,
+			patientHP,
+			patientInBedAndFullyTended,
+			patientClearedForCombat,
+			escortToMedicalRequired
+		);
+
+		// After terminal completion, fall back to normal threat job logic.
+		// (Alert system will keep medic unavailable until terminal completion is satisfied.)
+		return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
+		}
+
+		// ----------------------------
+		// 0) Gate state detection (used by both gates)
+		// ----------------------------
+		// IMPORTANT: keep this driven by call severity semantics (Bleed/Downed outranks),
+		// not by old raw HP heuristics alone.
+		bool heldIsBleedingNow =
+		heldPatient.health?.hediffSet != null &&
+		heldPatient.health.hediffSet.HasHediff(HediffDefOf.BloodLoss);
+
+		bool retreatingHeldPatient = !heldPatient.Downed && !heldIsBleedingNow;
+
+		// Evaluate eligibility early so we can apply escort locks before RimWorld arbitration
+		// gets it "stuck" on attack/fight jobs.
+		bool tendEligibleNow = canTendNow(pawn, heldPatient);
+
+		// ----------------------------
+		// 1) FORCE PATIENT RETREAT / STOP so Tend/Rescue can succeed
+		// ----------------------------
+		// CRITICAL FIX:
+		// While the patient is held for tend/rescue, we must keep enforcing held-job stop
+		// even if tendEligibleNow == false, and regardless of heldPatient.Downed.
+		// Otherwise, patient-side job arbitration can "free" the patient into rest/haul/other jobs.
+		if (ArgrillianMedicalState.PatientMedicHold.IsPatientHeldForTend(heldPatient))
+		{
+		TryStopPatientToAllowTend(pawn, heldPatient);
+		}
+		else
+		{
+		// Fallback safety: do not interfere unless hold is actually present/owned.
+		// (TryStop already has a hard authority guard; this is just to avoid pointless calls.)
+		}
+
+		// ----------------------------
+		// 1.25) ESCORT objective gate + near-hostile permission gate (two-gates)
+		// ----------------------------
+		// HARD: while in retreating HeldPatient stage and NOT tend-eligible yet,
+		//       medic should stay escort/follow (no chase). Any combat job must be aborted
+		//       unless the hostile is "near enough" for short opportunistic action.
+		// SOFT: allow staying in/keeping a combat job only when a hostile is within
+		// medicEscortCombatRadius of the patient and/or medic (and line-of-sight holds).
+		if (retreatingHeldPatient && !tendEligibleNow)
+		{
+		Job cur = pawn.CurJob;
+
+		if (cur != null && cur.def != null)
+		{
+			JobGiver_ArgrillianThreatResponse.TraceMedKit("TryGiveJob_enterEscortRetreatGate", pawn, heldPatient, tendEligibleNow, retreatingHeldPatient);
+
+			if (IsCombatAttackLikeJob(cur) || IsChaseOrTacticJob(cur))
 			{
-				return null;
-			}
+				// Determine if hostiles are "near" for soft permission.
+				Pawn nearestHostile = FindNearestHostile(pawn, radius: medicEscortCombatRadius);
+				bool hostileNear = false;
 
-			if (pawn == null || pawn.Dead || pawn.Map == null) return null;
-			if (pawn.Downed) return null;
-
-			var medicComp = pawn.GetComp<CompArgrillianMedicSettings>();
-			if (medicComp == null || !medicComp.isMedic) return null;
-			if (!medicComp.combatMedic) return null;
-
-			Pawn heldPatient = ArgrillianMedicalState.PatientMedicHold.GetHeldPatient(pawn);
-
-			if (heldPatient == null)
-			{
-				Pawn bestCandidate = ArgrillianAlertSystem.GetBestPatientFromCalls(pawn, searchRadius);
-				if (bestCandidate != null)
+				if (nearestHostile != null)
 				{
-					ArgrillianMedicalState.PatientMedicHold.Lock(pawn, bestCandidate);
-					heldPatient = bestCandidate;
+					bool los = GenSight.LineOfSight(
+						pawn.Position,
+						nearestHostile.Position,
+						pawn.Map
+					);
+
+					float dMed = pawn.Position.DistanceTo(nearestHostile.Position);
+					float dPat = heldPatient.Position.DistanceTo(nearestHostile.Position);
+
+					hostileNear = los && (dMed <= (medicEscortCombatRadius + 0.1f) || dPat <= (medicEscortCombatRadius + 0.1f));
+				}
+				else
+				{
+					// No hostiles in range.
+					// hostileNear stays false.
+				}
+
+				if (hostileNear)
+				{
+					JobGiver_ArgrillianThreatResponse.TraceMedKit("TryGiveJob_softEscort_AllowCombatBecauseHostileNear", pawn, heldPatient, tendEligibleNow: false, retreatingHeldPatient: retreatingHeldPatient);
+				}
+				else
+				{
+					JobGiver_ArgrillianThreatResponse.TraceMedKit("TryGiveJob_hardEscort_StopCombatBecauseHostileNotNear", pawn, heldPatient, tendEligibleNow: false, retreatingHeldPatient: retreatingHeldPatient);
+
+					pawn.jobs?.StopAll(true);
+					pawn.jobs?.ClearQueuedJobs();
+					pawn.pather?.StopDead();
+
+					ArgrillianThreatState.CombatLock.Clear(pawn);
+					ArgrillianThreatState.CombatCommit.Clear(pawn);
+				}
+
+				// SOFT gate: if hostile is near, we do NOT stop; we rely on the existing architecture
+				// to keep this non-chase (next tick will re-evaluate tend eligibility and re-sync).
+			}
+		}
+		}
+
+		// ----------------------------
+		// 1.5) RESYNC ESCALATION
+		// OLD behavior used raw HP% <= 0.75f.
+		// ----------------------------
+		// NEW behavior: treat escalation as an alert-severity semantic (Downed or Bleed)
+		// so the medic/combat medic response follows the alert-system worsening intent.
+		if (!heldPatient.Downed)
+		{
+		bool heldIsBleedingNow2 =
+			heldPatient.health?.hediffSet != null &&
+			heldPatient.health.hediffSet.HasHediff(HediffDefOf.BloodLoss);
+
+		if (heldIsBleedingNow2)
+		{
+			Job cur = pawn.CurJob;
+			if (cur != null && cur.def != null && !(
+					cur.def == JobDefOf.TendPatient ||
+					cur.def == JobDefOf.Rescue ||
+					cur.def == JobDefOf.Wait ||
+					cur.def == JobDefOf.LayDown))
+			{
+				string dn = cur.def.defName?.ToLowerInvariant() ?? "";
+
+				bool isCombatLike =
+					dn.Contains("attack") ||
+					dn.Contains("shoot") ||
+					dn.Contains("fight") ||
+					dn.Contains("melee") ||
+					dn.Contains("range");
+
+				if (isCombatLike)
+				{
+					pawn.jobs?.StopAll(true);
+					pawn.jobs?.ClearQueuedJobs();
+					pawn.pather?.StopDead();
+
+					ArgrillianThreatState.CombatLock.Clear(pawn);
+					ArgrillianThreatState.CombatCommit.Clear(pawn);
+
+					return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
 				}
 			}
+		}
+		}
 
-			if (heldPatient == null)
-				return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
+		// ----------------------------
+		// 2) KEEP-ACTIVE-JOB GUARD
+		//    If we already have Tend/Rescue running for this heldPatient, don't abandon it
+		// ----------------------------
+		if (pawn.CurJob != null && pawn.CurJob.def != null)
+		{
+		Job cur = pawn.CurJob;
+		JobDef def = cur.def;
 
-			// ----------------------------
-			// 0) TERMINAL COMPLETION CHECK (wires 0E+ completion contract)
-			// ----------------------------
-			// "Terminal" here is defined as: patient is in bed + sufficiently stabilized to re-enter combat.
-			float patientHP = heldPatient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
-
-			bool patientInBedAndFullyTended =
-				heldPatient.InBed() &&
-				!heldPatient.Downed &&
-				!(heldPatient.health?.hediffSet != null && heldPatient.health.hediffSet.HasHediff(HediffDefOf.BloodLoss));
-
-			bool patientClearedForCombat = patientHP >= 0.8f && patientInBedAndFullyTended && !heldPatient.Downed;
-			bool escortToMedicalRequired = !patientClearedForCombat;
-
-			if (patientInBedAndFullyTended)
-			{
-				// Tell the alert system this medic/patient pair reached terminal completion.
-				ArgrillianAlertSystem.NotifyMedicPatientCallTerminalCompletion(
-					pawn,
-					heldPatient,
-					patientHP,
-					patientInBedAndFullyTended,
-					patientClearedForCombat,
-					escortToMedicalRequired
-				);
-
-				// After terminal completion, fall back to normal threat job logic.
-				// (Alert system will keep medic unavailable until terminal completion is satisfied.)
-				return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
-			}
-
-			// ----------------------------
-			// 0) Gate state detection (used by both gates)
-			// ----------------------------
-			// IMPORTANT: keep this driven by call severity semantics (Bleed/Downed outranks),
-			// not by old raw HP heuristics alone.
-			bool heldIsBleedingNow =
-				heldPatient.health?.hediffSet != null &&
-				heldPatient.health.hediffSet.HasHediff(HediffDefOf.BloodLoss);
-
-			bool retreatingHeldPatient = !heldPatient.Downed && !heldIsBleedingNow;
-
-			// Evaluate eligibility early so we can apply escort locks before RimWorld arbitration
-			// gets it "stuck" on attack/fight jobs.
-			bool tendEligibleNow = canTendNow(pawn, heldPatient);
-
-			// ----------------------------
-			// 1) FORCE PATIENT RETREAT / STOP so Tend/Rescue can succeed
-			// ----------------------------
-			// If patient isn't downed, they still need to stop fighting / position for tend to start.
-			if (!heldPatient.Downed)
-				TryStopPatientToAllowTend(pawn, heldPatient);
-
-			// ----------------------------
-			// 1.25) ESCORT objective gate + near-hostile permission gate (two-gates)
-			// ----------------------------
-			// HARD: while in retreating HeldPatient stage and NOT tend-eligible yet,
-			//       medic should stay escort/follow (no chase). Any combat job must be aborted
-			//       unless the hostile is "near enough" for short opportunistic action.
-			// SOFT: allow staying in/keeping a combat job only when a hostile is within
-			// medicEscortCombatRadius of the patient and/or medic (and line-of-sight holds).
-			if (retreatingHeldPatient && !tendEligibleNow)
-			{
-				Job cur = pawn.CurJob;
-
-				if (cur != null && cur.def != null)
-				{
-					JobGiver_ArgrillianThreatResponse.TraceMedKit("TryGiveJob_enterEscortRetreatGate", pawn, heldPatient, tendEligibleNow, retreatingHeldPatient);
-
-					if (IsCombatAttackLikeJob(cur) || IsChaseOrTacticJob(cur))
-					{
-						// Determine if hostiles are "near" for soft permission.
-						Pawn nearestHostile = FindNearestHostile(pawn, radius: medicEscortCombatRadius);
-						bool hostileNear = false;
-
-						if (nearestHostile != null)
-						{
-							bool los = GenSight.LineOfSight(
-								pawn.Position,
-								nearestHostile.Position,
-								pawn.Map
-							);
-
-							float dMed = pawn.Position.DistanceTo(nearestHostile.Position);
-							float dPat = heldPatient.Position.DistanceTo(nearestHostile.Position);
-
-							hostileNear = los && (dMed <= (medicEscortCombatRadius + 0.1f) || dPat <= (medicEscortCombatRadius + 0.1f));
-						}
-						else
-						{
-							// No hostiles in range.
-							// hostileNear stays false.
-						}
-
-						if (hostileNear)
-						{
-							JobGiver_ArgrillianThreatResponse.TraceMedKit("TryGiveJob_softEscort_AllowCombatBecauseHostileNear", pawn, heldPatient, tendEligibleNow: false, retreatingHeldPatient: retreatingHeldPatient);
-						}
-						else
-						{
-							JobGiver_ArgrillianThreatResponse.TraceMedKit("TryGiveJob_hardEscort_StopCombatBecauseHostileNotNear", pawn, heldPatient, tendEligibleNow: false, retreatingHeldPatient: retreatingHeldPatient);
-
-							pawn.jobs?.StopAll(true);
-							pawn.jobs?.ClearQueuedJobs();
-							pawn.pather?.StopDead();
-
-							ArgrillianThreatState.CombatLock.Clear(pawn);
-							ArgrillianThreatState.CombatCommit.Clear(pawn);
-						}
-
-						// SOFT gate: if hostile is near, we do NOT stop; we rely on the existing architecture
-						// to keep this non-chase (next tick will re-evaluate tend eligibility and re-sync).
-					}
-				}
-			}
-
-			// ----------------------------
-			// 1.5) RESYNC ESCALATION
-			// OLD behavior used raw HP% <= 0.75f.
-			// ----------------------------
-			// NEW behavior: treat escalation as an alert-severity semantic (Downed or Bleed)
-			// so the medic/combat medic response follows the alert-system worsening intent.
-			// ----------------------------
-			if (!heldPatient.Downed)
-			{
-				bool heldIsBleedingNow2 =
-					heldPatient.health?.hediffSet != null &&
-					heldPatient.health.hediffSet.HasHediff(HediffDefOf.BloodLoss);
-
-				if (heldIsBleedingNow2)
-				{
-					Job cur = pawn.CurJob;
-					if (cur != null && cur.def != null && !(
-							cur.def == JobDefOf.TendPatient ||
-							cur.def == JobDefOf.Rescue ||
-							cur.def == JobDefOf.Wait ||
-							cur.def == JobDefOf.LayDown))
-					{
-						string dn = cur.def.defName?.ToLowerInvariant() ?? "";
-
-						bool isCombatLike =
-							dn.Contains("attack") ||
-							dn.Contains("shoot") ||
-							dn.Contains("fight") ||
-							dn.Contains("melee") ||
-							dn.Contains("range");
-
-						if (isCombatLike)
-						{
-							pawn.jobs?.StopAll(true);
-							pawn.jobs?.ClearQueuedJobs();
-							pawn.pather?.StopDead();
-
-							ArgrillianThreatState.CombatLock.Clear(pawn);
-							ArgrillianThreatState.CombatCommit.Clear(pawn);
-
-							return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
-						}
-					}
-				}
-			}
-
-			// ----------------------------
-			// 2) KEEP-ACTIVE-JOB GUARD
-			//    If we already have Tend/Rescue running for this heldPatient, don't abandon it
-			// ----------------------------
-			if (pawn.CurJob != null && pawn.CurJob.def != null)
-			{
-				Job cur = pawn.CurJob;
-				JobDef def = cur.def;
-
-				if (def == JobDefOf.TendPatient || def == JobDefOf.Rescue)
-				{
-					// If we were tending and the patient has just gone down,
-					// switch to Rescue immediately (don't let it fall through to combat).
-					if (def == JobDefOf.TendPatient && heldPatient.Downed)
-					{
-						// Prevent TakeToBed NRE: ensure we have a valid, reservable bed at job creation time.
-						if (!TryGetRescueBedForPatient(pawn, heldPatient, out Building_Bed bed) || bed == null)
-						{
-							// Stay committed to the downed heldPatient instead of falling back to combat.
-							// We'll retry Rescue creation next tick once bed reservation becomes possible.
-							return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
-						}
-
-						Job rescueJob = JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
-						rescueJob.count = 1;
-
-						// Explicitly set both targets to match RimWorld expectations:
-						rescueJob.targetA = heldPatient; // carry thing = patient
-						rescueJob.targetB = bed;          // destination = bed
-						rescueJob.targetC = null;
-
-						return rescueJob;
-					}
-
-					return cur;
-				}
-			}
-
-			// Core: canTendNow should only decide "start Tend/Rescue now" vs "move into tend position".
-			//
-			// FIX FOR YOUR BOUNCING/MEAL+HAUL-QUEUED FAILURE:
-			// When tendEligibleNow is false, we must prevent RimWorld from switching the medic
-			// into meal/consume/haul/rest/combat-like jobs while the patient is held-for-tend.
-
-			// So we hard-stop and clear queued jobs before issuing our Goto.
-			if (!tendEligibleNow)
-			{
-				// Ensure patient is held-positioned correctly (existing behavior).
-				if (!heldPatient.Downed)
-					TryStopPatientToAllowTend(pawn, heldPatient);
-
-				// NEW: stop arbitration churn (rest/meal/haul queued) while we are waiting to become tend-eligible.
-				// This ensures the medic does NOT bounce and the patient doesn't get “freed” into consume/haul pipeline behavior.
-				pawn.jobs?.StopAll(true);
-				pawn.jobs?.ClearQueuedJobs();
-				pawn.pather?.StopDead();
-
-				// Ensure we’re still targeting the held patient's tend position.
-				return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
-			}
-
-			// Start-eligible now: hard-stop right before we start Tend/Rescue.
-			if (!heldPatient.Downed)
-				TryStopPatientToAllowTend(pawn, heldPatient);
-
-			// Ensure medic is committed to this held patient.
-			LockPatientToMedic(pawn, heldPatient);
-
-			if (heldPatient.Downed)
+		if (def == JobDefOf.TendPatient || def == JobDefOf.Rescue)
+		{
+			// If we were tending and the patient has just gone down,
+			// switch to Rescue immediately (don't let it fall through to combat).
+			if (def == JobDefOf.TendPatient && heldPatient.Downed)
 			{
 				// Prevent TakeToBed NRE: ensure we have a valid, reservable bed at job creation time.
 				if (!TryGetRescueBedForPatient(pawn, heldPatient, out Building_Bed bed) || bed == null)
-					return null;
+				{
+					// Stay committed to the downed heldPatient instead of falling back to combat.
+					// We'll retry Rescue creation next tick once bed reservation becomes possible.
+					return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
+				}
 
 				Job rescueJob = JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
 				rescueJob.count = 1;
@@ -6868,7 +6826,57 @@ namespace ArgrillianThreat
 				return rescueJob;
 			}
 
-			return JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
+			return cur;
+		}
+		}
+
+		// Core: canTendNow should only decide "start Tend/Rescue now" vs "move into tend position".
+		//
+		// FIX FOR YOUR BOUNCING/MEAL+HAUL-QUEUED FAILURE:
+		// When tendEligibleNow is false, we must prevent RimWorld from switching the medic
+		// into meal/consume/haul/rest/combat-like jobs while the patient is held-for-tend.
+
+		// So we hard-stop and clear queued jobs before issuing our Goto.
+		if (!tendEligibleNow)
+		{
+		// Keep the held patient forced/contained for the entire "almost-in-range" window.
+		if (ArgrillianMedicalState.PatientMedicHold.IsPatientHeldForTend(heldPatient))
+			TryStopPatientToAllowTend(pawn, heldPatient);
+
+		// NEW: stop arbitration churn (rest/meal/haul queued) while we are waiting to become tend-eligible.
+		pawn.jobs?.StopAll(true);
+		pawn.jobs?.ClearQueuedJobs();
+		pawn.pather?.StopDead();
+
+		// Ensure we’re still targeting the held patient's tend position.
+		return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
+		}
+
+		// Start-eligible now: hard-stop right before we start Tend/Rescue.
+		if (ArgrillianMedicalState.PatientMedicHold.IsPatientHeldForTend(heldPatient))
+		TryStopPatientToAllowTend(pawn, heldPatient);
+
+		// Ensure medic is committed to this held patient.
+		LockPatientToMedic(pawn, heldPatient);
+
+		if (heldPatient.Downed)
+		{
+		// Prevent TakeToBed NRE: ensure we have a valid, reservable bed at job creation time.
+		if (!TryGetRescueBedForPatient(pawn, heldPatient, out Building_Bed bed) || bed == null)
+			return null;
+
+		Job rescueJob = JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
+		rescueJob.count = 1;
+
+		// Explicitly set both targets to match RimWorld expectations:
+		rescueJob.targetA = heldPatient; // carry thing = patient
+		rescueJob.targetB = bed;          // destination = bed
+		rescueJob.targetC = null;
+
+		return rescueJob;
+		}
+
+		return JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
 		}
 
 		private bool TryGetRescueBedForPatient(Pawn medic, Pawn patient, out Building_Bed bed)
