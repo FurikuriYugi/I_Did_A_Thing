@@ -73,36 +73,6 @@ namespace ArgrillianThreat
 			return ArgillianThreatPatientTuning.GetPatientFromJob(j) == patient;
 		}
 
-		public static Pawn PatientAlreadyBeingTendedOrRescuedBySomeoneElse(Pawn medic, Pawn patient)
-		{
-			if (patient == null || patient.Dead) return null;
-			if (medic == null) return null;
-			if (patient.Map == null) return null;
-			if (medic.Map == null) return null;
-			if (medic.Map != patient.Map) return null;
-
-			// If the medic is already doing medical on this exact patient, don't block it.
-			if (medic.CurJob != null && JobIsMedicalForPatient(medic.CurJob, patient)) return null;
-
-			int patientId = patient.thingIDNumber;
-
-			// If there isn't an active cached call/entry for this patient, treat as not claimed.
-			Pawn cachedPatient = ArgrillianAlertSystem.TryGetPatientFromCachedCall(medic.Map, patientId);
-			if (cachedPatient == null) return null;
-
-			// If this medic can reserve the hold right now, then nobody else is holding it.
-			// This helper should not take the hold, so release immediately if we were able to reserve.
-			bool reserved = ArgrillianAlertSystem.TryReserveMedicForPatient(medic, patient);
-			if (reserved)
-			{
-				ArgrillianAlertSystem.ReleaseMedicHold(medic);
-				return null;
-			}
-
-			// Otherwise, another medic is holding the patient in the alert system.
-			return patient;
-		}
-
 		private static bool IsPatientServiceJob(JobDef def)
 		{
 			if (def == null) return false;
