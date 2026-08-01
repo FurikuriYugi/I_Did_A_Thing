@@ -6423,15 +6423,22 @@ namespace ArgrillianThreat
 			if (heldPatient == null)
 			{
 				Pawn bestCandidate = ArgrillianAlertSystem.GetBestPatientFromCalls(pawn, searchRadius);
+
 				if (bestCandidate != null)
 				{
 					// Reservation/hold must be owned by the alert system (no PatientMedicHold).
 					bool accepted = ArgrillianAlertSystem.TryReserveMedicForPatient(pawn, bestCandidate);
+
 					if (accepted)
 						heldPatient = ArgrillianAlertSystem.GetHeldPatientForMedic(pawn);
 				}
 			}
-			
+
+			if (heldPatient == null)
+			{
+				return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
+			}
+
 			// ----------------------------
 			// 0) TERMINAL COMPLETION CHECK (wires 0E+ completion contract)
 			// ----------------------------
