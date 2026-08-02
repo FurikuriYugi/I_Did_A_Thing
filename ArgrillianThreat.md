@@ -6604,9 +6604,6 @@ namespace ArgrillianThreat
 
 						Job rescueJob = JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
 						rescueJob.count = 1;
-
-						// NOTE: rest of rescue-job plumbing remains as in your file after this point.
-						// Keeping this method consistent with your existing logic.
 						return rescueJob;
 					}
 
@@ -6615,21 +6612,50 @@ namespace ArgrillianThreat
 			}
 
 			// ----------------------------
-			// NEW: If the medic has no more medical mission to perform and the patient is already clear,
-			// go back to combat (do not return null).
+			// 3) HELD-FOR-TEND HARD SUPPRESSION (FIX: combat medic quitting)
 			// ----------------------------
 			bool patientHeldForTendNow = ArgrillianAlertSystem.IsPatientHeldForTend(heldPatient);
-			if (!patientHeldForTendNow && patientHP >= 0.8f && !heldPatient.Downed)
+
+			// If the hold is still active: never choose combat jobs; continue tend/rescue/escort.
+			if (patientHeldForTendNow)
+			{
+				// Containment: patient cannot churn away.
+				TryStopPatientToAllowTend(pawn, heldPatient);
+
+				// Downed => Rescue.
+				if (heldPatient.Downed)
+				{
+					Building_Bed bed;
+					if (TryGetRescueBedForPatient(pawn, heldPatient, out bed) && bed != null)
+					{
+						Job rescueJob = JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
+						rescueJob.count = 1;
+						return rescueJob;
+					}
+
+					// If no bed path is available right now, keep escorting toward the patient safely.
+					return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
+				}
+
+				// Not downed => Tend (when eligible), otherwise escort/position safely.
+				if (tendEligibleNow)
+				{
+					Job tendJob = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
+					tendJob.count = 1;
+					return tendJob;
+				}
+
+				return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
+			}
+
+			// Hold released: allowed to return to combat.
+			if (patientHP >= 0.8f && !heldPatient.Downed)
 			{
 				return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 			}
 
-			// ----------------------------
-			// Fallback to existing downstream logic for Tend/Rescue/escort as implemented in-file
-			// ----------------------------
-			// (The remainder of your method should stay intact; this patch is only intended to
-			// prevent premature terminal completion that caused the “quit fighting” symptom.)
-			return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
+			// Otherwise, wait for a new medical mission / tend eligibility.
+			return null;
 		}
 
 		private bool TryGetRescueBedForPatient(Pawn medic, Pawn patient, out Building_Bed bed)
