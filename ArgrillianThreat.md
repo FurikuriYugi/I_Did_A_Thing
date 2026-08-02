@@ -4290,6 +4290,20 @@ namespace ArgrillianThreat
 				medicIdsByMapId[mapId] = new HashSet<int>();
 		}
 
+		private static void RegisterDoctor(Pawn pawn)
+		{
+			if (pawn == null || pawn.Dead || pawn.Map == null) return;
+
+			int mapId = pawn.Map.uniqueID;
+			EnsureMapBuckets(mapId);
+
+			int doctorId = pawn.thingIDNumber;
+
+			// General medic list
+			if (medicIdsByMapId[mapId].Add(doctorId))
+				medicsByMapId[mapId].Add(pawn);
+		}
+
 		private static void RegisterMedic(Pawn pawn)
 		{
 			if (pawn == null || pawn.Dead || pawn.Map == null) return;
@@ -4376,16 +4390,16 @@ namespace ArgrillianThreat
 
 				yield return ArgrillianGizmoHelpers.Toggle(
 					"Doctor",
-					"On: this pawn does the main tending and surgey"
+					"On: this pawn does the main tending and surgey",
 					() => doctor,
 					() =>
 					{
 						doctor = !doctor;
 						if (doctor)
 						{
-							if (patient is Pawn pawn) RegisterDoctor(pawn);
+							if (parent is Pawn pawn) RegisterDoctor(pawn);
 						}
-					})
+					});
 
 				yield return ArgrillianGizmoHelpers.Toggle(
 					"Medic",
@@ -6514,9 +6528,6 @@ namespace ArgrillianThreat
 				}
 			}
 
-			// Separate "in bed" from "fully tended"
-			bool patientInBed = heldPatient.InBed();
-
 			// "In bed + fully tended" for the medic terminal completion gate
 			bool patientInBedAndFullyTended =
 				patientInBed &&
@@ -6526,7 +6537,7 @@ namespace ArgrillianThreat
 				patientIsFullyTended;
 
 			// "Fully tended" can be used for combat-clearance even if not in bed
-			bool patientClearedForCombat = (patientHP >= 0.8f && !heldPatient.Downed && !heldPatient.Downed && !patientIsBleedingNow && patientIsFullyTended && IsPawnCombatCapable(patient));
+			bool patientClearedForCombat = (patientHP >= 0.8f && !heldPatient.Downed && !heldPatient.Downed && !patientIsBleedingNow && patientIsFullyTended && IsPawnCombatCapable(heldPatient));
 
 			bool escortToMedicalRequired = !patientClearedForCombat;
 
@@ -6658,7 +6669,7 @@ namespace ArgrillianThreat
 
 				if (patientClearedForCombat)
 				{
-					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(patient);
+					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(heldPatient);
 				}
 
 				if ((patientIsFullyTended && patientClearedForCombat) || patientInBedAndFullyTended/* We need to create this: || combatMedic transferedPatient*/)
