@@ -6376,14 +6376,37 @@ namespace ArgrillianThreat
 
 			bool patientStabilityOkForTerminal = stableTicksNow >= requiredStableTicksForTerminal;
 
-			bool patientInBedAndFullyTended = patientInBed && !heldPatient.Downed && !patientIsBleedingNow && patientStabilityOkForTerminal;
+			bool patientIsFullyTendedByHediffs = true;
 
-			bool patientClearedForCombat = (patientHP >= 0.8f && !heldPatient.Downed/*We need to create this: && patient.fullyTended*/) || patientInBedAndFullyTended;
+			if (heldPatient.health != null && heldPatient.health.hediffSet != null && heldPatient.health.hediffSet.hediffs != null)
+			{
+				for (int i = 0; i < heldPatient.health.hediffSet.hediffs.Count; i++)
+				{
+					Hediff h = heldPatient.health.hediffSet.hediffs[i];
+					if (h == null || h.def == null)
+						continue;
+
+					// If the pawn still has any tendable hediff that hasn't been healed away (Severity > 0),
+					// then the pawn is NOT truly "fully tended".
+					// (This avoids the incorrect "99% health" heuristic.)
+					if (h.def.tendable && h.Severity > 0f)
+					{
+						patientIsFullyTendedByHediffs = false;
+						break;
+					}
+				}
+			}
+
+			bool patientInBedAndFullyTended = patientInBed && !heldPatient.Downed && !patientIsBleedingNow && patientStabilityOkForTerminal && patientIsFullyTendedByHediffs;
+
+			bool patientClearedForCombat = (patientHP >= 0.8f && !heldPatient.Downed) || patientInBedAndFullyTended;
+
 			bool escortToMedicalRequired = !patientClearedForCombat;
 
 			// NEW: publish PatientCalls when this pawn enters downed/bleeding states
 			// (edge/transition coalescing is handled inside NotifyPawnSelfState).
-			// I don't think this needs to be here in the medical job as it is for all pawns to report injuries to the alert system. ArgrillianAlertSystem.NotifyPawnSelfState(pawn);
+			// I don't think this needs to be here in the medical job as it is for all pawns to report injuries to the alert system.
+			//ArgrillianAlertSystem.NotifyPawnSelfState(pawn);
 
 			// ----------------------------
 			// 1) DOCTORS (non-combat) branch
@@ -6522,6 +6545,8 @@ namespace ArgrillianThreat
 					return null;
 				}
 				// It doesn't have to be exactly combatMedic.transferedPatient but we need to create a medical transfer, so that the combat medic can give the patient over to another medic/doctor etc and if the patient is either escorted and fully tended and in bed or the combat medic transfered the patient to another medic/doctor then the combat medic should return to combat if he is above 80% health and has self tended if needed.
+				// "Fully tended" must mean truly fully healthy enough + stable long enough, not just "not downed / not currently bleeding".
+				
 				if (patientInBedAndFullyTended/* We need to create this: || combatMedic.transferedPatient*/)
 				{
 					// Then we send the alert system the patient status and clear the patient either for combat or full retreat etc.
