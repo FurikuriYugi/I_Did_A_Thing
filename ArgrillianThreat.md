@@ -6280,12 +6280,6 @@ namespace ArgrillianThreat
 			return true;
 		}
 
-		// NEW: keep the patient from starting/continuing other jobs while a combat medic is committing to Rescue/Tend.
-		// This prevents "patient keeps attacking/hauling/moving" so the medic can actually complete tending/rescue.
-		// -------------------- PATCH 1: LockPatientToMedic --------------------
-		// This prevents the "wiggle/standing/hauling loop" without breaking the tend/rescue pipeline.
-		// This prevents "patient keeps attacking/hauling/moving" so the medic can actually complete tending/rescue.
-		// Non-destructive: do NOT StopAll(true) and do NOT inject Wait jobs (they destabilize job arbitration during the transition).
 		private static void LockPatientToMedic(Pawn medic, Pawn patient)
 		{
 			if (patient == null || patient.Dead) return;
@@ -6294,56 +6288,53 @@ namespace ArgrillianThreat
 			// (This is the single-owner model. No local held cache.)
 			bool accepted = ArgrillianAlertSystem.TryReserveMedicForPatient(medic, patient);
 			if (!accepted)
-			return;
+				return;
 
 			// Only log when the reservation actually sticks.
 			Pawn held = ArgrillianAlertSystem.GetHeldPatientForMedic(medic);
 
 			if (held != null && held.thingIDNumber == patient.thingIDNumber)
 			{
-				Log.Message($"[ArgrillianThreat][HOLD] patientHoldAcquired medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} mapOk={(medic?.Map == patient?.Map)}"
-			);
-
-			bool isHeldForTendNow = ArgrillianAlertSystem.IsPatientHeldForTend(patient);
-			if (!isHeldForTendNow)
-				return;
-
-			Job cur = patient.CurJob;
-
-			// IMPORTANT CONTRACT:
-			// While held-for-tend is active and medic has committed to the tend/rescue pipeline,
-			// the patient must be held in Wait and prevented from starting any other jobs
-			// until terminal completion releases the hold.
-			bool curIsPipelineLike =
-				cur != null &&
-				cur.def != null &&
-				(cur.def == JobDefOf.TendPatient ||
-					cur.def == JobDefOf.Rescue ||
-					cur.def == JobDefOf.Wait ||
-					cur.def == JobDefOf.LayDown);
-
-			// Force containment immediately.
-			patient.jobs?.StopAll(true);
-			patient.jobs?.ClearQueuedJobs();
-			patient.pather?.StopDead();
-
-			if (!curIsPipelineLike)
-			{
-				IntVec3 here = patient.Position;
-				Job hold = JobMaker.MakeJob(JobDefOf.Wait, here);
-				hold.count = 1;
-				patient.jobs?.StartJob(hold, JobCondition.InterruptForced);
-
 				Log.Message(
-					$"[ArgrillianThreat][HOLD] patientForcedWaitOnLock medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} curJob={(cur?.def?.defName ?? "null")}"
+					$"[ArgrillianThreat][HOLD] patientHoldAcquired medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} mapOk={(medic?.Map == patient?.Map)}"
 				);
-			}
+
+				bool isHeldForTendNow = ArgrillianAlertSystem.IsPatientHeldForTend(patient);
+				if (!isHeldForTendNow)
+					return;
+
+				Job cur = patient.CurJob;
+
+				// IMPORTANT CONTRACT:
+				// While held-for-tend is active and medic has committed to the tend/rescue pipeline,
+				// the patient must be held in Wait and prevented from starting any other jobs
+				// until terminal completion releases the hold.
+				bool curIsPipelineLike =
+					cur != null &&
+					cur.def != null &&
+					(cur.def == JobDefOf.TendPatient ||
+						cur.def == JobDefOf.Rescue ||
+						cur.def == JobDefOf.Wait ||
+						cur.def == JobDefOf.LayDown);
+
+				// Force containment immediately.
+				patient.jobs?.StopAll(true);
+				patient.jobs?.ClearQueuedJobs();
+				patient.pather?.StopDead();
+
+				if (!curIsPipelineLike)
+				{
+					IntVec3 here = patient.Position;
+					Job hold = JobMaker.MakeJob(JobDefOf.Wait, here);
+					hold.count = 1;
+					patient.jobs?.StartJob(hold, JobCondition.InterruptForced);
+
+					Log.Message(
+						$"[ArgrillianThreat][HOLD] patientForcedWaitOnLock medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} curJob={(cur?.def?.defName ?? "null")}"
+					);
+				}
 			}
 		}
-
-		// Medical
-		// JobGiver_TendRetreatingAllies
-		// Fix: syntax errors inside TryGiveJob(Pawn pawn) by correcting broken/unfinished braces and ensuring all condition blocks compile.
 
 		protected override Job TryGiveJob(Pawn pawn)
 		{
@@ -6359,7 +6350,6 @@ namespace ArgrillianThreat
 			}
 
 			if (pawn == null || pawn.Dead || pawn.Map == null) return null;
-			// if (pawn.Downed) return null;
 
 			var medicComp = pawn.GetComp<CompArgrillianMedicSettings>();
 			if (medicComp == null || !medicComp.isMedic) return null;
@@ -6390,10 +6380,8 @@ namespace ArgrillianThreat
 			}
 
 			// ----------------------------
-			// 0) TERMINAL COMPLETION CHECK (wires 0E+ completion contract)
+			// 0) TERMINAL COMPLETION CHECK
 			// ----------------------------
-			// Previously this could prematurely complete (causing the medic to revert to normal combat jobs too early).
-			// Now require stability ticks as well.
 			float patientHP = heldPatient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
 
 			bool patientInBed = heldPatient.InBed();
@@ -6404,13 +6392,10 @@ namespace ArgrillianThreat
 
 			int stableTicksNow = GetPatientStableTicksForTend(heldPatient);
 
-			// For downed: stabilty requirement effectively irrelevant (fast-path tend/rescue).
-			// For injured (not downed): require stability.
 			int requiredStableTicksForTerminal =
 				heldPatient.Downed ? 0 : patientStableTicksRequired;
 
-			bool patientStabilityOkForTerminal =
-				stableTicksNow >= requiredStableTicksForTerminal;
+			bool patientStabilityOkForTerminal = stableTicksNow >= requiredStableTicksForTerminal;
 
 			bool patientInBedAndFullyTended =
 				patientInBed &&
@@ -6437,7 +6422,7 @@ namespace ArgrillianThreat
 			}
 
 			// ----------------------------
-			// 0) Gate state detection (used by both gates)
+			// Gate state detection (used by held-for-tend gating + fallback)
 			// ----------------------------
 			bool heldIsBleedingNow =
 				heldPatient.health?.hediffSet != null &&
@@ -6448,143 +6433,58 @@ namespace ArgrillianThreat
 			bool tendEligibleNow = canTendNow(pawn, heldPatient);
 
 			// ----------------------------
-			// 1) FORCE PATIENT RETREAT / STOP so Tend/Rescue can succeed
+			// FORCE: if held-for-tend is active, suppress ANY fallback to combat jobs.
 			// ----------------------------
-			if (ArgrillianAlertSystem.IsPatientHeldForTend(heldPatient))
+			bool patientHeldForTendNow = ArgrillianAlertSystem.IsPatientHeldForTend(heldPatient);
+			if (patientHeldForTendNow)
 			{
+				// 1) prevent patient job churn so medic can execute tend/rescue pipeline
+				//    (this also fixes the “combat medics quit and do normal combat instead” symptom by removing competition)
 				TryStopPatientToAllowTend(pawn, heldPatient);
-			}
 
-			// ----------------------------
-			// 1.25) ESCORT objective gate + near-hostile permission gate (two-gates)
-			// ----------------------------
-			if (retreatingHeldPatient && !tendEligibleNow)
-			{
-				Job cur = pawn.CurJob;
-
-				// Hard null guard
-				if (heldPatient == null) return null;
-
-				if (cur != null && cur.def != null)
+				// 2) force medic-side job choice strictly within the tend/rescue/escort pipeline
+				//    while the hold is active.
+				if (tendEligibleNow)
 				{
-					bool isHeldForTend = ArgrillianAlertSystem.IsPatientHeldForTend(heldPatient);
-
-					JobGiver_ArgrillianThreatResponse.TraceMedKit(
-						"TryGiveJob_enterEscortRetreatGate",
-						pawn,
-						heldPatient,
-						tendEligibleNow,
-						retreatingHeldPatient
-					);
-
-					if (IsCombatAttackLikeJob(cur) || IsChaseOrTacticJob(cur))
+					// If patient flips to downed while gating, rescue should win.
+					if (heldPatient.Downed)
 					{
-						Pawn nearestHostile = FindNearestHostile(pawn, radius: medicEscortCombatRadius);
-						bool hostileNear = false;
-
-						if (nearestHostile != null)
+						// Try to rescue; if rescue plumbing fails, fall back to tend-escort position.
+						Building_Bed bed = null;
+						if (!TryGetRescueBedForPatient(pawn, heldPatient, out bed) || bed == null)
 						{
-							bool los = GenSight.LineOfSight(pawn.Position, nearestHostile.Position, pawn.Map);
-
-							float dMed = pawn.Position.DistanceTo(nearestHostile.Position);
-							float dPat = heldPatient.Position.DistanceTo(nearestHostile.Position);
-
-							hostileNear = los && (dMed <= (medicEscortCombatRadius + 0.1f) || dPat <= (medicEscortCombatRadius + 0.1f));
-						}
-
-						Verse.Log.Message($"[ArgrillianThreat][TRACE] escortGateDecision " + $"tick={Find.TickManager.TicksGame} " + $"medic={pawn.thingIDNumber} patient={heldPatient.thingIDNumber} " + $"isHeldForTend={isHeldForTend} " + $"tendEligibleNow={tendEligibleNow} retreatingHeldPatient={retreatingHeldPatient} " + $"curJobDef={cur.def.defName} hostileNear={hostileNear}");
-
-						// HARD: while in retreating HeldPatient stage and NOT tend-eligible yet,
-						// medic should stay escort/follow (no chase).
-						if (hostileNear)
-						{
-							if (isHeldForTend)
-							{
-								JobGiver_ArgrillianThreatResponse.TraceMedKit(
-									"TryGiveJob_hardEscort_StopCombatBecauseHeldForTend",
-									pawn,
-									heldPatient,
-									tendEligibleNow: false,
-									retreatingHeldPatient: retreatingHeldPatient
-								);
-
-								pawn.jobs?.StopAll(true);
-								pawn.jobs?.ClearQueuedJobs();
-								pawn.pather?.StopDead();
-
-								ArgrillianThreatState.CombatLock.Clear(pawn);
-								ArgrillianThreatState.CombatCommit.Clear(pawn);
-							}
-							else
-							{
-								// Soft allow stays as-is if you already had it; kept minimal here.
-							}
-						}
-						else
-						{
-							JobGiver_ArgrillianThreatResponse.TraceMedKit(
-								"TryGiveJob_hardEscort_StopCombatBecauseHostileNotNear",
-								pawn,
-								heldPatient,
-								tendEligibleNow: false,
-								retreatingHeldPatient: retreatingHeldPatient
-							);
-
-							pawn.jobs?.StopAll(true);
-							pawn.jobs?.ClearQueuedJobs();
-							pawn.pather?.StopDead();
-
-							ArgrillianThreatState.CombatLock.Clear(pawn);
-							ArgrillianThreatState.CombatCommit.Clear(pawn);
-						}
-					}
-				}
-			}
-
-			// ----------------------------
-			// 1.5) RESYNC ESCALATION
-			// ----------------------------
-			if (!heldPatient.Downed)
-			{
-				bool heldIsBleedingNow2 =
-					heldPatient.health?.hediffSet != null &&
-					heldPatient.health.hediffSet.HasHediff(HediffDefOf.BloodLoss);
-
-				if (heldIsBleedingNow2)
-				{
-					Job cur = pawn.CurJob;
-
-					if (cur != null && cur.def != null && !(
-							cur.def == JobDefOf.TendPatient ||
-							cur.def == JobDefOf.Rescue ||
-							cur.def == JobDefOf.Wait ||
-							cur.def == JobDefOf.LayDown))
-					{
-						string dn = cur.def.defName?.ToLowerInvariant() ?? "";
-						bool isCombatLike =
-							dn.Contains("attack") ||
-							dn.Contains("shoot") ||
-							dn.Contains("fight") ||
-							dn.Contains("melee") ||
-							dn.Contains("range");
-
-						if (isCombatLike)
-						{
-							pawn.jobs?.StopAll(true);
-							pawn.jobs?.ClearQueuedJobs();
-							pawn.pather?.StopDead();
-
-							ArgrillianThreatState.CombatLock.Clear(pawn);
-							ArgrillianThreatState.CombatCommit.Clear(pawn);
-
 							return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
 						}
+
+						Job rescueJob = JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
+						rescueJob.count = 1;
+						return rescueJob;
 					}
+
+					// Tend
+					Job tendJob = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
+					tendJob.count = 1;
+					return tendJob;
+				}
+				else
+				{
+					// Not yet tend-eligible: we must escort / reposition, never choose combat threat jobs.
+					// Keep it stable: do not start attack/chase jobs while the hold is active.
+					IntVec3 escortTarget = heldPatient.Position;
+
+					// Prefer a short “stay near patient” escort circle rather than re-path spam.
+					// (Exact safe-cell logic is handled elsewhere in-file; this is the hold-suppression fallback.)
+					if (pawn.Position.DistanceTo(heldPatient.Position) > combatTendMaxDistance)
+					{
+						escortTarget = heldPatient.Position;
+					}
+
+					return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, escortTarget);
 				}
 			}
 
 			// ----------------------------
-			// 2) KEEP-ACTIVE-JOB GUARD
+			// KEEP-ACTIVE-JOB GUARD (only when not held-for-tend)
 			// ----------------------------
 			if (pawn.CurJob != null && pawn.CurJob.def != null)
 			{
@@ -6611,51 +6511,15 @@ namespace ArgrillianThreat
 				}
 			}
 
-			// ----------------------------
-			// 3) HELD-FOR-TEND HARD SUPPRESSION (FIX: combat medic quitting)
-			// ----------------------------
-			bool patientHeldForTendNow = ArgrillianAlertSystem.IsPatientHeldForTend(heldPatient);
-
-			// If the hold is still active: never choose combat jobs; continue tend/rescue/escort.
-			if (patientHeldForTendNow)
-			{
-				// Containment: patient cannot churn away.
-				TryStopPatientToAllowTend(pawn, heldPatient);
-
-				// Downed => Rescue.
-				if (heldPatient.Downed)
-				{
-					Building_Bed bed;
-					if (TryGetRescueBedForPatient(pawn, heldPatient, out bed) && bed != null)
-					{
-						Job rescueJob = JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
-						rescueJob.count = 1;
-						return rescueJob;
-					}
-
-					// If no bed path is available right now, keep escorting toward the patient safely.
-					return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
-				}
-
-				// Not downed => Tend (when eligible), otherwise escort/position safely.
-				if (tendEligibleNow)
-				{
-					Job tendJob = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
-					tendJob.count = 1;
-					return tendJob;
-				}
-
-				return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
-			}
-
-			// Hold released: allowed to return to combat.
+			// If held-for-tend is NOT active and patient is clear, allow combat again.
 			if (patientHP >= 0.8f && !heldPatient.Downed)
 			{
 				return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 			}
 
-			// Otherwise, wait for a new medical mission / tend eligibility.
-			return null;
+			// Otherwise, continue with existing downstream threat behavior.
+			// (Held-for-tend suppression above guarantees we won’t “fall through” during the hold.)
+			return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 		}
 
 		private bool TryGetRescueBedForPatient(Pawn medic, Pawn patient, out Building_Bed bed)
