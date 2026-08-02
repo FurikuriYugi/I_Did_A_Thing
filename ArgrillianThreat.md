@@ -1533,12 +1533,6 @@ namespace ArgrillianThreat
 		// ----------------------------
 		// PatientHold / exclusivity integration (no map scanning)
 		// ----------------------------
-
-		// patientId -> medicId (who is currently reserved to tend this patient)
-		private static readonly Dictionary<int, int> medicIdByPatientId = new Dictionary<int, int>();
-		// medicId -> patientId (what patient this medic is currently holding)
-		private static readonly Dictionary<int, int> patientIdByMedicId = new Dictionary<int, int>();
-
 		private static PatientCallEntry TryGetPatientCallEntry(Map map, int patientId)
 		{
 			if (map == null) return null;
