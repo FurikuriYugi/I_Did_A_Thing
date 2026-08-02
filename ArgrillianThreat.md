@@ -6493,14 +6493,7 @@ namespace ArgrillianThreat
 							hostileNear = los && (dMed <= (medicEscortCombatRadius + 0.1f) || dPat <= (medicEscortCombatRadius + 0.1f));
 						}
 
-						Verse.Log.Message(
-							$"[ArgrillianThreat][TRACE] escortGateDecision " +
-							$"tick={Find.TickManager.TicksGame} " +
-							$"medic={pawn.thingIDNumber} patient={heldPatient.thingIDNumber} " +
-							$"isHeldForTend={isHeldForTend} " +
-							$tendEligibleNow={tendEligibleNow} retreatingHeldPatient={retreatingHeldPatient} " +
-							$"curJobDef={cur.def.defName} hostileNear={hostileNear}"
-						);
+						Verse.Log.Message($"[ArgrillianThreat][TRACE] escortGateDecision " + $"tick={Find.TickManager.TicksGame} " + $"medic={pawn.thingIDNumber} patient={heldPatient.thingIDNumber} " + $"isHeldForTend={isHeldForTend} " + $"tendEligibleNow={tendEligibleNow} retreatingHeldPatient={retreatingHeldPatient} " + $"curJobDef={cur.def.defName} hostileNear={hostileNear}");
 
 						// HARD: while in retreating HeldPatient stage and NOT tend-eligible yet,
 						// medic should stay escort/follow (no chase).
