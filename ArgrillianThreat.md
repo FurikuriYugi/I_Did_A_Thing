@@ -6516,8 +6516,8 @@ namespace ArgrillianThreat
 						Verse.Log.Message($"[ArgrillianThreat][TRACE] escortGateDecision " +
 							$"tick={Find.TickManager.TicksGame} " +
 							$"medic={pawn.thingIDNumber} patient={heldPatient.thingIDNumber} " +
-							$isHeldForTend={isHeldForTend} " +
-							$tendEligibleNow={tendEligibleNow} retreatingHeldPatient={retreatingHeldPatient} " +
+							$"isHeldForTend={isHeldForTend} " +
+							$"tendEligibleNow={tendEligibleNow} retreatingHeldPatient={retreatingHeldPatient} " +
 							$"curJobDef={cur.def.defName} hostileNear={hostileNear}");
 
 						// HARD: while in retreating HeldPatient stage and NOT tend-eligible yet,
