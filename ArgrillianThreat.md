@@ -6351,16 +6351,21 @@ namespace ArgrillianThreat
 			// (edge/transition coalescing is handled inside NotifyPawnSelfState).
 			ArgrillianAlertSystem.NotifyPawnSelfState(pawn);
 
-			// Medic gating: non-combat medics don't do threat response.
+			// ----------------------------
+			// Medic gating: only handle medics here; non-combat medics and combat medics are separate branches
+			// ----------------------------
 			var medicThreatSettings = pawn?.GetComp<CompArgrillianMedicSettings>();
-			if (medicThreatSettings != null && medicThreatSettings.isMedic && !medicThreatSettings.combatMedic)
+			if (medicThreatSettings != null && medicThreatSettings.isMedic)
 			{
-				// Medic: Eventually we will set up the medic job
-				return null;
+				// Non-combat medic: allow medic tend/rescue behavior to be handled elsewhere (not this jobgiver).
+				// (Core requirement: this jobgiver is for combat/retreating-tend behavior.)
+				if (!medicThreatSettings.combatMedic)
+					return null;
+
+				// Combat medic continues below.
 			}
 
 			if (pawn == null || pawn.Dead || pawn.Map == null) return null;
-			// if (pawn.Downed) return null;
 
 			var medicComp = pawn.GetComp<CompArgrillianMedicSettings>();
 			if (medicComp == null || !medicComp.isMedic) return null;
@@ -6369,6 +6374,7 @@ namespace ArgrillianThreat
 			// Acquire held patient from alert-system authority.
 			Pawn heldPatient = ArgrillianAlertSystem.GetHeldPatientForMedic(pawn);
 
+			// If we don't have a held patient yet, try to reserve one from cached calls.
 			if (heldPatient == null)
 			{
 				Pawn bestCandidate = ArgrillianAlertSystem.GetBestPatientFromCalls(pawn, searchRadius);
@@ -6379,14 +6385,13 @@ namespace ArgrillianThreat
 					bool accepted = ArgrillianAlertSystem.TryReserveMedicForPatient(pawn, bestCandidate);
 
 					if (accepted)
-					{
 						heldPatient = ArgrillianAlertSystem.GetHeldPatientForMedic(pawn);
-					}
 				}
 			}
 
 			if (heldPatient == null)
 			{
+				// No patient assignment: fall back to normal threat response.
 				return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 			}
 
@@ -6405,7 +6410,7 @@ namespace ArgrillianThreat
 
 			int stableTicksNow = GetPatientStableTicksForTend(heldPatient);
 
-			// For downed: stabilty requirement effectively irrelevant (fast-path tend/rescue).
+			// For downed: stability requirement effectively irrelevant (fast-path tend/rescue).
 			// For injured (not downed): require stability.
 			int requiredStableTicksForTerminal =
 				heldPatient.Downed ? 0 : patientStableTicksRequired;
@@ -6419,7 +6424,10 @@ namespace ArgrillianThreat
 				!patientIsBleedingNow &&
 				patientStabilityOkForTerminal;
 
-			bool patientClearedForCombat = (patientHP >= 0.8f && !heldPatient.Downed) || patientInBedAndFullyTended;
+			bool patientClearedForCombat =
+				(patientHP >= 0.8f && !heldPatient.Downed) ||
+				patientInBedAndFullyTended;
+
 			bool escortToMedicalRequired = !patientClearedForCombat;
 
 			if (patientInBedAndFullyTended)
@@ -6446,6 +6454,7 @@ namespace ArgrillianThreat
 
 			bool retreatingHeldPatient = !heldPatient.Downed && !heldIsBleedingNow;
 
+			// NEW: stability/tend eligibility for this specific medic/patient pair.
 			bool tendEligibleNow = canTendNow(pawn, heldPatient);
 
 			// ----------------------------
@@ -6463,7 +6472,6 @@ namespace ArgrillianThreat
 			{
 				Job cur = pawn.CurJob;
 
-				// Hard null guard
 				if (heldPatient == null) return null;
 
 				if (cur != null && cur.def != null)
@@ -6493,7 +6501,16 @@ namespace ArgrillianThreat
 							hostileNear = los && (dMed <= (medicEscortCombatRadius + 0.1f) || dPat <= (medicEscortCombatRadius + 0.1f));
 						}
 
-						Verse.Log.Message($"[ArgrillianThreat][TRACE] escortGateDecision " + $"tick={Find.TickManager.TicksGame} " + $"medic={pawn.thingIDNumber} patient={heldPatient.thingIDNumber} " + $"isHeldForTend={isHeldForTend} " + $"tendEligibleNow={tendEligibleNow} retreatingHeldPatient={retreatingHeldPatient} " + $"curJobDef={cur.def.defName} hostileNear={hostileNear}");
+						Verse.Log.Message(
+							$"[ArgrillianThreat][TRACE] escortGateDecision " +
+							$"tick={Find.TickManager.TicksGame} " +
+							$"medic={pawn.thingIDNumber} patient={heldPatient.thingIDNumber} " +
+							$"isHeldForTend={isHeldForTend} " +
+							$"tendEligibleNow={tendEligibleNow} " +
+							$"retreatingHeldPatient={retreatingHeldPatient} " +
+							$"curJobDef={cur.def.defName} " +
+							$"hostileNear={hostileNear}"
+						);
 
 						// HARD: while in retreating HeldPatient stage and NOT tend-eligible yet,
 						// medic should stay escort/follow (no chase).
@@ -6518,7 +6535,7 @@ namespace ArgrillianThreat
 							}
 							else
 							{
-								// Soft allow stays as-is if you already had it; kept minimal here.
+								// Soft allow stays as-is if you already had it; keep minimal here.
 							}
 						}
 						else
@@ -6554,11 +6571,12 @@ namespace ArgrillianThreat
 				if (heldIsBleedingNow2)
 				{
 					Job cur = pawn.CurJob;
+
 					if (cur != null && cur.def != null && !(
-							cur.def == JobDefOf.TendPatient ||
-							cur.def == JobDefOf.Rescue ||
-							cur.def == JobDefOf.Wait ||
-							cur.def == JobDefOf.LayDown))
+						cur.def == JobDefOf.TendPatient ||
+						cur.def == JobDefOf.Rescue ||
+						cur.def == JobDefOf.Wait ||
+						cur.def == JobDefOf.LayDown))
 					{
 						string dn = cur.def.defName?.ToLowerInvariant() ?? "";
 						bool isCombatLike =
@@ -6605,30 +6623,24 @@ namespace ArgrillianThreat
 						Job rescueJob = JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
 						rescueJob.count = 1;
 
-						// NOTE: rest of rescue-job plumbing remains as in your file after this point.
-						// Keeping this method consistent with your existing logic.
+						// NOTE: rest of rescue-job plumbing remains as in-file after this point.
 						return rescueJob;
 					}
 
+					// Keep whatever tend/rescue job is already in progress.
 					return cur;
 				}
 			}
 
-			// ----------------------------
 			// NEW: If the medic has no more medical mission to perform and the patient is already clear,
 			// go back to combat (do not return null).
-			// ----------------------------
 			bool patientHeldForTendNow = ArgrillianAlertSystem.IsPatientHeldForTend(heldPatient);
 			if (!patientHeldForTendNow && patientHP >= 0.8f && !heldPatient.Downed)
 			{
 				return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 			}
 
-			// ----------------------------
-			// Fallback to existing downstream logic for Tend/Rescue/escort as implemented in-file
-			// ----------------------------
-			// (The remainder of your method should stay intact; this patch is only intended to
-			// prevent premature terminal completion that caused the “quit fighting” symptom.)
+			// Fallback: continue with existing downstream logic (tend/rescue/escort behavior is implemented in-file).
 			return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 		}
 
