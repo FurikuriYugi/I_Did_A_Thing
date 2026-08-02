@@ -5703,96 +5703,38 @@ namespace ArgrillianThreat
 
 		private static void TryStopPatientToAllowTend(Pawn medic, Pawn patient)
 		{
-		Log.Message(
-		$"[ArgrillianThreat][TryStopPatientToAllowTend][ENTRY] medic={(medic != null ? medic.thingIDNumber.ToString() : "-1")} patient={(patient != null ? patient.thingIDNumber.ToString() : "-1")}"
-		);
+			Log.Message(
+			$"[ArgrillianThreat][TryStopPatientToAllowTend][ENTRY] medic={(medic != null ? medic.thingIDNumber.ToString() : "-1")} patient={(patient != null ? patient.thingIDNumber.ToString() : "-1")}"
+			);
 
-		if (patient == null || patient.Dead)
-		return;
+			if (patient == null || patient.Dead)
+				return;
 
-		// Hard authority rule:
-		// Only the medic/combat medic that currently OWNS the held patient may stop/hold the patient for Tend/Rescue.
-		// Otherwise, other AI (including patient-side jobgers like resting/laying down) can take over.
-		Pawn heldPatientByMedic = ArgrillianAlertSystem.GetHeldPatientForMedic(medic);
+			// Mandatory behavior contract (locked):
+			// - stop patient job
+			// - prevent new jobs
+			// - force patient to Wait
+			// - patient stays forced to Wait until the medic/combat medic releases it
+			// (release should be handled by the held-for-tend completion path; this method is only the “acquire/lock” side)
 
-		if (heldPatientByMedic == null || heldPatientByMedic != patient)
-		{
-		Log.Message(
-			$"[ArgrillianThreat][TryStopPatientToAllowTend] ABORT (not held by medic): medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} heldByMedic={(heldPatientByMedic != null ? heldPatientByMedic.thingIDNumber.ToString() : "null")}"
-		);
-		return;
-		}
+			// Prevent any in-progress non-tend jobs from continuing.
+			patient.jobs?.StopAll(true);
+			patient.jobs?.ClearQueuedJobs();
 
-		// If patient isn't held for tend, don't interfere with normal job arbitration.
-		bool isHeldForTend = ArgrillianAlertSystem.IsPatientHeldForTend(patient);
-		if (!isHeldForTend)
-		{
-		Log.Message(
-			$"[ArgrillianThreat][TryStopPatientToAllowTend] ABORT (not held-for-tend): medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} curJob={(patient.CurJob?.def?.defName ?? "null")}"
-		);
-		return;
-		}
+			// Extra safety against movement “wandering” while locked.
+			patient.pather?.StopDead();
 
-		// Extra containment: only force patient Wait while THIS medic is actively in tend/rescue pipeline.
-		// If medic is no longer tending/rescuing (job changed), we must not keep patient locked.
-		Job medicCurJob = medic?.CurJob;
-		JobDef medicCurJobDef = medicCurJob?.def;
-		bool medicIsActivelyTendingOrRescuing =
-		medicCurJobDef == JobDefOf.TendPatient ||
-		medicCurJobDef == JobDefOf.Rescue;
+			// Force Wait immediately.
+			// (We intentionally use Wait here rather than LayDown/Rest so the patient cannot re-select rest/laydown.)
+			IntVec3 here = patient.Position;
+			Job waitJob = JobMaker.MakeJob(JobDefOf.Wait, here);
+			waitJob.count = 1;
 
-		if (!medicIsActivelyTendingOrRescuing)
-		{
-		Log.Message(
-			$"[ArgrillianThreat][TryStopPatientToAllowTend] ABORT (medic not actively tending): medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} medicCurJob={(medic?.CurJob?.def?.defName ?? "null")}"
-		);
-		return;
-		}
+			patient.jobs?.StartJob(waitJob, JobCondition.InterruptForced);
 
-		// At this point, the patient is held AND the owning medic is actively tending/rescuing.
-		// Prevent “wiggle” by suppressing all non-held job churn.
-		Job cur = patient.CurJob;
-
-		// If patient currently runs something actively interfering, we'll do the same hard stop as before.
-		bool patientInterferingNow = IsInterferingJobForTend(patient);
-
-		// If they're already in a pipeline-y job, we still suppress churn, but we don't have to forcibly inject Hold.
-		if (!patientInterferingNow)
-		{
-		if (cur != null && cur.def != null &&
-			(cur.def == JobDefOf.Rescue ||
-				cur.def == JobDefOf.TendPatient))
-		{
-			return;
-		}
-		}
-
-		// Otherwise, force into Wait immediately.
-		bool curIsPipelineLike =
-		cur != null &&
-		cur.def != null &&
-		(cur.def == JobDefOf.TendPatient ||
-			cur.def == JobDefOf.Rescue ||
-			cur.def == JobDefOf.Wait ||
-			cur.def == JobDefOf.LayDown);
-
-		// Stop all existing/churn jobs and force Wait to satisfy "no rest/laydown before hold is acquired".
-		// We do this only after hold is confirmed acquired.
-		patient.jobs?.StopAll(true);
-		patient.jobs?.ClearQueuedJobs();
-		patient.pather?.StopDead();
-
-		if (!curIsPipelineLike)
-		{
-		IntVec3 here = patient.Position;
-		Job hold = JobMaker.MakeJob(JobDefOf.Wait, here);
-		hold.count = 1;
-		patient.jobs?.StartJob(hold, JobCondition.InterruptForced);
-
-		Log.Message(
-			$"[ArgrillianThreat][HOLD] patientForcedWaitOnLock medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} curJob={(cur?.def?.defName ?? "null")}"
-		);
-		}
+			Log.Message(
+				$"[ArgrillianThreat][HOLD] patientForcedWaitOnLock medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} curJob={(patient.CurJob?.def?.defName ?? "null")}"
+			);
 		}
 
 		private static bool IsJobNameContains(Job j, string part)
