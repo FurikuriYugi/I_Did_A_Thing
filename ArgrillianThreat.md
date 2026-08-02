@@ -6686,9 +6686,12 @@ namespace ArgrillianThreat
 					);
 
 					// After terminal completion, and the alert system releases the combat medic, fall back to normal threat job logic. Again only if the combat medic is above 80% health and has self tended if needed.
-					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn), new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(heldPatient);
+					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(heldPatient);
 				}
-				if (patientInBedAndFullyTended || patient transfered)
+				if (patientInBedAndFullyTended)
+				{
+					return null;
+				}
 			}
 			return null;
 		}
