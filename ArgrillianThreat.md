@@ -1394,9 +1394,10 @@ namespace ArgrillianThreat
 			// and force them into the non-available dedicated lane for this escalation.
 			if (upgradedThisCall)
 			{
-				if (medicIdByPatientId.TryGetValue(patientId, out int heldMedicId))
+				// OLD (legacy): medicIdByPatientId.TryGetValue(patientId, out int heldMedicId)
+				// NEW (alert-system only): resolve from assignedPatientIdByMedicId
+				if (TryGetAssignedMedicIdForPatient(patient.Map, patientId, out int heldMedicId))
 				{
-					// Keep medic dedicated until terminal completion contract clears it.
 					availabilityByMedicId[heldMedicId] = false;
 
 					// If they were already assigned/tending, keep them tending; otherwise just mark assigned.
