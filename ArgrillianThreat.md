@@ -5803,10 +5803,23 @@ namespace ArgrillianThreat
 		private static void TryStopPatientToAllowTend(Pawn medic, Pawn patient)
 		{
 			Log.Message(
-			$"[ArgrillianThreat][TryStopPatientToAllowTend][ENTRY] medic={(medic != null ? medic.thingIDNumber.ToString() : "-1")} patient={(patient != null ? patient.thingIDNumber.ToString() : "-1")}"
+				$"[ArgrillianThreat][TryStopPatientToAllowTend][ENTRY] medic={(medic != null ? medic.thingIDNumber.ToString() : "-1")} patient={(patient != null ? patient.thingIDNumber.ToString() : "-1")}"
 			);
 
 			if (patient == null || patient.Dead)
+				return;
+
+			if (medic == null || medic.Dead)
+				return;
+
+			// FIX: don’t force the patient into Wait too early.
+			// If we stop them while the combat medic is still out of tend distance,
+			// they can break the tend pipeline / hold and flip to other behaviors.
+			//
+			// We only hard-stop the patient once the medic is close enough to actually start tending immediately.
+			float tendStopMaxDistance = 6f;
+			float dist = medic.Position.DistanceTo(patient.Position);
+			if (dist > tendStopMaxDistance)
 				return;
 
 			// Mandatory behavior contract (locked):
