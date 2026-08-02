@@ -6672,13 +6672,9 @@ namespace ArgrillianThreat
 					}
 				}
 
-				if (patientClearedForCombat)
+				if (patientIsFullyTended && patientClearedForCombat)
 				{
-					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(heldPatient);
-				}
-
-				if ((patientIsFullyTended && patientClearedForCombat) || patientInBedAndFullyTended/* We need to create this: || combatMedic transferedPatient*/)
-				{
+					// We need to add, if alert system assigns a patient transfer to a medic or doctor then the combat medic sends ArgrillianAlertSystem.NotifyMedicPatientCallTerminalCompletion and continues combat.
 					// Then we send the alert system the patient status and clear the patient either for combat or full retreat etc.
 					ArgrillianAlertSystem.NotifyMedicPatientCallTerminalCompletion(
 						pawn,
@@ -6689,9 +6685,10 @@ namespace ArgrillianThreat
 						escortToMedicalRequired
 					);
 
-					// After terminal completion, fall back to normal threat job logic. Again only if the combat medic is above 80% health and has self tended if needed.
-					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
+					// After terminal completion, and the alert system releases the combat medic, fall back to normal threat job logic. Again only if the combat medic is above 80% health and has self tended if needed.
+					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn), new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(heldPatient);
 				}
+				if (patientInBedAndFullyTended || patient transfered)
 			}
 			return null;
 		}
