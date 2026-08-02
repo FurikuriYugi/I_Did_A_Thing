@@ -6636,13 +6636,12 @@ namespace ArgrillianThreat
 				bool patientHeldForTendNow = ArgrillianAlertSystem.IsPatientHeldForTend(heldPatient);
 				if (patientHeldForTendNow)
 				{
-					// 1) prevent patient job churn so medic can execute tend/rescue pipeline
-					//    (this also fixes the “combat medics quit and do normal combat instead” symptom by removing competition)
-					TryStopPatientToAllowTend(pawn, heldPatient);
-
-					// 2) force medic-side job choice strictly within the tend/rescue/escort pipeline
 					if (tendEligibleNow)
 					{
+						// 1) prevent patient job churn so medic can execute tend/rescue pipeline
+						TryStopPatientToAllowTend(pawn, heldPatient);
+
+						// 2) force medic-side job choice strictly within the tend/rescue/escort pipeline
 						// If patient flips to downed while gating, rescue should win.
 						if (heldPatient.Downed)
 						{
