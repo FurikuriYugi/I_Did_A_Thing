@@ -2238,13 +2238,64 @@ namespace ArgrillianThreat
 		// - acknowledge/keep medic dedicated until terminal completion
 		// - update cached PatientCallEntry severity/resolution (no job churn)
 		// - release medic hold + free medic for next assignment only when terminal condition is met
+		// NEW: reserve a non-combat medical caregiver (doctor or non-combat medic) for the escorted patient
+		// so the combat medic can safely release.
+		private static void TryReserveNonCombatMedicOrDoctorForEscortedPatient(Pawn patient)
+		{
+			if (patient == null) return;
+			Map map = patient.Map;
+			if (map == null) return;
+
+			// Find any eligible non-combat caregiver, preferring nearest to reduce travel.
+			Pawn best = null;
+			float bestDist = float.MaxValue;
+
+			// Avoid churn: only consider caregivers that are currently marked available for claim.
+			// NOTE: this is a local scan of spawned pawns. It is not “map-wide find best patient”.
+			// It is “find an available caregiver” which is needed for deterministic transfer.
+			foreach (Pawn p in map.mapPawns.AllPawnsSpawned)
+			{
+				if (p == null) continue;
+				if (p.Dead) continue;
+				if (p.Map != map) continue;
+
+				var medicComp = p.GetComp<CompArgrillianMedicSettings>();
+				if (medicComp == null) continue;
+
+				// Doctor/medic = not combat medic.
+				// (Your code already treats doctors/medics as not interfering with combat-medic logic.)
+				bool isMedicalRole = (medicComp.isMedic || medicComp.doctor);
+				if (!isMedicalRole) continue;
+				if (medicComp.combatMedic) continue;
+
+				// Must be available to claim.
+				if (!IsMedicAvailableInternal(p)) continue;
+
+				// Must be able to meaningfully service the patient (simple distance heuristic).
+				float d = p.Position.DistanceTo(patient.Position);
+				if (d > 60f) continue; // keep it bounded; tune if needed
+
+				if (d < bestDist)
+				{
+					bestDist = d;
+					best = p;
+				}
+			}
+
+			if (best == null) return;
+
+			// Reserve assignment: this makes the transfer “real” in cached ownership terms.
+			MarkMedicAssignedToPatientCall(best, patient);
+		}
+
+		// REPLACE/EDIT inside: ArgrillianAlertSystem.NotifyMedicPatientCallTerminalCompletion(...)
 		public static void NotifyMedicPatientCallTerminalCompletion(
 			Pawn medic,
 			Pawn patient,
 			float patientHPPercent,
 			bool patientInBedAndFullyTended,
-			bool patientClearedForCombat,   // computed by medic after tending/rescue evaluation
-			bool escortToMedicalRequired)  // computed by medic when patient < 80% at the decision point
+			bool patientClearedForCombat,
+			bool escortToMedicalRequired)
 		{
 			if (medic == null) return;
 			if (patient == null) return;
@@ -2263,56 +2314,48 @@ namespace ArgrillianThreat
 			{
 				if (assignedPid != pid)
 				{
-					// Ignore out-of-contract completion updates to prevent churn.
 					return;
 				}
 			}
 
-			// Stage bookkeeping (for robustness + logs elsewhere).
 			stageByMedicId[mid] = MedicJobStage.Finished;
 
 			// Terminal completion condition:
-			// - must be in bed AND fully tended to allow medic to become available again
-			// - otherwise, keep them unavailable (medic continues escort/rest job)
 			if (!patientInBedAndFullyTended)
 			{
-				// Keep medic dedicated.
 				availabilityByMedicId[mid] = false;
-
-				// Still allow escalation of patient severity if needed (publish side already handles worsening events).
-				// We do not clear heldPatient / reservations here.
 				return;
 			}
 
-			// Update patient call resolution cache to stop re-dispatch churn.
-			// Decision logic locked by your direction:
-			// - >=80% => active duty
-			// - <80% => escort to hospital/home base (and then bed/fully tended is terminal medic completion)
+			// Update patient call resolution cache
 			if (escortToMedicalRequired)
 				resolutionByPatientId[pid] = PatientCallResolution.EscortedToMedical;
 			else
 				resolutionByPatientId[pid] = PatientCallResolution.Resolved;
 
-			// If the medic says patient is cleared for combat and patientHPPercent >= 0.80,
-			// then the patient can resume combat; otherwise patient should remain for medical/doctor pipeline.
 			bool eligibleForCombat = patientHPPercent >= ActiveDutyHPPercentThreshold;
 
-			// Guard against inconsistent medic reporting:
-			// - if patientClearedForCombat is true but HP < 0.80, treat as not cleared.
 			if (patientClearedForCombat && !eligibleForCombat)
 				patientClearedForCombat = false;
 
-			// Clear medic holds + dedicated assignment (this is the “medic ready for another patient” moment).
-			//
-			// This is the only time we should free the medic and let other medics claim.
+			// NEW TRANSFER CONTRACT:
+			// If this was an escort-to-medical completion, reserve a doctor/medic before releasing combat medic.
+			if (escortToMedicalRequired)
+			{
+				// Reserve a non-combat medical caregiver for the escorted patient (if any available).
+				TryReserveNonCombatMedicOrDoctorForEscortedPatient(patient);
+
+				// Regardless of whether a caregiver was reserved, release the combat medic
+				// only after the alert system has attempted the transfer assignment.
+				// If no caregiver is available, the resolution stays EscortedToMedical and the next medical tick can assign.
+			}
+
+			// Clear medic holds + dedicated assignment
 			ReleaseMedicHold(medic);
 
 			assignedPatientIdByMedicId.Remove(mid);
 			stageByMedicId[mid] = MedicJobStage.Idle;
 			availabilityByMedicId[mid] = true;
-
-			// Also clear stageByMedicId mapping if you want hard reset.
-			// stageByMedicId[mid] = MedicJobStage.Idle;
 		}
 
 		// Convenience: medic can report “still busy” stage progress without triggering availability.
@@ -4221,6 +4264,7 @@ namespace ArgrillianThreat
 
 	public class CompArgrillianMedicSettings : ThingComp
 	{
+		public bool doctor = false;
 		public bool isMedic = false;
 		public bool combatMedic = false;
 		public int assignedPawnThingID = -1;
@@ -4329,6 +4373,19 @@ namespace ArgrillianThreat
 			{
 				foreach (Gizmo g in base.CompGetGizmosExtra())
 					yield return g;
+
+				yield return ArgrillianGizmoHelpers.Toggle(
+					"Doctor",
+					"On: this pawn does the main tending and surgey"
+					() => doctor,
+					() =>
+					{
+						doctor = !doctor;
+						if (doctor)
+						{
+							if (patient is Pawn pawn) RegisterDoctor(pawn);
+						}
+					})
 
 				yield return ArgrillianGizmoHelpers.Toggle(
 					"Medic",
@@ -6374,7 +6431,7 @@ namespace ArgrillianThreat
 			}
 
 			// Combat capable check.
-			private bool IsPawnCombatCapable(Pawn p)
+			bool IsPawnCombatCapable(Pawn p)
 			{
 				if (p == null || p.Dead || p.Downed || p.health == null)
 					return false;
@@ -6481,7 +6538,7 @@ namespace ArgrillianThreat
 			// ----------------------------
 			// 1) DOCTORS (non-combat) branch
 			// ----------------------------
-			if (/* Not created yet: medicComp.doctor && */!medicComp.combatMedic && !medicComp.isMedic) // keep explicit for clarity
+			if (medicComp.doctor) // keep explicit for clarity
 			{
 				// Non-combat doctors: handled by next tasks.
 				// Doctors do the main tending and surgeries etc
@@ -6604,7 +6661,7 @@ namespace ArgrillianThreat
 					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(patient);
 				}
 
-				if ((patientIsFullyTended && patientClearedForCombat) || patientInBedAndFullyTended/* We need to create this: || combatMedic.transferedPatient*/)
+				if ((patientIsFullyTended && patientClearedForCombat) || patientInBedAndFullyTended/* We need to create this: || combatMedic transferedPatient*/)
 				{
 					// Then we send the alert system the patient status and clear the patient either for combat or full retreat etc.
 					ArgrillianAlertSystem.NotifyMedicPatientCallTerminalCompletion(
