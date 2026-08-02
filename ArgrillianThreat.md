@@ -6709,9 +6709,13 @@ namespace ArgrillianThreat
 
 				if (patientIsFullyTended && patientClearedForCombat)
 				{
+					Pawn authoritative = ArgrillianAlertSystem.GetHeldPatientForMedic(pawn);
+
+					bool patientStillHeldByThisMedic = authoritative != null && authoritative.thingIDNumber == heldPatient.thingIDNumber;
+
 					bool patientCurJobIsWait = heldPatient.CurJob != null && heldPatient.CurJob.def == JobDefOf.Wait;
 
-					if (patientCurJobIsWait)
+					if (patientStillHeldByThisMedic && patientHeldForTendNow && patientCurJobIsWait)
 					{
 						heldPatient.jobs?.StopAll(true);
 						heldPatient.jobs?.ClearQueuedJobs();
@@ -6726,6 +6730,7 @@ namespace ArgrillianThreat
 						patientClearedForCombat,
 						escortToMedicalRequired
 					);
+
 					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(heldPatient);
 				}
 
