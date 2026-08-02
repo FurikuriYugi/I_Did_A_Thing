@@ -6781,7 +6781,7 @@ namespace ArgrillianThreat
 
 			// KEEP-ACTIVE-JOB GUARD:
 			// If the medic is already running the correct Tend/Rescue job for the held/assigned patient,
-			// do not let transient movement/stability/distance flips cause the job g iver to abandon it.
+			// do not let transient movement/stability/distance flips cause the job giver to abandon it.
 			Job cur = pawn.CurJob;
 			if (cur != null && cur.def != null)
 			{
@@ -6820,10 +6820,15 @@ namespace ArgrillianThreat
 			// Held patient invariant: if this patient is locked into this medic's medical pipeline,
 			// tend/rescue eligibility should NOT be blocked by the patient's current combat job.
 			//
-			// FIX for your symptom:
-			// While held-for-tend, ignore reachability gating that can transiently fail during escort/retreat transitions.
+			// Held-for-tend fix for your symptom:
+			// - While held-for-tend, ignore reachability gating (IsValidTendTarget -> CanReach),
+			//   because CanReach can transiently fail during escort/retreat transitions.
+			// - Still keep stability logic behavior you already implemented (forced stability / stableOk=true),
+			//   but don’t let IsValidTendTarget stay false.
+
 			if (combatMedic)
 			{
+				// While held-for-tend, ignore reservation flapping during interim transitions (rest/consume/haul queued).
 				Pawn heldPatient = ArgrillianAlertSystem.GetHeldPatientForMedic(pawn);
 
 				if (heldPatient == null)
@@ -6858,20 +6863,22 @@ namespace ArgrillianThreat
 							requiredStableTicksOuter = 0;
 					}
 
-					// IMPORTANT FIX:
-					// While held-for-tend, do NOT apply distance gating here.
+					// IMPORTANT FIX: while held-for-tend, do NOT apply distance gating here.
 					bool distanceOk = true;
 
-					// HARD OVERRIDE: if held-for-tend, ignore BOTH stability counter gating AND reachability gating
+					// HARD OVERRIDE: if held-for-tend, ignore BOTH stability counter gating AND reservation flapping
 					// for the purpose of Tend/Rescue eligibility (heldPatient owns arbitration).
+					// NOTE: we also skip IsValidTendTarget (reachability) entirely while held-for-tend.
 					bool stableOk = true;
 
-					// Reachability (IsValidTendTarget) is intentionally NOT part of the held invariant now,
-					// because it can transiently fail while escort/retreat transitions are still resolving.
+					// Held-for-tend: treat as valid regardless of transient CanReach failures.
+					bool isValid = true;
+
 					if (patient.Downed)
 					{
 						bool okHeld =
 							distanceOk &&
+							isValid &&
 							stableOk; // stability ignored while held; reachability ignored while held
 
 						JobGiver_ArgrillianThreatResponse.TraceMedKit(
@@ -6886,8 +6893,7 @@ namespace ArgrillianThreat
 					}
 
 					// INJURED held invariant:
-					// Ignore IsValidTendTarget(patient,pawn) reachability failures while held.
-					bool ok3 = distanceOk && stableOk;
+					bool ok3 = distanceOk && isValid && stableOk;
 
 					JobGiver_ArgrillianThreatResponse.TraceMedKit(
 						"canTendNow_heldInvariant_injuredFinalGates",
