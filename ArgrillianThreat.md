@@ -6351,18 +6351,12 @@ namespace ArgrillianThreat
 			// (edge/transition coalescing is handled inside NotifyPawnSelfState).
 			ArgrillianAlertSystem.NotifyPawnSelfState(pawn);
 
-			// ----------------------------
-			// Medic gating: only handle medics here; non-combat medics and combat medics are separate branches
-			// ----------------------------
+			// Medic gating: non-combat medics don't do threat response.
 			var medicThreatSettings = pawn?.GetComp<CompArgrillianMedicSettings>();
-			if (medicThreatSettings != null && medicThreatSettings.isMedic)
+			if (medicThreatSettings != null && medicThreatSettings.isMedic && !medicThreatSettings.combatMedic)
 			{
-				// Non-combat medic: allow medic tend/rescue behavior to be handled elsewhere (not this jobgiver).
-				// (Core requirement: this jobgiver is for combat/retreating-tend behavior.)
-				if (!medicThreatSettings.combatMedic)
-					return null;
-
-				// Combat medic continues below.
+				// Medic: Eventually we will set up the medic job
+				return null;
 			}
 
 			if (pawn == null || pawn.Dead || pawn.Map == null) return null;
@@ -6374,7 +6368,6 @@ namespace ArgrillianThreat
 			// Acquire held patient from alert-system authority.
 			Pawn heldPatient = ArgrillianAlertSystem.GetHeldPatientForMedic(pawn);
 
-			// If we don't have a held patient yet, try to reserve one from cached calls.
 			if (heldPatient == null)
 			{
 				Pawn bestCandidate = ArgrillianAlertSystem.GetBestPatientFromCalls(pawn, searchRadius);
@@ -6385,23 +6378,26 @@ namespace ArgrillianThreat
 					bool accepted = ArgrillianAlertSystem.TryReserveMedicForPatient(pawn, bestCandidate);
 
 					if (accepted)
+					{
 						heldPatient = ArgrillianAlertSystem.GetHeldPatientForMedic(pawn);
+					}
 				}
 			}
 
 			if (heldPatient == null)
 			{
-				// No patient assignment: fall back to normal threat response.
 				return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 			}
 
 			// ----------------------------
 			// 0) TERMINAL COMPLETION CHECK (wires 0E+ completion contract)
 			// ----------------------------
-			// Previously this could prematurely complete (causing the medic to revert to normal combat jobs too early).
-			// Now require stability ticks as well.
-			float patientHP = heldPatient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
+			// IMPORTANT FIX for "combat medic quits fighting and doesn't try to escort/tend":
+			// Even if the patient *looks* cleared (e.g. HP>=0.8), we must NOT release back to normal
+			// combat behavior while the patient hold-for-tend is still active.
+			bool patientIsHeldForTend = ArgrillianAlertSystem.IsPatientHeldForTend(heldPatient);
 
+			float patientHP = heldPatient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
 			bool patientInBed = heldPatient.InBed();
 
 			bool patientIsBleedingNow =
@@ -6428,20 +6424,37 @@ namespace ArgrillianThreat
 				(patientHP >= 0.8f && !heldPatient.Downed) ||
 				patientInBedAndFullyTended;
 
-			bool escortToMedicalRequired = !patientClearedForCombat;
-
-			if (patientInBedAndFullyTended)
+			// NEW: only allow terminal completion to hand back to normal combat jobs if the hold is already gone.
+			// This prevents the observed behavior where the medic "lets go" and stops doing tend/escort while
+			// still in the held-for-tend pipeline.
+			if (patientInBedAndFullyTended || (patientClearedForCombat && !patientIsHeldForTend))
 			{
-				ArgrillianAlertSystem.NotifyMedicPatientCallTerminalCompletion(
-					pawn,
-					heldPatient,
-					patientHP,
-					patientInBedAndFullyTended,
-					patientClearedForCombat,
-					escortToMedicalRequired
-				);
+				bool escortToMedicalRequired = !patientClearedForCombat;
 
-				// After terminal completion, fall back to normal threat job logic.
+				if (patientInBedAndFullyTended)
+				{
+					ArgrillianAlertSystem.NotifyMedicPatientCallTerminalCompletion(
+						pawn,
+						heldPatient,
+						patientHP,
+						patientInBedAndFullyTended,
+						patientClearedForCombat,
+						escortToMedicalRequired
+					);
+				}
+				else
+				{
+					// patientClearedForCombat but hold is already inactive => allow completion notification too
+					ArgrillianAlertSystem.NotifyMedicPatientCallTerminalCompletion(
+						pawn,
+						heldPatient,
+						patientHP,
+						false,
+						true,
+						escortToMedicalRequired
+					);
+				}
+
 				return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 			}
 
@@ -6454,7 +6467,6 @@ namespace ArgrillianThreat
 
 			bool retreatingHeldPatient = !heldPatient.Downed && !heldIsBleedingNow;
 
-			// NEW: stability/tend eligibility for this specific medic/patient pair.
 			bool tendEligibleNow = canTendNow(pawn, heldPatient);
 
 			// ----------------------------
@@ -6501,16 +6513,12 @@ namespace ArgrillianThreat
 							hostileNear = los && (dMed <= (medicEscortCombatRadius + 0.1f) || dPat <= (medicEscortCombatRadius + 0.1f));
 						}
 
-						Verse.Log.Message(
-							$"[ArgrillianThreat][TRACE] escortGateDecision " +
+						Verse.Log.Message($"[ArgrillianThreat][TRACE] escortGateDecision " +
 							$"tick={Find.TickManager.TicksGame} " +
 							$"medic={pawn.thingIDNumber} patient={heldPatient.thingIDNumber} " +
-							$"isHeldForTend={isHeldForTend} " +
-							$"tendEligibleNow={tendEligibleNow} " +
-							$"retreatingHeldPatient={retreatingHeldPatient} " +
-							$"curJobDef={cur.def.defName} " +
-							$"hostileNear={hostileNear}"
-						);
+							$isHeldForTend={isHeldForTend} " +
+							$tendEligibleNow={tendEligibleNow} retreatingHeldPatient={retreatingHeldPatient} " +
+							$"curJobDef={cur.def.defName} hostileNear={hostileNear}");
 
 						// HARD: while in retreating HeldPatient stage and NOT tend-eligible yet,
 						// medic should stay escort/follow (no chase).
@@ -6535,7 +6543,7 @@ namespace ArgrillianThreat
 							}
 							else
 							{
-								// Soft allow stays as-is if you already had it; keep minimal here.
+								// Soft allow stays as-is if you already had it; kept minimal here.
 							}
 						}
 						else
@@ -6623,7 +6631,6 @@ namespace ArgrillianThreat
 						Job rescueJob = JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
 						rescueJob.count = 1;
 
-						// NOTE: rest of rescue-job plumbing remains as in-file after this point.
 						return rescueJob;
 					}
 
@@ -6634,13 +6641,14 @@ namespace ArgrillianThreat
 
 			// NEW: If the medic has no more medical mission to perform and the patient is already clear,
 			// go back to combat (do not return null).
+			// IMPORTANT: do not fall back while the hold is active.
 			bool patientHeldForTendNow = ArgrillianAlertSystem.IsPatientHeldForTend(heldPatient);
 			if (!patientHeldForTendNow && patientHP >= 0.8f && !heldPatient.Downed)
 			{
 				return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 			}
 
-			// Fallback: continue with existing downstream logic (tend/rescue/escort behavior is implemented in-file).
+			// Fallback: continue with existing downstream logic for Tend/Rescue/escort behavior in-file.
 			return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 		}
 
