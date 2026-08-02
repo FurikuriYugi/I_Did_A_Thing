@@ -3784,13 +3784,13 @@ namespace ArgrillianThreat
 		}
 
 		private static bool TryPickPatientSafeRetreatCell(
-			Pawn patient,
-			Pawn hostile,
-			Pawn nearestMedic,
-			Map map,
-			float safeDistance,
-			float searchRadius,
-			out IntVec3 bestCell)
+		Pawn patient,
+		Pawn hostile,
+		Pawn nearestMedic,
+		Map map,
+		float safeDistance,
+		float searchRadius,
+		out IntVec3 bestCell)
 		{
 			bestCell = patient.Position;
 
@@ -3801,6 +3801,16 @@ namespace ArgrillianThreat
 			float bestScore = float.NegativeInfinity;
 
 			bool hostileSeesPatientNow = GenSight.LineOfSight(hostile.Position, patient.Position, map);
+
+			float patientHP = patient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
+			bool patientWantsMedicTendFocus = patientHP <= 0.75f;
+
+			// When <= 75% HP, strongly bias movement toward the medic so tend can happen quickly.
+			float medicProgressWeight = patientWantsMedicTendFocus ? 1.6f : 0.8f;
+
+			// “Stay put” bias: allow patient to remain where it is if that already satisfies safety.
+			// (This is handled naturally by bestCell initial value + score weights, but we slightly reinforce it at <=75%.)
+			float stationaryBias = patientWantsMedicTendFocus ? 0.15f : 0f;
 
 			foreach (IntVec3 c in GenRadial.RadialCellsAround(patient.Position, r, true))
 			{
@@ -3824,10 +3834,15 @@ namespace ArgrillianThreat
 				if (nearestMedic != null && !nearestMedic.Dead && nearestMedic.Spawned && nearestMedic.Map == map)
 				{
 					float distToMedic = c.DistanceTo(nearestMedic.Position);
-					medicProgress = (patient.Position.DistanceTo(nearestMedic.Position) - distToMedic) * 0.8f;
+					// Higher weight when <= 75% so the patient moves toward the medic (or stays if current cell is already good).
+					medicProgress = (patient.Position.DistanceTo(nearestMedic.Position) - distToMedic) * medicProgressWeight;
 				}
 
+				// Small penalty for moving away from the current position.
+				// Reinforced slightly at <= 75% so “stay still to be tended” is favored when both are safe.
 				float closeness = -c.DistanceTo(patient.Position) * 0.08f;
+				if (patientWantsMedicTendFocus)
+					closeness += stationaryBias;
 
 				float score = distanceScore + losScore + medicProgress + closeness;
 
@@ -4546,7 +4561,7 @@ namespace ArgrillianThreat
 		public static float patientRetreatMinHPPercentToTreatAsPatient = 0.9f;
 
 		public int patientRetreatModeHysteresisTicks = 180;
-		private float patientRetreatMinHPPercentToLockIn = 0.8f;
+		private float patientRetreatMinHPPercentToLockIn = 0.9f;
 
 		private float rangedPursuitCloseFactor = 0.75f;
 		private float rangedPursuitMinApproachMultiplier = 0.60f;
