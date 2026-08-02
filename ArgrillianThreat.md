@@ -6631,7 +6631,7 @@ namespace ArgrillianThreat
 			// ----------------------------
 			// (The remainder of your method should stay intact; this patch is only intended to
 			// prevent premature terminal completion that caused the “quit fighting” symptom.)
-			return null;
+			return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 		}
 
 		private bool TryGetRescueBedForPatient(Pawn medic, Pawn patient, out Building_Bed bed)
