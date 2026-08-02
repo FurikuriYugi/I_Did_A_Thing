@@ -2181,6 +2181,17 @@ namespace ArgrillianThreat
 		// NOTE: “doctor handover” is not created yet; we treat “bed + fully tended” as terminal medic completion.
 		private const float BedTerminalHPPercentThreshold = 0.65f;
 
+		public static bool IsPatientTransferedToMedicOrDoctor(Pawn patient)
+		{
+			if (patient == null) return false;
+			if (patient.Dead) return false;
+
+			if (!resolutionByPatientId.TryGetValue(patient.thingIDNumber, out PatientCallResolution r))
+				return false;
+
+			return r == PatientCallResolution.EscortedToMedical;
+		}
+
 		private static bool IsMedicAvailableInternal(Pawn medic)
 		{
 			if (medic == null) return false;
@@ -2440,7 +2451,6 @@ namespace ArgrillianThreat
 
 			return true;
 		}
-
 	}
 
 	public readonly struct ArgrillianThreatHostileAcquireContext
@@ -6688,9 +6698,9 @@ namespace ArgrillianThreat
 					// After terminal completion, and the alert system releases the combat medic, fall back to normal threat job logic. Again only if the combat medic is above 80% health and has self tended if needed.
 					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(heldPatient);
 				}
-				if (patientInBedAndFullyTended)
+				if (patientInBedAndFullyTended || ArgrillianAlertSystem.IsPatientTransferedToMedicOrDoctor(heldPatient))
 				{
-					return null;
+					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 				}
 			}
 			return null;
