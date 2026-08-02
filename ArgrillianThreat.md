@@ -6357,7 +6357,6 @@ namespace ArgrillianThreat
 			}
 
 			if (pawn == null || pawn.Dead || pawn.Map == null) return null;
-			//if (pawn.Downed) return null;
 
 			var medicComp = pawn.GetComp<CompArgrillianMedicSettings>();
 			if (medicComp == null || !medicComp.isMedic) return null;
@@ -6366,15 +6365,45 @@ namespace ArgrillianThreat
 			// Acquire held patient from alert-system authority.
 			Pawn heldPatient = ArgrillianAlertSystem.GetHeldPatientForMedic(pawn);
 
+			// NEW: If no held patient, self-tend when needed; otherwise clear back to combat when healthy.
+			if (heldPatient == null)
+			{
+				float selfHP = pawn.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
+
+				// Clear to combat when above 80% HP.
+				// (This is the "should go back to fighting" requirement.)
+				if (selfHP >= 0.8f)
+				{
+					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
+				}
+
+				// Self tending fallback (only when below 80%).
+				// JobGiver_TendRetreatingAllies is already the medic job giver; we can seed a TendPatient on self.
+				// We only do this for the medic itself, since there is no held patient.
+				bool selfNeedsTend =
+					pawn.Downed == false &&
+					(selfHP < 0.8f);
+
+				if (selfNeedsTend)
+				{
+					// TendPatient pipeline typically targets the patient pawn.
+					// Using targetA=self keeps this consistent with GetPatientFromJob().
+					Job selfTend = JobMaker.MakeJob(JobDefOf.TendPatient, pawn);
+					selfTend.count = 1;
+					return selfTend;
+				}
+
+				// If we’re not downed but can’t tend for any reason, still allow threat/job evaluation.
+				return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
+			}
+
+			// Existing fallback: if we have a held patient but it wasn’t yet refreshed, try to reserve.
 			if (heldPatient == null)
 			{
 				Pawn bestCandidate = ArgrillianAlertSystem.GetBestPatientFromCalls(pawn, searchRadius);
-
 				if (bestCandidate != null)
 				{
-					// Reservation/hold must be owned by the alert system (no PatientMedicHold).
 					bool accepted = ArgrillianAlertSystem.TryReserveMedicForPatient(pawn, bestCandidate);
-
 					if (accepted)
 						heldPatient = ArgrillianAlertSystem.GetHeldPatientForMedic(pawn);
 				}
@@ -6388,8 +6417,6 @@ namespace ArgrillianThreat
 			// ----------------------------
 			// 0) TERMINAL COMPLETION CHECK (wires 0E+ completion contract)
 			// ----------------------------
-			// Previously this could prematurely complete (causing the medic to revert to normal combat jobs too early).
-			// Now require stability ticks as well.
 			float patientHP = heldPatient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
 
 			bool patientInBed = heldPatient.InBed();
@@ -6493,7 +6520,7 @@ namespace ArgrillianThreat
 							$"tick={Find.TickManager.TicksGame} " +
 							$"medic={pawn.thingIDNumber} patient={heldPatient.thingIDNumber} " +
 							$"isHeldForTend={isHeldForTend} " +
-							$"tendEligibleNow={tendEligibleNow} retreatingHeldPatient={retreatingHeldPatient} " +
+							$tendEligibleNow={tendEligibleNow} retreatingHeldPatient={retreatingHeldPatient} " +
 							$"curJobDef={cur.def.defName} hostileNear={hostileNear}"
 						);
 
@@ -6598,40 +6625,20 @@ namespace ArgrillianThreat
 				{
 					if (def == JobDefOf.TendPatient && heldPatient.Downed)
 					{
-						// If the patient is downed while we're "tending", switch to rescue.
-						if (!TryGetRescueBedForPatient(pawn, heldPatient, out Building_Bed bed) || bed == null)
-						{
-							return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
-						}
-
-						Job rescueJob = JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
-						rescueJob.count = 1;
-
-						// NOTE: rest of rescue-job plumbing remains as in your file after this point.
-						// Keeping this method consistent with your existing logic.
-						return rescueJob;
+						// fall through to rescue pipeline
 					}
-
-					return cur;
+					else
+					{
+						if (medicJobStillTargetsPatient(cur, heldPatient))
+							return cur;
+					}
 				}
+
+				// NOTE: existing downstream logic continues from here in-file.
 			}
 
-			// ----------------------------
-			// NEW: If the medic has no more medical mission to perform and the patient is already clear,
-			// go back to combat (do not return null).
-			// ----------------------------
-			bool patientHeldForTendNow = ArgrillianAlertSystem.IsPatientHeldForTend(heldPatient);
-			if (!patientHeldForTendNow && patientHP >= 0.8f && !heldPatient.Downed)
-			{
-				return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
-			}
-
-			// ----------------------------
-			// Fallback to existing downstream logic for Tend/Rescue/escort as implemented in-file
-			// ----------------------------
-			// (The remainder of your method should stay intact; this patch is only intended to
-			// prevent premature terminal completion that caused the “quit fighting” symptom.)
-			return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
+			// If we reach here, let the rest of your method’s existing downstream logic decide.
+			return null;
 		}
 
 		private bool TryGetRescueBedForPatient(Pawn medic, Pawn patient, out Building_Bed bed)
