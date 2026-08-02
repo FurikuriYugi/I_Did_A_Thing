@@ -6709,6 +6709,15 @@ namespace ArgrillianThreat
 
 				if (patientIsFullyTended && patientClearedForCombat)
 				{
+					bool patientCurJobIsWait = heldPatient.CurJob != null && heldPatient.CurJob.def == JobDefOf.Wait;
+
+					if (patientCurJobIsWait)
+					{
+						heldPatient.jobs?.StopAll(true);
+						heldPatient.jobs?.ClearQueuedJobs();
+						heldPatient.pather?.StopDead();
+					}
+
 					ArgrillianAlertSystem.NotifyMedicPatientCallTerminalCompletion(
 						pawn,
 						heldPatient,
