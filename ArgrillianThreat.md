@@ -6341,6 +6341,7 @@ namespace ArgrillianThreat
 			}
 		}
 
+		// Medical
 		protected override Job TryGiveJob(Pawn pawn)
 		{
 			// NEW: publish PatientCalls when this pawn enters downed/bleeding states
@@ -6597,6 +6598,7 @@ namespace ArgrillianThreat
 				{
 					if (def == JobDefOf.TendPatient && heldPatient.Downed)
 					{
+						// If the patient is downed while we're "tending", switch to rescue.
 						if (!TryGetRescueBedForPatient(pawn, heldPatient, out Building_Bed bed) || bed == null)
 						{
 							return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
@@ -6612,6 +6614,16 @@ namespace ArgrillianThreat
 
 					return cur;
 				}
+			}
+
+			// ----------------------------
+			// NEW: If the medic has no more medical mission to perform and the patient is already clear,
+			// go back to combat (do not return null).
+			// ----------------------------
+			bool patientHeldForTendNow = ArgrillianAlertSystem.IsPatientHeldForTend(heldPatient);
+			if (!patientHeldForTendNow && patientHP >= 0.8f && !heldPatient.Downed)
+			{
+				return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 			}
 
 			// ----------------------------
