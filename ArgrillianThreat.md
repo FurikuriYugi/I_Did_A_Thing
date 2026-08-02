@@ -1616,25 +1616,33 @@ namespace ArgrillianThreat
 			Pawn cached = TryGetPatientFromCachedCall(medic.Map, patientId);
 			if (cached == null) return false;
 
-			// If some medic already holds this patient, reject unless it's the same medic.
-			if (medicIdByPatientId.TryGetValue(patientId, out int existingMedicId))
+			// Enforce “at most one medic assigned to a given patient” using ONLY alert-system cache.
+			// O(number of medics tracked in assignedPatientIdByMedicId) — no map-wide scan.
+			foreach (var kvp in assignedPatientIdByMedicId)
 			{
-				if (existingMedicId == medicId)
+				int otherMedicId = kvp.Key;
+				int otherPatientId = kvp.Value;
+
+				if (otherPatientId != patientId) continue;
+
+				// If it's the same medic, treat as success (idempotent).
+				if (otherMedicId == medicId)
 					return true;
 
 				return false;
 			}
 
-			// If this medic already holds a different patient, we allow overwrite semantics
-			// only if caller releases first. Here we simply reject to keep behavior explicit.
-			if (patientIdByMedicId.TryGetValue(medicId, out int existingPatientId))
+			// Optional idempotency: if this medic already has this same patient, accept.
+			if (assignedPatientIdByMedicId.TryGetValue(medicId, out int existingPatientId))
 			{
-				if (existingPatientId != patientId)
-					return false;
+				if (existingPatientId == patientId)
+					return true;
+
+				// Do not overwrite another patient without a release path succeeding deterministically.
+				return false;
 			}
 
-			medicIdByPatientId[patientId] = medicId;
-			patientIdByMedicId[medicId] = patientId;
+			assignedPatientIdByMedicId[medicId] = patientId;
 			return true;
 		}
 
@@ -1646,14 +1654,9 @@ namespace ArgrillianThreat
 			if (!medic.Spawned) return;
 
 			int medicId = medic.thingIDNumber;
-			if (!patientIdByMedicId.TryGetValue(medicId, out int patientId))
-				return;
 
-			patientIdByMedicId.Remove(medicId);
-
-			// Only remove if it still points at this medic.
-			if (medicIdByPatientId.TryGetValue(patientId, out int heldMedicId) && heldMedicId == medicId)
-				medicIdByPatientId.Remove(patientId);
+			// Only clear alert-system assignment state (no legacy exclusivity cache).
+			assignedPatientIdByMedicId.Remove(medicId);
 		}
 
 		// ----------------------------
