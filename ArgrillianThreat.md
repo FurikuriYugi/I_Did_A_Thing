@@ -6351,11 +6351,12 @@ namespace ArgrillianThreat
 			var medicThreatSettings = pawn?.GetComp<CompArgrillianMedicSettings>();
 			if (medicThreatSettings != null && medicThreatSettings.isMedic && !medicThreatSettings.combatMedic)
 			{
+				// Medic: Eventually we will set up the medic job
 				return null;
 			}
 
 			if (pawn == null || pawn.Dead || pawn.Map == null) return null;
-			if (pawn.Downed) return null;
+			//if (pawn.Downed) return null;
 
 			var medicComp = pawn.GetComp<CompArgrillianMedicSettings>();
 			if (medicComp == null || !medicComp.isMedic) return null;
@@ -6412,7 +6413,7 @@ namespace ArgrillianThreat
 				!patientIsBleedingNow &&
 				patientStabilityOkForTerminal;
 
-			bool patientClearedForCombat = patientHP >= 0.8f && patientInBedAndFullyTended && !heldPatient.Downed;
+			bool patientClearedForCombat = (patientHP >= 0.8f && !heldPatient.Downed) || patientInBedAndFullyTended;
 			bool escortToMedicalRequired = !patientClearedForCombat;
 
 			if (patientInBedAndFullyTended)
