@@ -2240,19 +2240,16 @@ namespace ArgrillianThreat
 		// - release medic hold + free medic for next assignment only when terminal condition is met
 		// NEW: reserve a non-combat medical caregiver (doctor or non-combat medic) for the escorted patient
 		// so the combat medic can safely release.
-		private static void TryReserveNonCombatMedicOrDoctorForEscortedPatient(Pawn patient)
+		// ==== EDIT 1: ArgrillianAlertSystem — make reservation attempt return success ====
+		private static bool TryReserveNonCombatMedicOrDoctorForEscortedPatient(Pawn patient)
 		{
-			if (patient == null) return;
+			if (patient == null) return false;
 			Map map = patient.Map;
-			if (map == null) return;
+			if (map == null) return false;
 
-			// Find any eligible non-combat caregiver, preferring nearest to reduce travel.
 			Pawn best = null;
 			float bestDist = float.MaxValue;
 
-			// Avoid churn: only consider caregivers that are currently marked available for claim.
-			// NOTE: this is a local scan of spawned pawns. It is not “map-wide find best patient”.
-			// It is “find an available caregiver” which is needed for deterministic transfer.
 			foreach (Pawn p in map.mapPawns.AllPawnsSpawned)
 			{
 				if (p == null) continue;
@@ -2263,7 +2260,6 @@ namespace ArgrillianThreat
 				if (medicComp == null) continue;
 
 				// Doctor/medic = not combat medic.
-				// (Your code already treats doctors/medics as not interfering with combat-medic logic.)
 				bool isMedicalRole = (medicComp.isMedic || medicComp.doctor);
 				if (!isMedicalRole) continue;
 				if (medicComp.combatMedic) continue;
@@ -2273,7 +2269,7 @@ namespace ArgrillianThreat
 
 				// Must be able to meaningfully service the patient (simple distance heuristic).
 				float d = p.Position.DistanceTo(patient.Position);
-				if (d > 60f) continue; // keep it bounded; tune if needed
+				if (d > 60f) continue;
 
 				if (d < bestDist)
 				{
@@ -2282,13 +2278,14 @@ namespace ArgrillianThreat
 				}
 			}
 
-			if (best == null) return;
+			if (best == null) return false;
 
 			// Reserve assignment: this makes the transfer “real” in cached ownership terms.
 			MarkMedicAssignedToPatientCall(best, patient);
+			return true;
 		}
 
-		// REPLACE/EDIT inside: ArgrillianAlertSystem.NotifyMedicPatientCallTerminalCompletion(...)
+		// ==== EDIT 2: ArgrillianAlertSystem — gate combat-medic release on reservation success ====
 		public static void NotifyMedicPatientCallTerminalCompletion(
 			Pawn medic,
 			Pawn patient,
@@ -2338,19 +2335,27 @@ namespace ArgrillianThreat
 			if (patientClearedForCombat && !eligibleForCombat)
 				patientClearedForCombat = false;
 
-			// NEW TRANSFER CONTRACT:
-			// If this was an escort-to-medical completion, reserve a doctor/medic before releasing combat medic.
+			// TRANSFER CONTRACT FIX:
+			// If this was an escort-to-medical completion, we MUST NOT release the combat medic
+			// unless the alert system successfully reserved a non-combat caregiver/doctor for the patient.
 			if (escortToMedicalRequired)
 			{
-				// Reserve a non-combat medical caregiver for the escorted patient (if any available).
-				TryReserveNonCombatMedicOrDoctorForEscortedPatient(patient);
+				bool reserved =
+					TryReserveNonCombatMedicOrDoctorForEscortedPatient(patient);
 
-				// Regardless of whether a caregiver was reserved, release the combat medic
-				// only after the alert system has attempted the transfer assignment.
-				// If no caregiver is available, the resolution stays EscortedToMedical and the next medical tick can assign.
+				// Deterministic retry behavior:
+				// - keep the combat medic dedicated + held
+				// - keep availability false
+				// - when Notify gets called again next tick, we’ll attempt reservation again
+				//   without releasing the held lock (prevents oscillation/quitting).
+				if (!reserved)
+				{
+					availabilityByMedicId[mid] = false;
+					return;
+				}
 			}
 
-			// Clear medic holds + dedicated assignment
+			// Clear medic holds + dedicated assignment (only after transfer assignment succeeded when required).
 			ReleaseMedicHold(medic);
 
 			assignedPatientIdByMedicId.Remove(mid);
