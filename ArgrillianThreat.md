@@ -6361,6 +6361,62 @@ namespace ArgrillianThreat
 				}
 			}
 
+			// HARD GUARD: don't touch heldPatient.health / heldPatient.InBed() etc if no patient is held.
+			if (heldPatient == null)
+			{
+				// For combat medics: let them fall back to threat job generation only when there is no held patient.
+				if (medicComp.combatMedic)
+				{
+					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
+				}
+				// For non-combat medics/doctors: this job-giver shouldn't do anything if no held patient exists.
+				return null;
+			}
+
+			// Combat capable check.
+			private bool IsPawnCombatCapable(Pawn p)
+			{
+				if (p == null || p.Dead || p.Downed || p.health == null)
+					return false;
+
+				var vt = p.verbTracker;
+				if (vt == null)
+					return false;
+
+				bool hasMelee = false;
+				bool hasRanged = false;
+
+				foreach (var verb in vt.AllVerbs)
+				{
+					if (verb == null) continue;
+
+					// Melee capability
+					if (verb is Verb_MeleeAttack melee)
+					{
+						float r = melee.verbProps != null ? melee.verbProps.range : 0f;
+						if (r > 0.01f)
+						{
+							hasMelee = true;
+							break;
+						}
+					}
+
+					// Ranged capability
+					if (verb is Verb_Shoot shoot)
+					{
+						if (shoot.verbProps == null) continue;
+						if (shoot.verbProps.range > 0.01f)
+						{
+							hasRanged = true;
+							// don't break yet; melee is also valid and we just need either
+						}
+					}
+				}
+
+				// Combat-capable if it has either melee or ranged verbs with meaningful range.
+				return hasMelee || hasRanged;
+			}
+
 			// ----------------------------
 			// 0) TERMINAL COMPLETION CHECK
 			// ----------------------------
@@ -6376,30 +6432,44 @@ namespace ArgrillianThreat
 
 			bool patientStabilityOkForTerminal = stableTicksNow >= requiredStableTicksForTerminal;
 
-			bool patientIsFullyTendedByHediffs = true;
+			// "Fully tended" = there are no remaining tendable hediffs that still have Severity > 0.
+			bool patientIsFullyTended =
+				heldPatient.health == null ||
+				heldPatient.health.hediffSet == null ||
+				heldPatient.health.hediffSet.hediffs == null;
 
 			if (heldPatient.health != null && heldPatient.health.hediffSet != null && heldPatient.health.hediffSet.hediffs != null)
 			{
+				patientIsFullyTended = true;
+
 				for (int i = 0; i < heldPatient.health.hediffSet.hediffs.Count; i++)
 				{
 					Hediff h = heldPatient.health.hediffSet.hediffs[i];
 					if (h == null || h.def == null)
 						continue;
 
-					// If the pawn still has any tendable hediff that hasn't been healed away (Severity > 0),
-					// then the pawn is NOT truly "fully tended".
-					// (This avoids the incorrect "99% health" heuristic.)
+					// Any remaining tendable hediff with Severity > 0 => not fully tended yet.
 					if (h.def.tendable && h.Severity > 0f)
 					{
-						patientIsFullyTendedByHediffs = false;
+						patientIsFullyTended = false;
 						break;
 					}
 				}
 			}
 
-			bool patientInBedAndFullyTended = patientInBed && !heldPatient.Downed && !patientIsBleedingNow && patientStabilityOkForTerminal && patientIsFullyTendedByHediffs;
+			// Separate "in bed" from "fully tended"
+			bool patientInBed = heldPatient.InBed();
 
-			bool patientClearedForCombat = (patientHP >= 0.8f && !heldPatient.Downed) || patientInBedAndFullyTended;
+			// "In bed + fully tended" for the medic terminal completion gate
+			bool patientInBedAndFullyTended =
+				patientInBed &&
+				!heldPatient.Downed &&
+				!patientIsBleedingNow &&
+				patientStabilityOkForTerminal &&
+				patientIsFullyTended;
+
+			// "Fully tended" can be used for combat-clearance even if not in bed
+			bool patientClearedForCombat = (patientHP >= 0.8f && !heldPatient.Downed && !heldPatient.Downed && !patientIsBleedingNow && patientIsFullyTended && IsPawnCombatCapable(patient));
 
 			bool escortToMedicalRequired = !patientClearedForCombat;
 
@@ -6529,25 +6599,12 @@ namespace ArgrillianThreat
 					}
 				}
 
-				// If held-for-tend is NOT active and patient is clear, allow combat again.
-				// We have to make sure this makes sure the patient is above 80% health and not downed and fully tended
-				if (patientHP >= 0.8f && !heldPatient.Downed/*We need to create this: && patient.fullyTended*/)
+				if (patientClearedForCombat)
 				{
-					// This is a rough idea we just need to creat it so that if the patient is a combat pawn ie ranged/melee and is cleared by the combat medic then the patient goes back to fighting or if they are not a combat pawn they just go back to normal jobs.
-					/*if (patient == combatPawn)
-					{
-						return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(patient);
-					}
-					else
-					{
-						return normal job
-					}*/
-					return null;
+					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(patient);
 				}
-				// It doesn't have to be exactly combatMedic.transferedPatient but we need to create a medical transfer, so that the combat medic can give the patient over to another medic/doctor etc and if the patient is either escorted and fully tended and in bed or the combat medic transfered the patient to another medic/doctor then the combat medic should return to combat if he is above 80% health and has self tended if needed.
-				// "Fully tended" must mean truly fully healthy enough + stable long enough, not just "not downed / not currently bleeding".
-				
-				if (patientInBedAndFullyTended/* We need to create this: || combatMedic.transferedPatient*/)
+
+				if ((patientIsFullyTended && patientClearedForCombat) || patientInBedAndFullyTended/* We need to create this: || combatMedic.transferedPatient*/)
 				{
 					// Then we send the alert system the patient status and clear the patient either for combat or full retreat etc.
 					ArgrillianAlertSystem.NotifyMedicPatientCallTerminalCompletion(
