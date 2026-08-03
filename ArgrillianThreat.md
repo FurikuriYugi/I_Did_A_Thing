@@ -5812,43 +5812,40 @@ namespace ArgrillianThreat
 			if (medic == null || medic.Dead)
 				return;
 
-			// FIX: don’t force the patient into Wait too early.
-			// If we stop them while the combat medic is still out of tend distance,
-			// they can break the tend pipeline / hold and flip to other behaviors.
-			//
-			// We only hard-stop the patient once the medic is close enough to actually start tending immediately.
+			// If the alert/medic pipeline already owns the tend-hold, this method must not
+			// keep interrupting/rewriting the patient job (prevents standing/rest flicker).
+			if (ArgrillianAlertSystem.IsPatientHeldForTend(patient))
+				return;
 
-			float tendStopMaxDistance = 3f;
+			float tendStopMaxDistance = 6f;
 			float dist = medic.Position.DistanceTo(patient.Position);
 			if (dist > tendStopMaxDistance)
 				return;
 
-			// Mandatory behavior contract (locked):
-			// - stop patient job
-			// - prevent new jobs
-			// - force patient to Wait
-			// - patient stays forced to Wait until the medic/combat medic releases it
-			// (release should be handled by the held-for-tend completion path; this method is only the “acquire/lock” side)
+			Job curJob = patient.CurJob;
 
-			// IMPORTANT crash fix:
-			// If the patient is currently mid TakeToBed, calling StopAll(true) can provoke a RimWorld NRE in
-			// JobDriver_TakeToBed.TryMakePreToilReservations.
-			Job cur = patient.CurJob;
-			bool curIsTakeToBed =
-				(cur != null && cur.def != null && !string.IsNullOrEmpty(cur.def.defName) && cur.def.defName.IndexOf("taketobed", System.StringComparison.OrdinalIgnoreCase) >= 0);
+			// If we're already forcing wait, make this idempotent.
+			if (curJob != null && curJob.def == JobDefOf.Wait)
+				return;
+
+			// If patient is in bed-taking flow, avoid StopAll(true) churn that can crash in
+			// JobDriver_TakeToBed reservation logic.
+			bool curIsTakeToBed = false;
+			if (curJob != null && curJob.def != null && !string.IsNullOrEmpty(curJob.def.defName))
+			{
+				curIsTakeToBed =
+					curJob.def.defName.IndexOf("taketobed", System.StringComparison.OrdinalIgnoreCase) >= 0;
+			}
 
 			// Prevent any in-progress non-tend jobs from continuing.
-			// For TakeToBed, avoid StopAll(true); just clear queued jobs and force Wait.
+			// For TakeToBed, avoid StopAll(true); just clear queued jobs so we don't crash / churn.
 			if (!curIsTakeToBed)
 				patient.jobs?.StopAll(true);
 
 			patient.jobs?.ClearQueuedJobs();
-
-			// Extra safety against movement “wandering” while locked.
 			patient.pather?.StopDead();
 
 			// Force Wait immediately.
-			// (We intentionally use Wait here rather than LayDown/Rest so the patient cannot re-select rest/laydown.)
 			IntVec3 here = patient.Position;
 			Job waitJob = JobMaker.MakeJob(JobDefOf.Wait, here);
 			waitJob.count = 1;
