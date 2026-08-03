@@ -5805,6 +5805,31 @@ namespace ArgrillianThreat
 
 		private static void TryStopPatientToAllowTend(Pawn medic, Pawn patient)
 		{
+			// Hard idempotency: if patient is already in forced Wait, exit BEFORE logging,
+			// and only allow early-return if authority mapping is either missing (we'll let
+			// mapping be acquired) or already owned by this medic.
+			if (patient != null && !patient.Dead && patient.CurJob != null && patient.CurJob.def == JobDefOf.Wait)
+			{
+				if (medic != null && !medic.Dead && patient.Map != null && medic.Map != null && patient.Map == medic.Map)
+				{
+					int patientId2 = patient.thingIDNumber;
+					int medicId2 = medic.thingIDNumber;
+
+					// If some other authority owns the forced wait, do nothing.
+					if (waitStopAuthorityByPatientId.TryGetValue(patientId2, out int existingAuthId2) && existingAuthId2 != medicId2)
+					{
+						return;
+					}
+
+					// If we own it (or no one is recorded yet), ensure mapping exists and exit.
+					if (!waitStopAuthorityByPatientId.ContainsKey(patientId2))
+						waitStopAuthorityByPatientId[patientId2] = medicId2;
+
+					return;
+				}
+			}
+
+			// Now that we know we’re not already idempotently holding, we can log entry.
 			Log.Message(
 				$"[ArgrillianThreat][TryStopPatientToAllowTend][ENTRY] medic={(medic != null ? medic.thingIDNumber.ToString() : "-1")} patient={(patient != null ? patient.thingIDNumber.ToString() : "-1")}"
 			);
@@ -5893,7 +5918,7 @@ namespace ArgrillianThreat
 				$"[ArgrillianThreat][HOLD] patientForcedWaitOnLock medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} curJob={(patient.CurJob?.def?.defName ?? "null")}"
 			);
 		}
-		
+
 		private static bool IsJobNameContains(Job j, string part)
 		{
 			if (j == null || j.def == null || string.IsNullOrEmpty(j.def.defName)) return false;
