@@ -5817,7 +5817,8 @@ namespace ArgrillianThreat
 			// they can break the tend pipeline / hold and flip to other behaviors.
 			//
 			// We only hard-stop the patient once the medic is close enough to actually start tending immediately.
-			float tendStopMaxDistance = 6f;
+
+			float tendStopMaxDistance = 3f;
 			float dist = medic.Position.DistanceTo(patient.Position);
 			if (dist > tendStopMaxDistance)
 				return;
@@ -5829,8 +5830,18 @@ namespace ArgrillianThreat
 			// - patient stays forced to Wait until the medic/combat medic releases it
 			// (release should be handled by the held-for-tend completion path; this method is only the “acquire/lock” side)
 
+			// IMPORTANT crash fix:
+			// If the patient is currently mid TakeToBed, calling StopAll(true) can provoke a RimWorld NRE in
+			// JobDriver_TakeToBed.TryMakePreToilReservations.
+			Job cur = patient.CurJob;
+			bool curIsTakeToBed =
+				(cur != null && cur.def != null && !string.IsNullOrEmpty(cur.def.defName) && cur.def.defName.IndexOf("taketobed", System.StringComparison.OrdinalIgnoreCase) >= 0);
+
 			// Prevent any in-progress non-tend jobs from continuing.
-			patient.jobs?.StopAll(true);
+			// For TakeToBed, avoid StopAll(true); just clear queued jobs and force Wait.
+			if (!curIsTakeToBed)
+				patient.jobs?.StopAll(true);
+
 			patient.jobs?.ClearQueuedJobs();
 
 			// Extra safety against movement “wandering” while locked.
