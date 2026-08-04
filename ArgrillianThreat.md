@@ -1182,24 +1182,6 @@ namespace ArgrillianThreat
 			return null;
 		}
 
-		public static bool IsPatientHeldForTend(Pawn patient)
-		{
-			if (patient == null) return false;
-			if (!patient.Spawned || patient.Dead) return false;
-			if (patient.Map == null) return false;
-
-			int patientId = patient.thingIDNumber;
-
-			// Authority: if any medic is currently assigned to this patient ID in the assignment cache.
-			foreach (var kvp in assignedPatientIdByMedicId)
-			{
-				int pid = kvp.Value;
-				if (pid == patientId) return true;
-			}
-
-			return false;
-		}
-
 		// 5) Update ComputePatientSeverity so ranking works with injured
 		private static PatientCallSeverity ComputePatientSeverity(Pawn patient)
 		{
@@ -2792,7 +2774,7 @@ namespace ArgrillianThreat
 	public static class ArgrillianThreatExecution
 	{
 		// -------- NEW: Injured stop-attacking gate --------
-			private static bool IsInjuredPatientOrInjuredMedicStopAttacking(Pawn pawn, float retreatMinHealthPercent)
+		private static bool IsInjuredPatientOrInjuredMedicStopAttacking(Pawn pawn, float retreatMinHealthPercent)
 		{
 			if (pawn == null || pawn.Dead || pawn.Map == null) return false;
 
@@ -2802,20 +2784,6 @@ namespace ArgrillianThreat
 
 			float hp = pawn.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
 			return hp <= retreatMinHealthPercent;
-		}
-
-		private static bool IsArgrillianMedicPawn(Pawn pawn)
-		{
-			if (pawn == null || pawn.Dead) return false;
-			var comp = pawn.GetComp<CompArgrillianMedicSettings>();
-			return comp != null && comp.isMedic;
-		}
-
-		private static bool IsArgrillianCombatMedicPawn(Pawn pawn)
-		{
-			if (pawn == null || pawn.Dead) return false;
-			var comp = pawn.GetComp<CompArgrillianMedicSettings>();
-			return comp != null && comp.combatMedic;
 		}
 
 		// -------- NEW: “imminent threat” check --------
@@ -2856,15 +2824,6 @@ namespace ArgrillianThreat
 
 			// Core imminence: hostile can currently hit the target.
 			return attackVerb.CanHitTarget(target);
-		}
-
-		// -------- NEW: “Is this pawn currently being tended by one of my medics?” --------
-		private static bool IsBeingTendedByArgrillianMedic(Pawn patient)
-		{
-			if (patient == null || patient.Map == null || patient.Dead || !patient.Spawned)
-				return false;
-
-			return ArgrillianAlertSystem.IsPatientHeldForTend(patient);
 		}
 
 		// -------- Patient retreat --------
@@ -5835,8 +5794,6 @@ namespace ArgrillianThreat
 
 				bool patientIsBleeding = patientIsBleedingNow;
 
-				bool patientHeldForTendNow = ArgrillianAlertSystem.IsPatientHeldForTend(heldPatient);
-
 				if (patientHeldForTendNow)
 				{
 					// While held-for-tend, we keep patient “locked” until the medic pipeline ends
@@ -6039,9 +5996,6 @@ namespace ArgrillianThreat
 						return true;
 				}
 			}
-
-			// HELD-FOR-TEND: alert-system arbitration owns the pipeline; transient gating shouldn't eject the tend job.
-			if (ArgrillianAlertSystem.IsPatientHeldForTend(patient)) return true;
 
 			// If the patient is already under our forced-hold behavior (Wait),
 			// allow tending to proceed even if stability cache hasn't accumulated yet.
