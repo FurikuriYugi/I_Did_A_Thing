@@ -5839,47 +5839,23 @@ namespace ArgrillianThreat
 
 				if (patientHeldForTendNow)
 				{
-					// Keep the patient held while the medic is actively executing the tend/rescue pipeline
-					// for THIS heldPatient. This avoids stand/rest bounce when distance fluctuates.
-					Job medicJob = pawn.CurJob;
-					bool medicHasTendPipeline =
-						medicJob != null &&
-						(medicJob.def == JobDefOf.TendPatient || medicJob.def == JobDefOf.Rescue) &&
-						ArgillianThreatPatientTuning.GetPatientFromJob(medicJob) == heldPatient;
+					// While held-for-tend, we keep patient “locked” until the medic pipeline ends
+					// (or the medic stops being in reach and we fall through to escort/combat logic).
+					bool medicInReach = pawn.Position.DistanceTo(heldPatient.Position) <= combatTendMaxDistance;
 
-					// Soft reach: allow the hold to persist even if we're a hair out of range,
-					// but only initiate tend/rescue (job choice) once the medic is actually close enough.
-					bool medicInReach = pawn.Position.DistanceTo(heldPatient.Position) <= (combatTendMaxDistance + 0.75f);
-
-					// Enforce the hold whenever the pipeline is active OR we're close enough to start it.
-					// Idempotent: if the patient is already waiting, do nothing.
-					if (medicHasTendPipeline || medicInReach)
+					// If medic isn't in reach, we do not hard-hold; we let the patient proceed to the
+					// escort/combat logic that owns the job-changes.
+					if (!medicInReach)
 					{
-						if (heldPatient.CurJob != null && heldPatient.CurJob.def == JobDefOf.Wait)
-						{
-							// If the medic is already tending/rescuing, let the pipeline continue.
-							// If not, we'll fall through and (re)choose tend/rescue below only when in reach.
-						}
-						else
-						{
-							heldPatient.jobs?.StopAll(true);
-							heldPatient.jobs?.ClearQueuedJobs();
-							heldPatient.pather?.StopDead();
+						IntVec3 escortTarget2 = heldPatient.Position;
+						return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, escortTarget2);
+					}
 
-							Job waitJob = JobMaker.MakeJob(JobDefOf.Wait, heldPatient.Position);
-							waitJob.count = 1;
-							heldPatient.jobs?.StartJob(waitJob, JobCondition.InterruptForced);
-						}
-
-						// Only choose tend/rescue when close enough; otherwise just hold the patient.
-						if (!medicInReach && !medicHasTendPipeline)
-						{
-							// Keep holding patient; medic should reposition normally.
-							IntVec3 escortTarget3 = heldPatient.Position;
-							return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, escortTarget3);
-						}
-
-						// Force medic-side job choice within the tend/rescue pipeline.
+					// Idempotent: if the patient is already in our forced-hold Wait, don't restart it.
+					// (Prevents “bounced stand/rest” caused by restarting a 1-tick Wait repeatedly.)
+					if (heldPatient.CurJob != null && heldPatient.CurJob.def == JobDefOf.Wait)
+					{
+						// If the medic is already close, push the medic-side pipeline choice.
 						if (heldPatient.Downed)
 						{
 							Building_Bed bed = null;
@@ -5893,14 +5869,37 @@ namespace ArgrillianThreat
 							return rescueJob;
 						}
 
-						Job tendJob = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
-						tendJob.count = 1;
-						return tendJob;
+						Job tendJob2 = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
+						tendJob2.count = 1;
+						return tendJob2;
 					}
 
-					// Not in reach and pipeline not active: reposition/escort only.
-					IntVec3 escortTarget2 = heldPatient.Position;
-					return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, escortTarget2);
+					// Transition into forced hold exactly once.
+					heldPatient.jobs?.StopAll(true);
+					heldPatient.jobs?.ClearQueuedJobs();
+					heldPatient.pather?.StopDead();
+
+					Job waitJob = JobMaker.MakeJob(JobDefOf.Wait, heldPatient.Position);
+					waitJob.count = 999999; // long duration so it doesn't expire next tick and bounce
+					heldPatient.jobs?.StartJob(waitJob, JobCondition.InterruptForced);
+
+					// Now force the medic-side job choice.
+					if (heldPatient.Downed)
+					{
+						Building_Bed bed = null;
+						if (!TryGetRescueBedForPatient(pawn, heldPatient, out bed) || bed == null)
+						{
+							return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
+						}
+
+						Job rescueJob = JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
+						rescueJob.count = 1;
+						return rescueJob;
+					}
+
+					Job tendJob = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
+					tendJob.count = 1;
+					return tendJob;
 				}
 
 				// ----------------------------
