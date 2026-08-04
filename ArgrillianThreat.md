@@ -6488,62 +6488,6 @@ namespace ArgrillianThreat
 			return true;
 		}
 
-		private static void LockPatientToMedic(Pawn medic, Pawn patient)
-		{
-			if (patient == null || patient.Dead) return;
-
-			// Authority: reserve/assign inside alert system.
-			// (This is the single-owner model. No local held cache.)
-			bool accepted = ArgrillianAlertSystem.TryReserveMedicForPatient(medic, patient);
-			if (!accepted)
-				return;
-
-			// Only log when the reservation actually sticks.
-			Pawn held = ArgrillianAlertSystem.GetHeldPatientForMedic(medic);
-
-			if (held != null && held.thingIDNumber == patient.thingIDNumber)
-			{
-				Log.Message(
-					$"[ArgrillianThreat][HOLD] patientHoldAcquired medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} mapOk={(medic?.Map == patient?.Map)}"
-				);
-
-				bool isHeldForTendNow = ArgrillianAlertSystem.IsPatientHeldForTend(patient);
-				if (!isHeldForTendNow)
-					return;
-
-				Job cur = patient.CurJob;
-
-				// IMPORTANT CONTRACT:
-				// While held-for-tend is active and medic has committed to the tend/rescue pipeline,
-				// the patient must be held in Wait and prevented from starting any other jobs
-				// until terminal completion releases the hold.
-				bool curIsPipelineLike =
-					cur != null &&
-					cur.def != null &&
-					(cur.def == JobDefOf.TendPatient ||
-						cur.def == JobDefOf.Rescue ||
-						cur.def == JobDefOf.Wait ||
-						cur.def == JobDefOf.LayDown);
-
-				// Force containment immediately.
-				patient.jobs?.StopAll(true);
-				patient.jobs?.ClearQueuedJobs();
-				patient.pather?.StopDead();
-
-				if (!curIsPipelineLike)
-				{
-					IntVec3 here = patient.Position;
-					Job hold = JobMaker.MakeJob(JobDefOf.Wait, here);
-					hold.count = 1;
-					patient.jobs?.StartJob(hold, JobCondition.InterruptForced);
-
-					Log.Message(
-						$"[ArgrillianThreat][HOLD] patientForcedWaitOnLock medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} curJob={(cur?.def?.defName ?? "null")}"
-					);
-				}
-			}
-		}
-
 		protected override Job TryGiveJob(Pawn pawn)
 		{
 			if (pawn == null || pawn.Dead || pawn.Map == null) return null;
