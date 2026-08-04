@@ -6720,10 +6720,14 @@ namespace ArgrillianThreat
 
 				if (patientHeldForTendNow)
 				{
-					if (tendEligibleNow)
-					{
-						// we need a one time run gate or something that only calls TryStopPatientToAllowTend once the combat medic is withing reach.  tendEligibleNow is just a check to see if the patient can be tended so we don't want to stop the patient then.
+					// Only allow the “stop + tend/rescue pipeline” trigger when medic is actually in reach.
+					bool medicInReach =
+						pawn.Position.DistanceTo(heldPatient.Position) <= combatTendMaxDistance;
 
+					// NOTE: tendEligibleNow may intentionally ignore reach while held, so we must enforce
+					// the reach gate here (for TryStopPatientToAllowTend and job switching).
+					if (medicInReach && tendEligibleNow)
+					{
 						// 1) prevent patient job churn so medic can execute tend/rescue pipeline
 						TryStopPatientToAllowTend(pawn, heldPatient);
 
@@ -6748,21 +6752,10 @@ namespace ArgrillianThreat
 						tendJob.count = 1;
 						return tendJob;
 					}
-					else
-					{
-						// Not yet tend-eligible: we must escort / reposition, never choose combat threat jobs.
-						// Keep it stable: do not start attack/chase jobs while the hold is active.
-						IntVec3 escortTarget = heldPatient.Position;
 
-						// Prefer a short “stay near patient” escort circle rather than re-path spam.
-						// (Exact safe-cell logic is handled elsewhere in-file; this is the hold-suppression fallback.)
-						if (pawn.Position.DistanceTo(heldPatient.Position) > combatTendMaxDistance)
-						{
-							escortTarget = heldPatient.Position;
-						}
-
-						return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, escortTarget);
-					}
+					// Not in reach (or not tend-eligible yet): keep stable escort/reposition only.
+					IntVec3 escortTarget = heldPatient.Position;
+					return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, escortTarget);
 				}
 
 				// ----------------------------
