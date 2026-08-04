@@ -5501,9 +5501,9 @@ namespace ArgrillianThreat
 					if (!stableEnough)
 					{
 						// Soft-hold: stop movement / queued churn, but don't switch the job to Wait.
-						//patient.jobs?.StopAll(true);
-						//patient.jobs?.ClearQueuedJobs();
-						//patient.pather?.StopDead();
+						patient.jobs?.StopAll(true);
+						patient.jobs?.ClearQueuedJobs();
+						patient.pather?.StopDead();
 
 						Log.Message($"[ArgrillianThreat][HOLD] patientHoldSoftNoWaitUntilStable medic={medic.thingIDNumber} patient={patient.thingIDNumber}");
 						return;
@@ -5946,7 +5946,7 @@ namespace ArgrillianThreat
 
 			return null;
 		}
-		
+
 		private bool TryGetRescueBedForPatient(Pawn medic, Pawn patient, out Building_Bed bed)
 		{
 			bed = null;
