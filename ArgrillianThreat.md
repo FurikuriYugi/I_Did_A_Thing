@@ -6501,7 +6501,6 @@ namespace ArgrillianThreat
 
 				if (bestCandidate != null)
 				{
-					// Reservation/hold must be owned by the alert system (no PatientMedicHold).
 					bool accepted = ArgrillianAlertSystem.TryReserveMedicForPatient(pawn, bestCandidate);
 
 					if (accepted)
@@ -6519,6 +6518,7 @@ namespace ArgrillianThreat
 				{
 					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 				}
+
 				// For non-combat medics/doctors: this job-giver shouldn't do anything if no held patient exists.
 				return null;
 			}
@@ -6540,7 +6540,6 @@ namespace ArgrillianThreat
 				{
 					if (verb == null) continue;
 
-					// Melee capability
 					if (verb is Verb_MeleeAttack melee)
 					{
 						float r = melee.verbProps != null ? melee.verbProps.range : 0f;
@@ -6551,19 +6550,16 @@ namespace ArgrillianThreat
 						}
 					}
 
-					// Ranged capability
 					if (verb is Verb_Shoot shoot)
 					{
 						if (shoot.verbProps == null) continue;
 						if (shoot.verbProps.range > 0.01f)
 						{
 							hasRanged = true;
-							// don't break yet; melee is also valid and we just need either
 						}
 					}
 				}
 
-				// Combat-capable if it has either melee or ranged verbs with meaningful range.
 				return hasMelee || hasRanged;
 			}
 
@@ -6598,7 +6594,6 @@ namespace ArgrillianThreat
 					if (h == null || h.def == null)
 						continue;
 
-					// Any remaining tendable hediff with Severity > 0 => not fully tended yet.
 					if (h.def.tendable && h.Severity > 0f)
 					{
 						patientIsFullyTended = false;
@@ -6616,23 +6611,15 @@ namespace ArgrillianThreat
 				patientIsFullyTended;
 
 			// "Fully tended" can be used for combat-clearance even if not in bed
-			bool patientClearedForCombat = (patientHP >= 0.8f && !heldPatient.Downed && !heldPatient.Downed && !patientIsBleedingNow && patientIsFullyTended && IsPawnCombatCapable(heldPatient));
+			bool patientClearedForCombat = (patientHP >= 0.8f && !heldPatient.Downed && !patientIsBleedingNow && patientIsFullyTended && IsPawnCombatCapable(heldPatient));
 
 			bool escortToMedicalRequired = !patientClearedForCombat;
-
-			// NEW: publish PatientCalls when this pawn enters downed/bleeding states
-			// (edge/transition coalescing is handled inside NotifyPawnSelfState).
-			// I don't think this needs to be here in the medical job as it is for all pawns to report injuries to the alert system.
-			//ArgrillianAlertSystem.NotifyPawnSelfState(pawn);
 
 			// ----------------------------
 			// 1) DOCTORS (non-combat) branch
 			// ----------------------------
-			if (medicComp.doctor) // keep explicit for clarity
+			if (medicComp.doctor)
 			{
-				// Non-combat doctors: handled by next tasks.
-				// Doctors do the main tending and surgeries etc
-				// For now, do not interfere with combat-medic tend/escort logic.
 				return null;
 			}
 
@@ -6641,15 +6628,12 @@ namespace ArgrillianThreat
 			// ----------------------------
 			if (!medicComp.combatMedic && medicComp.isMedic)
 			{
-				// Non-combat medics: handled by next tasks.
-				// medics assist with the tending and feeding of inured pawns and can take over from combat medics that have escorted the injured pawn away from hostiles so the combat medic can go back to battle.
 				return null;
 			}
 
 			// ----------------------------
-			// 3) COMBAT MEDIC branch (current behavior)
+			// 3) COMBAT MEDIC branch
 			// ----------------------------
-			// Medic gating: non-combat medics don't do threat response.
 			if (medicComp.isMedic && medicComp.combatMedic)
 			{
 				if (heldPatient == null)
@@ -6657,40 +6641,31 @@ namespace ArgrillianThreat
 					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 				}
 
-				// ----------------------------
-				// Gate state detection (used by held-for-tend gating + fallback)
-				// ----------------------------
-				// This is redundant since we already have patientIsBleedingNow.
-				//bool heldIsBleedingNow = heldPatient.health?.hediffSet != null && heldPatient.health.hediffSet.HasHediff(HediffDefOf.BloodLoss);
+				bool patientIsBleeding = patientIsBleedingNow;
 
-				// We need to make sure that the patient is actually retreating, and the combat medic is escorting
-				bool retreatingHeldPatient = !heldPatient.Downed && !patientIsBleedingNow;
-
-				bool tendEligibleNow = canTendNow(pawn, heldPatient);
-
-				// ----------------------------
-				// FORCE: if held-for-tend is active, suppress ANY fallback to combat jobs.
-				// ----------------------------
 				bool patientHeldForTendNow = ArgrillianAlertSystem.IsPatientHeldForTend(heldPatient);
 
 				if (patientHeldForTendNow)
 				{
 					// Only allow the “stop + tend/rescue pipeline” trigger when medic is actually in reach.
-					bool medicInReach =
-						pawn.Position.DistanceTo(heldPatient.Position) <= combatTendMaxDistance;
+					bool medicInReach = pawn.Position.DistanceTo(heldPatient.Position) <= combatTendMaxDistance;
 
-					// NOTE: tendEligibleNow may intentionally ignore reach while held, so we must enforce
-					// the reach gate here (for TryStopPatientToAllowTend and job switching).
 					if (medicInReach)
 					{
+						// Final authority: can the patient be tended right now (role-agnostic)?
+						if (!canTendNow(pawn, heldPatient))
+						{
+							// If it cannot start tend/rescue yet, keep escorting to the tend position.
+							IntVec3 escortTarget = heldPatient.Position;
+							return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, escortTarget);
+						}
+
 						// 1) prevent patient job churn so medic can execute tend/rescue pipeline
 						TryStopPatientToAllowTend(pawn, heldPatient);
 
-						// 2) force medic-side job choice strictly within the tend/rescue/escort pipeline
-						// If patient flips to downed while gating, rescue should win.
+						// 2) force medic-side job choice within the tend/rescue pipeline
 						if (heldPatient.Downed)
 						{
-							// Try to rescue; if rescue plumbing fails, fall back to tend-escort position.
 							Building_Bed bed = null;
 							if (!TryGetRescueBedForPatient(pawn, heldPatient, out bed) || bed == null)
 							{
@@ -6702,13 +6677,12 @@ namespace ArgrillianThreat
 							return rescueJob;
 						}
 
-						// Tend
 						Job tendJob = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
 						tendJob.count = 1;
 						return tendJob;
 					}
 
-					// Not in reach (or not tend-eligible yet): keep stable escort/reposition only.
+					// Not in reach: reposition/escort only.
 					IntVec3 escortTarget = heldPatient.Position;
 					return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, escortTarget);
 				}
@@ -6725,7 +6699,6 @@ namespace ArgrillianThreat
 					{
 						if (def == JobDefOf.TendPatient && heldPatient.Downed)
 						{
-							// If the patient is downed while we're "tending", switch to rescue.
 							Building_Bed bed;
 							if (!TryGetRescueBedForPatient(pawn, heldPatient, out bed) || bed == null)
 							{
@@ -6743,34 +6716,6 @@ namespace ArgrillianThreat
 
 				if (patientIsFullyTended && patientClearedForCombat)
 				{
-					Pawn authoritative = ArgrillianAlertSystem.GetHeldPatientForMedic(pawn);
-
-					bool patientStillHeldByThisMedic = authoritative != null && authoritative.thingIDNumber == heldPatient.thingIDNumber;
-
-					bool patientCurJobIsWait = heldPatient.CurJob != null && heldPatient.CurJob.def == JobDefOf.Wait;
-
-					// NEW: release/transition out of forced Wait ONLY if this medic owns the forced-wait authority.
-					bool waitAuthOk = false;
-					if (waitStopAuthorityByPatientId.TryGetValue(heldPatient.thingIDNumber, out int waitAuthMedicId))
-					{
-						waitAuthOk = waitAuthMedicId == pawn.thingIDNumber;
-					}
-
-					if (patientStillHeldByThisMedic && patientHeldForTendNow && patientCurJobIsWait && waitAuthOk)
-					{
-						//heldPatient.jobs?.StopAll(true);
-						heldPatient.jobs?.ClearQueuedJobs();
-						heldPatient.pather?.StopDead();
-					}
-
-					ArgrillianAlertSystem.NotifyMedicPatientCallTerminalCompletion(
-						pawn,
-						heldPatient,
-						patientHP,
-						patientInBedAndFullyTended,
-						patientClearedForCombat,
-						escortToMedicalRequired
-					);
 					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(heldPatient);
 				}
 
@@ -6781,6 +6726,7 @@ namespace ArgrillianThreat
 
 				return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 			}
+
 			return null;
 		}
 
@@ -6858,9 +6804,7 @@ namespace ArgrillianThreat
 				retreatingHeldPatient: false
 			);
 
-			// KEEP-ACTIVE-JOB GUARD:
-			// If the medic is already running the correct Tend/Rescue job for this patient,
-			// do not let transient movement/stability/reachability flips cause abandonment.
+			// Keep-active-job guard: if we're already tending/rescuing this exact patient, don't fail eligibility.
 			Job cur = pawn.CurJob;
 			if (cur != null && cur.def != null)
 			{
@@ -6881,13 +6825,10 @@ namespace ArgrillianThreat
 				}
 			}
 
-			// HELD-FOR-TEND: the alert system arbitration owns the pipeline.
-			// Eligibility should not depend on role flags; if the system says this patient is held,
-			// they must remain tend-eligible within the pipeline.
-			if (ArgrillianAlertSystem.IsPatientHeldForTend(patient))
-				return true;
+			// HELD-FOR-TEND: alert-system arbitration owns the pipeline; transient gating shouldn't eject the tend job.
+			if (ArgrillianAlertSystem.IsPatientHeldForTend(patient)) return true;
 
-			// DOWNED: tend/rescue is eligible only if reachability is currently valid.
+			// DOWNED: eligibility is just whether we can validly tend/rescue this patient right now.
 			if (patient.Downed)
 			{
 				bool ok = IsValidTendTarget(patient, pawn);
@@ -6901,22 +6842,25 @@ namespace ArgrillianThreat
 				return ok;
 			}
 
-			// INJURED (not downed): require both reachability and stability-to-tend gate.
-			// (This is still "only tendability" logic: stability affects whether a tend job can start cleanly.)
-			bool isReachableNow = IsValidTendTarget(patient, pawn);
+			// INJURED: require reachability + the existing stability-to-tend gate (the gate is about "start tending cleanly").
+			bool reachableNow = IsValidTendTarget(patient, pawn);
 
-			int stableTicksOuter = GetPatientStableTicksForTend(patient);
-			int requiredStableTicksOuter = patientStableTicksRequired;
+			int stableTicksNow = GetPatientStableTicksForTend(patient);
+			int requiredStableTicksNow = patientStableTicksRequired;
+
+			bool stableOk = stableTicksNow >= requiredStableTicksNow;
+
+			bool tendOk = reachableNow && stableOk;
 
 			JobGiver_ArgrillianThreatResponse.TraceMedKit(
 				"canTendNow_injuredFinalGates",
 				pawn,
 				patient,
-				tendEligibleNow: (isReachableNow && stableTicksOuter >= requiredStableTicksOuter),
+				tendEligibleNow: tendOk,
 				retreatingHeldPatient: false
 			);
 
-			return isReachableNow && stableTicksOuter >= requiredStableTicksOuter;
+			return tendOk;
 		}
 
 		private struct PatientStabilityState
