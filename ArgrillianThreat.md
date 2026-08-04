@@ -6739,7 +6739,7 @@ namespace ArgrillianThreat
 
 					// NOTE: tendEligibleNow may intentionally ignore reach while held, so we must enforce
 					// the reach gate here (for TryStopPatientToAllowTend and job switching).
-					if (medicInReach && tendEligibleNow)
+					if (medicInReach)
 					{
 						// 1) prevent patient job churn so medic can execute tend/rescue pipeline
 						TryStopPatientToAllowTend(pawn, heldPatient);
