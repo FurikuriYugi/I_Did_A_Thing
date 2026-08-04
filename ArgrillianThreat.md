@@ -5819,21 +5819,21 @@ namespace ArgrillianThreat
 				if (medic == null || medic.Dead || medic.Map == null || patient.Map == null || patient.Map != medic.Map)
 					return;
 
-				int patientId = patient.thingIDNumber;
-				int medicId;
-				if (!ArgrillianAlertSystem.TryGetAssignedMedicIdForPatient(patient.Map, patientId, out medicId))
+				int patientId3 = patient.thingIDNumber;
+				int medicId3;
+				if (!ArgrillianAlertSystem.TryGetAssignedMedicIdForPatient(patient.Map, patientId3, out medicId3))
 					return;
 
 				// Owner-only: if this medic is not the assigned one, never interfere.
-				if (medic.thingIDNumber != medicId)
+				if (medic.thingIDNumber != medicId3)
 					return;
 
 				// If already held-for-tend and already in Wait, keep idempotent no-op.
 				if (patient.CurJob != null && patient.CurJob.def == JobDefOf.Wait)
 				{
 					// Ensure authority mapping exists for the existing forced Wait.
-					if (!waitStopAuthorityByPatientId.ContainsKey(patientId))
-						waitStopAuthorityByPatientId[patientId] = medicId;
+					if (!waitStopAuthorityByPatientId.ContainsKey(patientId3))
+						waitStopAuthorityByPatientId[patientId3] = medicId3;
 
 					return;
 				}
@@ -7081,60 +7081,26 @@ namespace ArgrillianThreat
 
 			if (patient.Downed)
 			{
-				bool ok = stableTicksOuter2 >= requiredStableTicksOuter2 &&
-					IsValidTendTarget(patient, pawn);
-
 				JobGiver_ArgrillianThreatResponse.TraceMedKit(
-					"canTendNow_downed_finalGates",
+					"canTendNow_heldInvariant_downedFinalGates",
 					pawn,
 					patient,
-					tendEligibleNow: ok,
+					tendEligibleNow: true,
 					retreatingHeldPatient: false
 				);
 
-				return ok;
+				return true;
 			}
 
-			bool distanceOk2 = pawn.Position.DistanceTo(patient.Position) <= combatTendMaxDistance;
-
-			bool isValid2 = IsValidTendTarget(patient, pawn);
-			bool canReserve2 = CanReserveTendTarget(pawn, patient);
-			bool stableOk2 = stableTicksOuter2 >= requiredStableTicksOuter2;
-
-			bool ok2 = distanceOk2 &&
-				isValid2 &&
-				stableOk2 &&
-				canReserve2;
-
-			// NEW: explicit breakdown when Tend is NOT eligible (this is what we need next).
-			if (!ok2)
-			{
-				JobGiver_ArgrillianThreatResponse.TraceMedKit(
-					"canTendNow_injured_gateBreakdown",
-					pawn,
-					patient,
-					tendEligibleNow: ok2,
-					retreatingHeldPatient: false
-				);
-
-				// Use existing TraceMedKit channel only; embed details in the same trace line format.
-				Verse.Log.Message(
-					$"[ArgrillianThreat][TRACE] canTendNow_gateDetails medic={pawn.thingIDNumber} patient={patient.thingIDNumber} " +
-					$"hp={patient.health?.summaryHealth?.SummaryHealthPercent ?? -1f:F2} " +
-					$"distanceOk={distanceOk2} dist2={pawn.Position.DistanceTo(patient.Position):F2} maxDist={combatTendMaxDistance:F2} " +
-					$"isValidTarget={isValid2} stableTicksOuter={stableTicksOuter2} requiredStableTicksOuter={requiredStableTicksOuter2} stableOk={stableOk2} " +
-					$"canReserveTendTarget={canReserve2}"
-				);
-			}
-
+			// INJURED held invariant:
 			JobGiver_ArgrillianThreatResponse.TraceMedKit(
-				"canTendNow_injured_finalGates",
+				"canTendNow_heldInvariant_injuredFinalGates",
 				pawn,
 				patient,
-				tendEligibleNow: ok2,
+				tendEligibleNow: true,
 				retreatingHeldPatient: false
 			);
-			return ok2;
+			return true;
 		}
 
 		private struct PatientStabilityState
