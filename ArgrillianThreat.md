@@ -5417,6 +5417,8 @@ namespace ArgrillianThreat
 	// -----------------------------
 	public class JobGiver_TendRetreatingAllies : ThinkNode_JobGiver
 	{
+		// We need to make sure TryStopPatientToAllowTend is only used once per tend.
+		//public int TryTimes = 0;
 		public float treatBelowHealthPercent = 0.65f;
 		public float searchRadius = 70f;
 
@@ -6715,10 +6717,13 @@ namespace ArgrillianThreat
 				// FORCE: if held-for-tend is active, suppress ANY fallback to combat jobs.
 				// ----------------------------
 				bool patientHeldForTendNow = ArgrillianAlertSystem.IsPatientHeldForTend(heldPatient);
+
 				if (patientHeldForTendNow)
 				{
 					if (tendEligibleNow)
 					{
+						// we need a one time run gate or something that only calls TryStopPatientToAllowTend once the combat medic is withing reach.  tendEligibleNow is just a check to see if the patient can be tended so we don't want to stop the patient then.
+
 						// 1) prevent patient job churn so medic can execute tend/rescue pipeline
 						TryStopPatientToAllowTend(pawn, heldPatient);
 
@@ -6805,7 +6810,7 @@ namespace ArgrillianThreat
 
 					if (patientStillHeldByThisMedic && patientHeldForTendNow && patientCurJobIsWait && waitAuthOk)
 					{
-						heldPatient.jobs?.StopAll(true);
+						//heldPatient.jobs?.StopAll(true);
 						heldPatient.jobs?.ClearQueuedJobs();
 						heldPatient.pather?.StopDead();
 					}
@@ -6818,12 +6823,13 @@ namespace ArgrillianThreat
 						patientClearedForCombat,
 						escortToMedicalRequired
 					);
-
+					//TryTimes = 0;
 					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(heldPatient);
 				}
 
 				if (patientInBedAndFullyTended || ArgrillianAlertSystem.IsPatientTransferedToMedicOrDoctor(heldPatient))
 				{
+					//TryTimes = 0;
 					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 				}
 
