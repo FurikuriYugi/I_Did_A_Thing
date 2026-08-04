@@ -5477,7 +5477,8 @@ namespace ArgrillianThreat
 				return;
 			}
 
-			// If the patient is held-for-tend, only the assigned medic may maintain the pipeline.
+			// Alert-system authority check:
+			// - If the patient is held-for-tend, only the assigned medic may establish/maintain the forced Wait.
 			if (ArgrillianAlertSystem.IsPatientHeldForTend(patient))
 			{
 				int patientId = patient.thingIDNumber;
@@ -5485,69 +5486,63 @@ namespace ArgrillianThreat
 
 				if (!ArgrillianAlertSystem.TryGetAssignedMedicIdForPatient(patient.Map, patientId, out assignedMedicId)) return;
 
-				// Owner-only: prevent other medics from interfering.
+				// Owner-only: prevent any other medic from interfering with the pipeline.
 				if (medic.thingIDNumber != assignedMedicId) return;
 
-				// If already in forced Wait, keep idempotent no-op.
+				// If already held as Wait during pipeline, idempotent no-op.
 				if (patient.CurJob != null && patient.CurJob.def == JobDefOf.Wait) return;
 
-				// Check if tend is actually eligible yet; if not, DO NOT force Wait.
-				// Forcing Wait while tendEligibleNow == false causes bounce/churn and breaks the tend.
-				bool curIsTakeToBed = false;
-				Job curJob = patient.CurJob;
-				if (curJob != null && curJob.def != null && !string.IsNullOrEmpty(curJob.def.defName))
+				// IMPORTANT: if not stable enough yet, DO NOT force Wait.
+				// Forcing Wait while canTendNow is false causes the standing/rest bounce and breaks tending.
+				// Your current tuning uses patientStableTicksRequired = 18, so use the same value here.
+				if (!patient.Downed)
 				{
-					curIsTakeToBed = curJob.def.defName.IndexOf("taketobed", System.StringComparison.OrdinalIgnoreCase) >= 0;
+					bool stableEnough = ArgillianThreatPatientTuning.PatientStabilityCache.IsStableFor(patient, 18);
+					if (!stableEnough)
+					{
+						// Soft-hold: stop movement / queued churn, but don't switch the job to Wait.
+						//patient.jobs?.StopAll(true);
+						//patient.jobs?.ClearQueuedJobs();
+						//patient.pather?.StopDead();
+
+						Log.Message($"[ArgrillianThreat][HOLD] patientHoldSoftNoWaitUntilStable medic={medic.thingIDNumber} patient={patient.thingIDNumber}");
+						return;
+					}
 				}
 
-				// Crash-prevention / defer switching while TakeToBed is active.
-				if (curIsTakeToBed)
-				{
-					patient.jobs?.ClearQueuedJobs();
-					patient.pather?.StopDead();
-					Log.Message($"[ArgrillianThreat][HOLD] patientHoldDeferredWhileTakeToBed medic={medic.thingIDNumber} patient={patient.thingIDNumber}");
-					return;
-				}
-
-				// Eligibility check that DOES NOT use canTendNow(), because canTendNow() returns true when held-for-tend.
-				bool reachableNow = IsValidTendTarget(patient, medic);
-
-				bool stableOk = false;
-				if (patient.Downed)
-				{
-					// Downed should be tendable immediately (no stability gate).
-					stableOk = true;
-				}
-				else
-				{
-					int stableTicksNow = GetPatientStableTicksForTend(patient);
-					int requiredStableTicksNow = patientStableTicksRequired;
-					stableOk = stableTicksNow >= requiredStableTicksNow;
-				}
-
-				bool tendEligibleNow = reachableNow && stableOk;
-
-				// If not eligible yet, keep a soft hold (stop movement/queued jobs),
-				// but do not force Wait (prevents stand/rest bounce that breaks tend).
-				if (!tendEligibleNow)
-				{
-					//patient.jobs?.StopAll(true);
-					//patient.jobs?.ClearQueuedJobs();
-					//patient.pather?.StopDead();
-					Log.Message($"[ArgrillianThreat][HOLD] patientHoldSoftNoWaitUntilEligible medic={medic.thingIDNumber} patient={patient.thingIDNumber} reachable={reachableNow} stableOk={stableOk}");
-					return;
-				}
-
-				// Tend is eligible now: fall through and force Wait to enter/maintain tend pipeline cleanly.
+				// Fall through to force Wait (owner-only) once stability gate is satisfied.
 			}
 
-			// If not held-for-tend, never forcibly interfere with patient jobs here.
-			if (!ArgrillianAlertSystem.IsPatientHeldForTend(patient)) return;
-
-			// If already in forced Wait and not being held anymore, keep idempotent no-op.
+			// If the patient is already in forced Wait and is NOT being held-for-tend,
+			// we still keep idempotent behavior: don’t override a current Wait job.
 			if (patient.CurJob != null && patient.CurJob.def == JobDefOf.Wait) return;
 
-			// From here: held-for-tend and medic has authority (enforced above), so force Wait.
+			// If not in held-for-tend pipeline, do not forcibly stop jobs anymore:
+			// this class should only hard-hold when the alert system says the patient is in the medical pipeline.
+			if (!ArgrillianAlertSystem.IsPatientHeldForTend(patient)) return;
+
+			// From here on: patient is held-for-tend AND this medic is the assigned owner (authority).
+
+			Job curJob = patient.CurJob;
+			bool curIsTakeToBed = false;
+			if (curJob != null && curJob.def != null && !string.IsNullOrEmpty(curJob.def.defName))
+			{
+				curIsTakeToBed = curJob.def.defName.IndexOf("taketobed", System.StringComparison.OrdinalIgnoreCase) >= 0;
+			}
+
+			// CRASH PREVENTION:
+			// If RimWorld is mid-start / reserving for TakeToBed, forcing Wait right now can leave the TakeToBed
+			// driver in a state where TryMakePreToilReservations runs with missing/invalid targets.
+			// So, while TakeToBed is active, we only stop movement/pathing and do not switch the job.
+			if (curIsTakeToBed)
+			{
+				patient.jobs?.ClearQueuedJobs();
+				patient.pather?.StopDead();
+				Log.Message($"[ArgrillianThreat][HOLD] patientHoldDeferredWhileTakeToBed medic={medic.thingIDNumber} patient={patient.thingIDNumber}");
+				return;
+			}
+
+			// Prevent churn that can re-enable movement/combat while tend is in pipeline.
 			patient.jobs?.StopAll(true);
 			patient.jobs?.ClearQueuedJobs();
 			patient.pather?.StopDead();
@@ -5559,7 +5554,8 @@ namespace ArgrillianThreat
 			patient.jobs?.StartJob(waitJob, JobCondition.InterruptForced);
 
 			Log.Message(
-				$"[ArgrillianThreat][HOLD] patientForcedWaitOnLock medic={medic.thingIDNumber} patient={patient.thingIDNumber} curJob={(patient.CurJob?.def?.defName ?? "null")}");
+				$"[ArgrillianThreat][HOLD] patientForcedWaitOnLock medic={medic.thingIDNumber} patient={patient.thingIDNumber} curJob={(patient.CurJob?.def?.defName ?? "null")}"
+			);
 		}
 
 		public static bool IsJobRelevantToCombatMedicUrgent(Job job, Pawn patient)
