@@ -6683,8 +6683,8 @@ namespace ArgrillianThreat
 					}
 
 					// Not in reach: reposition/escort only.
-					IntVec3 escortTarget = heldPatient.Position;
-					return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, escortTarget);
+					IntVec3 escortTarget2 = heldPatient.Position;
+					return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, escortTarget2);
 				}
 
 				// ----------------------------
