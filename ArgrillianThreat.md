@@ -5871,16 +5871,14 @@ namespace ArgrillianThreat
 
 					if (medicInReach)
 					{
-						// Final authority: can the patient be tended right now (role-agnostic)?
-						if (!canTendNow(pawn, heldPatient))
-						{
-							// If it cannot start tend/rescue yet, keep escorting to the tend position.
-							IntVec3 escortTarget = heldPatient.Position;
-							return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, escortTarget);
-						}
+						// IMPORTANT FIX:
+						// Do NOT gate tend/rescue pipeline entry on canTendNow().
+						// When the alert system already says the patient is held-for-tend, this job-giver must not
+						// re-introduce stability/eligibility flicker that causes stand/rest bounce and prevents tending.
+						TryStopPatientToAllowTend(pawn, heldPatient);
 
 						// 1) prevent patient job churn so medic can execute tend/rescue pipeline
-						TryStopPatientToAllowTend(pawn, heldPatient);
+						// (TryStopPatientToAllowTend handles the forced-hold behavior owner-only)
 
 						// 2) force medic-side job choice within the tend/rescue pipeline
 						if (heldPatient.Downed)
@@ -5948,7 +5946,7 @@ namespace ArgrillianThreat
 
 			return null;
 		}
-
+		
 		private bool TryGetRescueBedForPatient(Pawn medic, Pawn patient, out Building_Bed bed)
 		{
 			bed = null;
