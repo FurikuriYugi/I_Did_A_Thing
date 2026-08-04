@@ -5470,6 +5470,17 @@ namespace ArgrillianThreat
 			if (medic.Map != patient.Map)
 				return;
 
+			// If the medic and patient are the same pawn, never force a Wait job onto the medic.
+			// Otherwise the same pawn will immediately fight back into TendPatient and you get:
+			// "starting job ... while already having job Wait ... without a specific job end condition".
+			if (medic == patient)
+			{
+				patient.jobs?.StopAll(true);
+				patient.jobs?.ClearQueuedJobs();
+				patient.pather?.StopDead();
+				return;
+			}
+
 			// Alert-system authority check:
 			// - If the patient is held-for-tend, only the assigned medic may establish/maintain the forced Wait.
 			if (ArgrillianAlertSystem.IsPatientHeldForTend(patient))
@@ -5493,11 +5504,13 @@ namespace ArgrillianThreat
 
 			// If the patient is already in forced Wait and is NOT being held-for-tend,
 			// we still keep idempotent behavior: don’t override a current Wait job.
-			if (patient.CurJob != null && patient.CurJob.def == JobDefOf.Wait) return;
+			if (patient.CurJob != null && patient.CurJob.def == JobDefOf.Wait)
+				return;
 
 			// If not in held-for-tend pipeline, do not forcibly stop jobs anymore:
 			// this class should only hard-hold when the alert system says the patient is in the medical pipeline.
-			if (!ArgrillianAlertSystem.IsPatientHeldForTend(patient)) return;
+			if (!ArgrillianAlertSystem.IsPatientHeldForTend(patient))
+				return;
 
 			// From here on: patient is held-for-tend AND this medic is the assigned owner (authority).
 
