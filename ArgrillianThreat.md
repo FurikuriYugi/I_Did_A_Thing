@@ -6028,6 +6028,11 @@ namespace ArgrillianThreat
 			// HELD-FOR-TEND: alert-system arbitration owns the pipeline; transient gating shouldn't eject the tend job.
 			if (ArgrillianAlertSystem.IsPatientHeldForTend(patient)) return true;
 
+			// If the patient is already under our forced-hold behavior (Wait),
+			// allow tending to proceed even if stability cache hasn't accumulated yet.
+			// This prevents an endless loop where medic keeps "waiting for stability" while the patient is locked.
+			if (patient.CurJob != null && patient.CurJob.def == JobDefOf.Wait) return IsValidTendTarget(patient, pawn);
+
 			// DOWNED: eligibility is just whether we can validly tend/rescue this patient right now.
 			if (patient.Downed)
 			{
