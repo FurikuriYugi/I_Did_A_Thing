@@ -2828,86 +2828,83 @@ namespace ArgrillianThreat
 
 		// -------- Patient retreat --------
 		public static Job ExecutePatientRetreat(
-			Pawn pawn,
-			ThreatContext tctx,
-			HostileContext hctx,
-			float desiredCombatDistanceNow,
-			bool pursueAdvance,
-			bool skipDecisionTick,
-			Pawn nearestMedic,
-			float patientRetreatSafeDistanceFromHostile,
-			float patientRetreatSearchRadius,
-			float patientRetreatPreferMedicRadius,
-			float patientRetreatMinHPPercentToTreatAsPatient,
-			float patientRetreatMinHPPercentToLockIn,
-			int patientRetreatModeHysteresisTicks,
-			int PatientFightLockoutAfterRetreatTicks,
-			float retreatMinHealthPercent,
-			float losBreakBonus,
-			float scanRange)
+	Pawn pawn,
+	ThreatContext tctx,
+	HostileContext hctx,
+	float desiredCombatDistanceNow,
+	bool pursueAdvance,
+	bool skipDecisionTick,
+	Pawn nearestMedic,
+	float patientRetreatSafeDistanceFromHostile,
+	float patientRetreatSearchRadius,
+	float patientRetreatPreferMedicRadius,
+	float patientRetreatMinHPPercentToTreatAsPatient,
+	float patientRetreatMinHPPercentToLockIn,
+	int patientRetreatModeHysteresisTicks,
+	int PatientFightLockoutAfterRetreatTicks,
+	float retreatMinHealthPercent,
+	float losBreakBonus,
+	float scanRange)
 		{
 			if (pawn == null) return null;
 			if (pawn.Dead) return null;
 			if (pawn.Map == null) return null;
 			if (!pawn.Spawned) return null;
+			if (pawn.Downed) return null;
 
-			// Only retreating patients (injured enough). Medical pipeline handles holding/stopping/tending.
+			// Core requirement: combat medic forced-hold must superceed any retreat.
+			// When the medic is holding the patient, the patient is forced into a long InterruptForced Wait.
+			// If we return a retreat job while that’s active, RimWorld will bounce the patient's job and
+			// cause the medic-side tend/wait relationship to break.
+			if (pawn.CurJob != null && pawn.CurJob.def == JobDefOf.Wait)
+			{
+				// The forced-hold wait is created with count=999999 (very long).
+				// Keep patient in that state; do not generate a movement/cover job.
+				if (pawn.CurJob.count >= 999000)
+					return null;
+			}
+
+			// Only retreating patients (injured enough).
 			float hpPct = pawn.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
 			if (hpPct > patientRetreatMinHPPercentToTreatAsPatient && hpPct > retreatMinHealthPercent)
 				return null;
 
-			// If some medical job is already in progress for this pawn, never override it with retreat movement.
-			// This is the core fix for "bounces between normal jobs and standing and then breaks the tend".
-			Job cur = pawn.CurJob;
-			if (cur != null)
-			{
-				Pawn patientFromJob = ArgillianThreatPatientTuning.GetPatientFromJob(cur);
-				if (patientFromJob == pawn && ArgillianThreatPatientTuning.JobIsMedicalForPatient(cur, pawn))
-					return null;
-			}
-
-			// Combat lock: if we recently ended retreat attempt, avoid oscillation.
+			// If combat lockout says “don’t retreat right now”, do nothing.
 			if (ArgrillianThreatState.FightLockoutAfterRetreat.RecentlyEndedRetreat(pawn, PatientFightLockoutAfterRetreatTicks))
-			{
-				// While medical can still hold, we must not keep trying to start retreat again immediately.
 				return null;
-			}
 
 			Map map = pawn.Map;
 
-			// Locked hostile support (no map scanning / no expensive target selection).
-			Pawn hostile = hctx?.Hostile;
-			if (hostile == null || hostile.Dead || !hostile.Spawned || hostile.Map != map)
-				hostile = ArgrillianThreatState.CombatLock.TryGetLockedHostile(pawn);
+			// Locked hostile support (no map scanning).
+			Pawn hostileForPatient = hctx?.Hostile;
+			if (hostileForPatient == null || hostileForPatient.Dead || !hostileForPatient.Spawned || hostileForPatient.Map != map)
+				hostileForPatient = ArgrillianThreatState.CombatLock.TryGetLockedHostile(pawn);
 
-			if (hostile == null)
+			if (hostileForPatient == null || hostileForPatient.Dead || !hostileForPatient.Spawned || hostileForPatient.Map != map)
 				return null;
 
-			// Hysteresis: don’t flip into retreat mode instantly after fight.
+			// Hysteresis: don’t flip into retreat instantly after fight.
 			byte modeNow = ArgrillianThreatState.ModeTickCache.GetMode(pawn);
 			if (modeNow == 0 && !ArgrillianThreatState.ModeTickCache.CanSwitchMode(pawn, patientRetreatModeHysteresisTicks))
 				return null;
 
-			// Mark for mode/lock to prevent jitter.
 			ArgrillianThreatState.ModeTickCache.MarkMode(pawn, 1);
-			ArgrillianThreatState.CombatLock.MarkSeen(pawn, hostile);
+			ArgrillianThreatState.CombatLock.MarkSeen(pawn, hostileForPatient);
 			ArgrillianThreatState.ThreatTickCache.MarkNow(pawn);
 
-			// Preference order:
-			// 1) Move to a safe distance out of range of hostiles
-			// 2) Move out of line of sight
-			// 3) Move to cover
-			//
-			// This method returns only retreat movement / cover selection. It must not generate tend/rescue jobs.
-
+			// Must only return retreat movement/cover (never tend/rescue).
 			bool lockIn = hpPct <= patientRetreatMinHPPercentToLockIn;
 
-			// (1) Safe-from-hostile retreat cell first.
-			// If available, take it and hold destination (no churn).
+			// Preference order:
+			// 1) Safe distance out of range
+			// 2) Out of line of sight
+			// 3) Cover
+
+			// (1) Safe distance / out-of-range retreat.
 			IntVec3 safeCell;
 			if (TryPickPatientSafeRetreatCell(
 					pawn,
-					hostile,
+					hostileForPatient,
 					nearestMedic,
 					patientRetreatSafeDistanceFromHostile,
 					patientRetreatSearchRadius,
@@ -2923,11 +2920,11 @@ namespace ArgrillianThreat
 				return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, safeCell);
 			}
 
-			// (2) Break LOS (treated as "out of line of sight" step).
+			// (2) Out of line of sight (break-LOS).
 			IntVec3 losCell;
 			if (TryPickOutOfLineOfSightCell(
 					pawn,
-					hostile,
+					hostileForPatient,
 					desiredCombatDistanceNow,
 					losBreakBonus,
 					lockIn,
@@ -2942,11 +2939,11 @@ namespace ArgrillianThreat
 				return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, losCell);
 			}
 
-			// (3) Move to cover / best available cover cell.
+			// (3) Cover.
 			IntVec3 coverCell;
 			if (TryPickCoverCell(
 					pawn,
-					hostile,
+					hostileForPatient,
 					desiredCombatDistanceNow,
 					losBreakBonus,
 					out coverCell))
@@ -2958,8 +2955,10 @@ namespace ArgrillianThreat
 				return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, coverCell);
 			}
 
-			// Final fallback: hold position as "retreating" state; medical system can take over holding/tending.
-			// Also prevents retreat job spam when we can't find a better cell.
+			// Final fallback: hold position (medical system handles actual holding/tending logic).
+			Job keepHold = ArgrillianGotoHelper.KeepIfSameGoto(pawn, pawn.Position);
+			if (keepHold != null) return keepHold;
+
 			ArgrillianThreatState.CombatCommit.Clear(pawn);
 			return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, pawn.Position);
 		}
