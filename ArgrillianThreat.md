@@ -5456,16 +5456,14 @@ namespace ArgrillianThreat
 			return medic.CanReach(patient, endMode, danger);
 		}
 
-		private static void TryStopPatientToAllowTend(Pawn medic, Pawn patient)
+		/*private static void TryStopPatientToAllowTend(Pawn medic, Pawn patient)
 		{
 			if (patient == null || patient.Dead) return;
 			if (medic == null || medic.Dead) return;
 			if (medic.Map == null || patient.Map == null) return;
 			if (medic.Map != patient.Map) return;
 
-			// If the medic and patient are the same pawn, never force a Wait job onto the medic.
-			// Otherwise the same pawn will immediately fight back into TendPatient and you get:
-			// "starting job ... while already having job Wait ... without a specific job end condition".
+			// Never force a Wait job onto the medic itself.
 			if (medic == patient)
 			{
 				patient.jobs?.StopAll(true);
@@ -5474,91 +5472,64 @@ namespace ArgrillianThreat
 				return;
 			}
 
-			// If the patient is held-for-tend, only the assigned medic may maintain/establish the forced-hold behavior.
-			if (ArgrillianAlertSystem.IsPatientHeldForTend(patient))
-			{
-				int patientId = patient.thingIDNumber;
-				int assignedMedicId;
-
-				if (!ArgrillianAlertSystem.TryGetAssignedMedicIdForPatient(patient.Map, patientId, out assignedMedicId)) return;
-				if (medic.thingIDNumber != assignedMedicId) return;
-
-				// Idempotent: if already Wait (pipeline hold), do nothing.
-				if (patient.CurJob != null && patient.CurJob.def == JobDefOf.Wait) return;
-
-				// While held-for-tend, prevent falling back into Rest/movement between ticks.
-				// But avoid “eligibility flicker” by only soft-stabilizing until the patient is stable enough.
-				if (!patient.Downed)
-				{
-					bool stableEnough = ArgillianThreatPatientTuning.PatientStabilityCache.IsStableFor(patient, 18);
-
-					if (!stableEnough)
-					{
-						// Stop queued/movement churn without switching to Wait.
-						patient.jobs?.StopAll(true);
-						patient.jobs?.ClearQueuedJobs();
-						patient.pather?.StopDead();
-
-						// Special-case: only force a 1-tick Wait if the current job already looks like Rest,
-						// to prevent Rest from reasserting during the held-for-tend pipeline.
-						// (We cannot rely on JobDefOf.Rest existing in all RW versions/modded environments.)
-						if (patient.CurJob != null && patient.CurJob.def != null && !string.IsNullOrEmpty(patient.CurJob.def.defName))
-						{
-							string defName = patient.CurJob.def.defName;
-							bool looksLikeRest = defName.IndexOf("rest", System.StringComparison.OrdinalIgnoreCase) >= 0;
-
-							if (looksLikeRest)
-							{
-								IntVec3 patientPos = patient.Position;
-								Job waitJob = JobMaker.MakeJob(JobDefOf.Wait, patientPos);
-								waitJob.count = 1;
-								patient.jobs?.StartJob(waitJob, JobCondition.InterruptForced);
-							}
-						}
-
-						return;
-					}
-				}
-
-				// Fall through: stability gate satisfied -> enforce forced Wait (owner-only).
-			}
-
-			// If the patient is already Wait and is not being held-for-tend, keep idempotent behavior.
-			if (patient.CurJob != null && patient.CurJob.def == JobDefOf.Wait) return;
-
-			// If not in held-for-tend pipeline anymore, do not hard-stop/force Wait.
+			// Only the assigned medic can enforce the hold.
 			if (!ArgrillianAlertSystem.IsPatientHeldForTend(patient)) return;
 
-			// From here: patient is held-for-tend AND this medic is the assigned owner (authority).
+			int patientId = patient.thingIDNumber;
+			int assignedMedicId;
+			if (!ArgrillianAlertSystem.TryGetAssignedMedicIdForPatient(patient.Map, patientId, out assignedMedicId)) return;
+			if (medic.thingIDNumber != assignedMedicId) return;
 
-			Job curJob = patient.CurJob;
+			// If the medic isn't actually on the tend/rescue job for THIS patient right now,
+			// do not keep interfering with the patient's job state.
+			Job medicJob = medic.CurJob;
+			if (!IsJobRelevantToCombatMedicUrgent(medicJob, patient)) return;
 
-			bool curIsTakeToBed = false;
-			if (curJob != null && curJob.def != null && !string.IsNullOrEmpty(curJob.def.defName))
+			// Never fight TakeToBed flow.
+			Job patientCur = patient.CurJob;
+			if (patientCur != null && patientCur.def != null && !string.IsNullOrEmpty(patientCur.def.defName))
 			{
-				curIsTakeToBed = curJob.def.defName.IndexOf("taketobed", System.StringComparison.OrdinalIgnoreCase) >= 0;
+				string defName = patientCur.def.defName;
+				if (defName.IndexOf("taketobed", System.StringComparison.OrdinalIgnoreCase) >= 0)
+				{
+					patient.jobs?.ClearQueuedJobs();
+					patient.pather?.StopDead();
+					return;
+				}
 			}
 
-			// Crash prevention: if RimWorld is mid-reserving/using TakeToBed,
-			// forcing Wait right now can destabilize the TakeToBed driver/targets.
-			if (curIsTakeToBed)
+			// Release enforcement once fully tended.
+			// (We consider "fully tended" = no remaining tendable hediffs with Severity > 0.)
+			bool fullyTended = true;
+			if (patient.health != null && patient.health.hediffSet != null && patient.health.hediffSet.hediffs != null)
 			{
-				patient.jobs?.ClearQueuedJobs();
-				patient.pather?.StopDead();
-				return;
+				for (int i = 0; i < patient.health.hediffSet.hediffs.Count; i++)
+				{
+					Hediff h = patient.health.hediffSet.hediffs[i];
+					if (h == null || h.def == null) continue;
+
+					if (h.def.tendable && h.Severity > 0f)
+					{
+						fullyTended = false;
+						break;
+					}
+				}
 			}
 
-			// Prevent churn that would re-enable movement/combat while tend/rescue pipeline is active.
+			if (fullyTended) return;
+
+			// Idempotent: if already waiting, don't re-start it every tick.
+			if (patient.CurJob != null && patient.CurJob.def == JobDefOf.Wait) return;
+
+			// Enforce the hold so the patient doesn't bounce into Rest/movement while the medic tends.
 			patient.jobs?.StopAll(true);
 			patient.jobs?.ClearQueuedJobs();
 			patient.pather?.StopDead();
 
-			IntVec3 patientPos2 = patient.Position;
-			Job waitJob2 = JobMaker.MakeJob(JobDefOf.Wait, patientPos2);
-			waitJob2.count = 1;
-
-			patient.jobs?.StartJob(waitJob2, JobCondition.InterruptForced);
-		}
+			Job waitJob = JobMaker.MakeJob(JobDefOf.Wait, patient.Position);
+			waitJob.count = 1;
+			patient.jobs?.StartJob(waitJob, JobCondition.InterruptForced);
+		}*/
 
 		public static bool IsJobRelevantToCombatMedicUrgent(Job job, Pawn patient)
 		{
@@ -5877,7 +5848,18 @@ namespace ArgrillianThreat
 						// Do NOT gate tend/rescue pipeline entry on canTendNow().
 						// When the alert system already says the patient is held-for-tend, this job-giver must not
 						// re-introduce stability/eligibility flicker that causes stand/rest bounce and prevents tending.
-						TryStopPatientToAllowTend(pawn, heldPatient);
+						//TryStopPatientToAllowTend(pawn, heldPatient);
+						// Idempotent: if already waiting, don't re-start it every tick.
+						if (heldPatient.CurJob != null && heldPatient.CurJob.def == JobDefOf.Wait) return null;
+
+						// Enforce the hold so the patient doesn't bounce into Rest/movement while the medic tends.
+						heldPatient.jobs?.StopAll(true);
+						heldPatient.jobs?.ClearQueuedJobs();
+						heldPatient.pather?.StopDead();
+
+						Job waitJob = JobMaker.MakeJob(JobDefOf.Wait, heldPatient.Position);
+						waitJob.count = 1;
+						heldPatient.jobs?.StartJob(waitJob, JobCondition.InterruptForced);
 
 						// 1) prevent patient job churn so medic can execute tend/rescue pipeline
 						// (TryStopPatientToAllowTend handles the forced-hold behavior owner-only)
