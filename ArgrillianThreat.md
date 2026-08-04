@@ -5417,142 +5417,23 @@ namespace ArgrillianThreat
 	// -----------------------------
 	public class JobGiver_TendRetreatingAllies : ThinkNode_JobGiver
 	{
-		public float treatBelowHealthPercent = 0.65f;
 		public float searchRadius = 70f;
-
-		public float urgentTendHealthPercent = 0.35f;
-		public float severeBleedHediffSeverity = 0.15f;
 
 		// NEW: give combat medics a higher/earlier stop-tending threshold for their assigned patient
 		public float combatMedicInjuredHPPercentThreshold = 0.85f;
 
-		public int tendTaskStickinessTicks = 120;
-
 		// How close combat medics try to be
 		public float combatTendMaxDistance = 3f;
 
-		public bool stopPatientWhenUrgent = true;
-
-		public int minJobSwitchCooldownTicks = 30;
-
-		public bool disableTacticsIfHostilesPresent = true;
-
 		public float hospitalBedMaxDist = 70f;
-
-		public float medicEscortCombatRadius = 6.5f;
 
 		// NEW: require stability for tending
 		public int patientStableTicksRequired = 18;
 
-		// NEW: prevent repeated "fall out of bed -> rescue -> fall out again" loops
-		// (only blocks Rescue transitions; medic can still tend while not stable enough)
-		public int combatMedicRescueStableTicksRequired = 24;
-
-		// NEW: score-based urgency to reliably catch "dying soon" bloodloss states
-		public float urgentScoreThreshold = 180f;
-
-		// NEW: prevent "move -> rescue -> move" oscillation for the same patient
-		public int combatMedicRescueAttemptCooldownTicks = 90;
-
-		// NEW: strong bias so combat medics pick downed pawns over merely-injured chasers
-		public float downedPatientScoreBonus = 800f;
-
 		private CompArgrillianMedicSettings Settings(Pawn pawn) => pawn?.GetComp<CompArgrillianMedicSettings>();
 
-		private static readonly System.Collections.Generic.Dictionary<int, int> lastTendLockSwitchTick = new System.Collections.Generic.Dictionary<int, int>();
-
-		private static int TendNow => Find.TickManager.TicksGame;
-
-		private static int TendSwitchKey(Pawn medic, Pawn patient)
-		{
-			unchecked
-			{
-				return (medic.thingIDNumber * 397) ^ patient.thingIDNumber;
-			}
-		}
-
-		// Returns true if we should NOT switch locks yet (cooldown still active).
-		private static bool RecentlySwitchedTendLock(Pawn medic, Pawn patient, int cooldownTicks)
-		{
-			if (medic == null || patient == null) return false;
-
-			// Downed patients must be allowed to preempt the cooldown gate,
-			// otherwise combat medics can remain stuck in transition/standing
-			// while the downed tend/rescue pipeline should start immediately.
-			if (patient.Downed) return false;
-
-			int now = TendNow;
-			int k = TendSwitchKey(medic, patient);
-
-			if (!lastTendLockSwitchTick.TryGetValue(k, out int t))
-				return false;
-
-			if (t > now) return false;
-			return (now - t) < cooldownTicks;
-		}
-
-		private static void MarkSwitchedTendLock(Pawn medic, Pawn patient)
-		{
-			if (medic == null || patient == null) return;
-			lastTendLockSwitchTick[TendSwitchKey(medic, patient)] = TendNow;
-		}
-
-		private static bool HasBloodLossStatic(Pawn p)
-		{
-			return p?.health?.hediffSet != null
-				&& p.health.hediffSet.HasHediff(HediffDefOf.BloodLoss);
-		}
-
-		private static float BloodLossSeverityStatic(Pawn p)
-		{
-			if (p?.health?.hediffSet == null) return 0f;
-			var hd = p.health.hediffSet.GetFirstHediffOfDef(HediffDefOf.BloodLoss);
-			return hd?.Severity ?? 0f;
-		}
-
-		private static float PatientUrgencyStatic(Pawn patient, float treatBelowPercent)
-		{
-			if (patient?.health == null) return 0f;
-
-			float hpPct = patient.health.summaryHealth.SummaryHealthPercent;
-			float bleeding = HasBloodLossStatic(patient) ? BloodLossSeverityStatic(patient) : 0f;
-
-			float urgency = (1f - hpPct) * 300f + bleeding * 35f;
-			if (patient.Downed) urgency += 50f;
-			if (hpPct <= treatBelowPercent) urgency += 40f;
-			return urgency;
-		}
-
-		private static bool IsUrgentByScoreStatic(Pawn patient, float treatBelowPercent, float urgentThreshold)
-		{
-			float score = PatientUrgencyStatic(patient, treatBelowPercent);
-			return score >= urgentThreshold;
-		}
-
-		private static bool CanReserveTendTarget(Pawn medic, Pawn patient)
-		{
-			if (medic == null || patient == null) return false;
-			if (patient.Dead) return false;
-			if (medic.Downed) return false;
-			if (!medic.Spawned || medic.Map == null) return false;
-			if (patient.Map == null || patient.Map != medic.Map) return false;
-
-			// Primary reservation check.
-			if (medic.CanReserve(patient, 1, -1, null, false))
-				return true;
-
-			// Held/locked arbitration sometimes leaves the patient reserved by the same medic.
-			// If we are already the reserver, allow Tend/Rescue to start (prevents hold->release->rest bounce).
-			//
-			// Uses existing helper logic in this file that can resolve who reserved the thing.
-			Pawn reservedBy = GetWhoReserved(patient);
-			if (reservedBy != null && reservedBy == medic)
-				return true;
-
-			return false;
-		}
-
-		private static bool IsMedicineThing(Thing thing)
+		// We need to rework this so that the healer pawn ie doctor, medic, or combat medic will either use the medicine that the healer pawn has on them, only pick up medicine in a small area around them, or tend without medicine.
+		/*private static bool IsMedicineThing(Thing thing)
 		{
 			if (thing == null) return false;
 			if (thing.def == null) return false;
@@ -5731,41 +5612,7 @@ namespace ArgrillianThreat
 			if (j.targetC.IsValid && j.targetC.Thing != null && IsMedicineThing(j.targetC.Thing)) return true;
 
 			return false;
-		}
-
-		private static Pawn FindAssignedCombatMedicForPatient(Pawn patient)
-		{
-			if (patient == null || patient.Dead || patient.Map == null)
-				return null;
-
-			Map map = patient.Map;
-			int patientId = patient.thingIDNumber;
-
-			// Authority: the alert system owns patientcall -> medic assignment mapping.
-			int medicId;
-			if (!ArgrillianAlertSystem.TryGetAssignedMedicIdForPatient(map, patientId, out medicId))
-				return null;
-
-			if (medicId < 0)
-				return null;
-
-			// Validate cached medicId against combat medics list (no map-wide pawn scanning).
-			var combatMedics = CompArgrillianMedicSettings.GetCombatMedics(map);
-			if (combatMedics == null)
-				return null;
-
-			for (int i = 0; i < combatMedics.Count; i++)
-			{
-				Pawn medic = combatMedics[i];
-				if (medic == null || medic.Dead) continue;
-				if (!medic.Spawned || medic.Map != map) continue;
-
-				if (medic.thingIDNumber == medicId)
-					return medic;
-			}
-
-			return null;
-		}
+		}*/
 
 		public static bool IsValidTendTarget(Pawn patient, Pawn medic)
 		{
@@ -5789,15 +5636,6 @@ namespace ArgrillianThreat
 				: Danger.None;
 
 			return medic.CanReach(patient, endMode, danger);
-		}
-
-		private static bool CanReserveThing(Pawn medic, Thing t)
-		{
-			if (medic == null || t == null) return false;
-			if (!medic.Spawned || medic.Map == null) return false;
-			if (t.Map == null || t.Map != medic.Map) return false;
-
-			return medic.CanReserve(t, 1, -1, null, false);
 		}
 
 		private static void TryStopPatientToAllowTend(Pawn medic, Pawn patient)
@@ -5876,82 +5714,7 @@ namespace ArgrillianThreat
 			);
 		}
 
-		private static bool IsJobNameContains(Job j, string part)
-		{
-			if (j == null || j.def == null || string.IsNullOrEmpty(j.def.defName)) return false;
-			return j.def.defName.IndexOf(part, StringComparison.OrdinalIgnoreCase) >= 0;
-		}
-
-		private static bool IsInterferingJobForTend(Pawn patient)
-		{
-		if (patient == null) return false;
-
-		// NEW: held-for-tend arbitration guard
-		// If this patient is currently held for tend/rescue by the alert/medic pipeline,
-		// all other job churn that could re-enable movement/combat should be treated as interfering.
-		if (ArgrillianAlertSystem.IsPatientHeldForTend(patient))
-		{
-		Job heldJob = patient.CurJob;
-		if (heldJob == null || heldJob.def == null) return false;
-
-		if (IsCrawlLikeJob(heldJob) || IsMoveLikeJob(heldJob))
-			return true;
-
-		if (IsCombatAttackLikeJob(heldJob) || IsChaseOrTacticJob(heldJob))
-			return true;
-
-		if (IsHaulJob(heldJob))
-			return true;
-
-		string defName0 = heldJob.def.defName;
-		if (!string.IsNullOrEmpty(defName0))
-		{
-			if (defName0.IndexOf("eat", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-			if (defName0.IndexOf("ingest", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-			if (defName0.IndexOf("meal", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-			if (defName0.IndexOf("consume", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-			if (defName0.IndexOf("rest", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-			if (defName0.IndexOf("grab", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-			if (defName0.IndexOf("pickup", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-		}
-		}
-
-		Job j = patient.CurJob;
-		if (j == null) return false;
-
-		// Removed IsAllowedDownPawnJob(...) call entirely.
-		// If downed, we treat most non-pipeline churn as interfering so medic can hard-stop and hold.
-
-		if (!patient.Downed)
-		return false;
-
-		// NEW: if downed pawn is crawling/moving to safety, treat it as interfering so medic can stop it for tending/rescue.
-		if (IsCrawlLikeJob(j) || IsMoveLikeJob(j))
-		return true;
-
-		// NEW: if downed pawn is on combat/chase behavior, treat it as interfering so we can stop it for tending.
-		if (IsCombatAttackLikeJob(j) || IsChaseOrTacticJob(j))
-		return true;
-
-		if (IsHaulJob(j)) return true;
-
-		string defName = j.def?.defName;
-		if (string.IsNullOrEmpty(defName)) return false;
-
-		if (defName.IndexOf("eat", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-		if (defName.IndexOf("ingest", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-		if (defName.IndexOf("meal", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-		if (defName.IndexOf("consume", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-
-		if (defName.IndexOf("rest", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-
-		if (defName.IndexOf("grab", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-		if (defName.IndexOf("pickup", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-
-		return false;
-		}
-
-		private static bool IsHaulJob(Job job)
+		/*private static bool IsHaulJob(Job job)
 		{
 			if (job == null) return false;
 
@@ -5985,7 +5748,7 @@ namespace ArgrillianThreat
 				return true;
 
 			return false;
-		}
+		}*/
 
 		public static bool IsJobRelevantToCombatMedicUrgent(Job job, Pawn patient)
 		{
@@ -6008,74 +5771,8 @@ namespace ArgrillianThreat
 			return false;
 		}
 
-		private static bool IsJobTargetValidForPatient(Job job, Pawn patient)
-		{
-			if (job == null || patient == null) return true;
-
-			if (job.targetA.IsValid && job.targetA.Thing == patient)
-			{
-				if (patient.Dead) return false;
-				if (patient.Map == null) return false;
-			}
-
-			return true;
-		}
-
-		private Building_Bed FindBestBedFor(Pawn medic, Pawn patient)
-		{
-			if (medic?.Map == null || patient?.Map == null) return null;
-			if (medic.Map != patient.Map) return null;
-			if (patient.Dead) return null;
-			if (medic.Dead) return null;
-
-			Map map = medic.Map;
-			Building_Bed best = null;
-			float bestScore = float.NegativeInfinity;
-
-			bool patientIsBurning = IsPawnBurningNow(patient);
-
-			// FIRE-SAFE MEDIC TARGETING:
-			// If the patient is on fire, enforce “>= 3 blocks from fire” consistently.
-			const float minBlocksFromFire = 3f;
-
-			foreach (var bed in map.listerBuildings.AllBuildingsColonistOfClass<Building_Bed>())
-			{
-				if (bed == null || bed.Destroyed || !bed.Spawned) continue;
-				if (bed.Map != map) continue;
-
-				float dist = medic.Position.DistanceTo(bed.Position);
-				if (dist > hospitalBedMaxDist) continue;
-
-				if (!medic.CanReach(bed.Position, PathEndMode.ClosestTouch, Danger.Some)) continue;
-
-				if (!CanReserveThingForPatient(medic, bed, patient)) continue;
-
-				if (patientIsBurning)
-				{
-					// Require fire-safe targeting: >=3 blocks from the (tracked) fire reference.
-					if (!IsFarEnoughFromFire(patient, bed.Position, map, minBlocksFromFire))
-						continue;
-				}
-
-				float score = 0f;
-				if (bed.Medical) score += 1200f;
-
-				score += (hospitalBedMaxDist - dist) * 2f;
-
-				float patientToBedDist = patient.Position.DistanceTo(bed.Position);
-				score += (60f - patientToBedDist) * 0.2f;
-
-				if (score > bestScore)
-				{
-					bestScore = score;
-					best = bed;
-				}
-			}
-
-			return best;
-		}
-
-		private Pawn FindNearestHostile(Pawn medic, float radius = 80f)
+		// This may or may not need to be used.
+		/*private Pawn FindNearestHostile(Pawn medic, float radius = 80f)
 		{
 			if (medic == null || medic.Dead) return null;
 			if (medic.Map == null) return null;
@@ -6189,7 +5886,7 @@ namespace ArgrillianThreat
 			}
 
 			return false;
-		}
+		}*/
 
 		private static bool IsRescueLikeJob(Job j)
 		{
@@ -6197,35 +5894,6 @@ namespace ArgrillianThreat
 			string n = j.def.defName;
 
 			return j.def == JobDefOf.Rescue || n.IndexOf("rescue", StringComparison.OrdinalIgnoreCase) >= 0;
-		}
-
-		private static bool IsMoveLikeJob(Job j)
-		{
-			if (j == null || j.def == null || string.IsNullOrEmpty(j.def.defName)) return false;
-			string n = j.def.defName.ToLowerInvariant();
-
-			return n.Contains("goto") || n.Contains("move") || n.Contains("walk") || n.Contains("path");
-		}
-
-		private static bool IsMealOrConsumeLikeJob(Job j)
-		{
-			if (j == null || j.def == null || string.IsNullOrEmpty(j.def.defName)) return false;
-
-			// If the job targets medicine, it's not a meal/consume job (even if it uses grab/pickup/haul verbs).
-			if (j.targetA.IsValid && j.targetA.Thing != null && IsMedicineThing(j.targetA.Thing)) return false;
-			if (j.targetB.IsValid && j.targetB.Thing != null && IsMedicineThing(j.targetB.Thing)) return false;
-			if (j.targetC.IsValid && j.targetC.Thing != null && IsMedicineThing(j.targetC.Thing)) return false;
-
-			string n = j.def.defName.ToLowerInvariant();
-
-			return n.Contains("eat")
-				|| n.Contains("ingest")
-				|| n.Contains("consume")
-				|| n.Contains("meal")
-				|| n.Contains("cook")
-				|| n.Contains("kitchen")
-				|| n.Contains("grab")
-				|| n.Contains("pickup");
 		}
 
 		private static System.Type LastRmType;
@@ -6321,48 +5989,7 @@ namespace ArgrillianThreat
 			return false;
 		}
 
-		private static bool IsCombatAttackLikeJob(Job j)
-		{
-			if (j == null || j.def == null || string.IsNullOrEmpty(j.def.defName)) return false;
-			string n = j.def.defName;
-
-			return n.IndexOf("attack", StringComparison.OrdinalIgnoreCase) >= 0
-				|| n.IndexOf("shoot", StringComparison.OrdinalIgnoreCase) >= 0
-				|| n.IndexOf("fight", StringComparison.OrdinalIgnoreCase) >= 0
-				|| n.IndexOf("melee", StringComparison.OrdinalIgnoreCase) >= 0
-				|| n.IndexOf("ranged", StringComparison.OrdinalIgnoreCase) >= 0
-				|| n.IndexOf("burst", StringComparison.OrdinalIgnoreCase) >= 0;
-		}
-
-		private static bool MedicJobIsRescueForPatient(Pawn medic, Pawn patient)
-		{
-			if (medic == null || patient == null) return false;
-			if (medic.CurJob == null || medic.CurJob.def == null) return false;
-
-			if (!IsRescueLikeJob(medic.CurJob)) return false;
-
-			// FIX: JobDefOf.Rescue can store the target pawn in different targets (targetA vs targetB/C),
-			// and if we check only targetA we may fail to detect “we are already rescuing this patient”.
-			Job j = medic.CurJob;
-
-			if (j.targetA.IsValid && j.targetA.Thing == patient) return true;
-			if (j.targetB.IsValid && j.targetB.Thing == patient) return true;
-			if (j.targetC.IsValid && j.targetC.Thing == patient) return true;
-
-			return false;
-		}
-
 		private static readonly System.Collections.Generic.Dictionary<int, Building_Bed> RescueBedCache = new System.Collections.Generic.Dictionary<int, Building_Bed>();
-
-		private static bool IsNonCombatJob(Job j)
-		{
-			if (j == null || j.def == null) return true;
-
-			if (j.def == JobDefOf.Rescue || j.def == JobDefOf.TendPatient)
-				return false;
-
-			return !IsCombatAttackLikeJob(j);
-		}
 
 		private static Building_Bed GetCachedRescueBedForPatient(Pawn patient)
 		{
@@ -6385,38 +6012,6 @@ namespace ArgrillianThreat
 		{
 			if (patient == null) return;
 			RescueBedCache.Remove(patient.thingIDNumber);
-		}
-
-		private static Pawn GetCarriedPawn(Pawn medic)
-		{
-			if (medic == null) return null;
-			if (medic.carryTracker == null) return null;
-
-			return medic.carryTracker.CarriedThing as Pawn;
-		}
-
-		private static bool IsMedicCarryingPawn(Pawn medic, Pawn patient)
-		{
-			if (medic == null || patient == null) return false;
-
-			Pawn carried = GetCarriedPawn(medic);
-			return carried != null && carried == patient;
-		}
-
-		private static bool IsCrawlLikeJob(Job j)
-		{
-			if (j == null || j.def == null || string.IsNullOrEmpty(j.def.defName)) return false;
-			return j.def.defName.IndexOf("crawl", StringComparison.OrdinalIgnoreCase) >= 0;
-		}
-
-		private bool PatientRecentlyStableForTendOverride(Pawn patient)
-		{
-			if (patient == null || patient.Dead) return false;
-
-			// Keep this intentionally simple: if they are moving, let combat/tend finish tug-of-war.
-			if (patient.pather != null && patient.pather.Moving) return false;
-
-			return true;
 		}
 
 		protected override Job TryGiveJob(Pawn pawn)
@@ -6845,34 +6440,6 @@ namespace ArgrillianThreat
 
 			PatientStabilityCache[id] = st;
 			return st.stableTicks;
-		}
-
-		private static bool IsFleeLikeJob(Job j)
-		{
-			if (j == null || j.def == null || string.IsNullOrEmpty(j.def.defName)) return false;
-
-			string n = j.def.defName.ToLowerInvariant();
-
-			return n.Contains("flee")
-				|| n.Contains("runaway")
-				|| n.Contains("runfrom")
-				|| n.Contains("escape")
-				|| n.Contains("evade")
-				|| n.Contains("retreat")
-				|| n.Contains("withdraw");
-		}
-
-		private static bool IsChaseOrTacticJob(Job j)
-		{
-			if (j == null || j.def == null || string.IsNullOrEmpty(j.def.defName)) return false;
-			string n = j.def.defName.ToLowerInvariant();
-
-			return n.Contains("chase")
-				|| n.Contains("pursuit")
-				|| n.Contains("hunt")
-				|| n.Contains("stalk")
-				|| n.Contains("tactic")
-				|| n.Contains("seek");
 		}
 
 		public static bool IsPawnBurningNow(Pawn p)
