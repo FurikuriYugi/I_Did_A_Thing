@@ -5800,119 +5800,57 @@ namespace ArgrillianThreat
 			return medic.CanReserve(t, 1, -1, null, false);
 		}
 
-		private static readonly Dictionary<int, int> waitStopAuthorityByPatientId = new Dictionary<int, int>();
-		// patientId -> medicId/doctorId that last acquired/owns the forced Wait hold
-
 		private static void TryStopPatientToAllowTend(Pawn medic, Pawn patient)
 		{
 			if (patient == null || patient.Dead)
 				return;
 
-			// If the patient is already in the held-for-tend pipeline, only the assigned handler
-			// is allowed to establish/maintain the forced Wait hold. This prevents repeated
-			// TryStop calls (while tendEligibleNow=false) from interrupting the pipeline.
-			if (ArgrillianAlertSystem.IsPatientHeldForTend(patient))
-			{
-				// If we can't resolve assignment, fail closed: do NOT force Wait.
-				if (medic == null || medic.Dead || medic.Map == null || patient.Map == null || patient.Map != medic.Map)
-					return;
-
-				int patientId3 = patient.thingIDNumber;
-				int medicId3;
-				if (!ArgrillianAlertSystem.TryGetAssignedMedicIdForPatient(patient.Map, patientId3, out medicId3))
-					return;
-
-				// Owner-only: if this medic is not the assigned one, never interfere.
-				if (medic.thingIDNumber != medicId3)
-					return;
-
-				// If already held-for-tend and already in Wait, keep idempotent no-op.
-				if (patient.CurJob != null && patient.CurJob.def == JobDefOf.Wait)
-				{
-					// Ensure authority mapping exists for the existing forced Wait.
-					if (!waitStopAuthorityByPatientId.ContainsKey(patientId3))
-						waitStopAuthorityByPatientId[patientId3] = medicId3;
-
-					return;
-				}
-			}
-
-			// If already in Wait and the pipeline considers this patient held-for-tend,
-			// do nothing (prevents repeated Stop/interrupt churn + “tend breaks” oscillations).
-			if (patient.CurJob != null
-				&& patient.CurJob.def == JobDefOf.Wait
-				&& ArgrillianAlertSystem.IsPatientHeldForTend(patient))
-			{
-				return;
-			}
-
-			// Hard idempotency: if patient is already in forced Wait, exit BEFORE logging,
-			// and only allow early-return when authority mapping is either missing
-			// (we'll let mapping be acquired) or already owned by this medic.
-			if (patient.CurJob != null && patient.CurJob.def == JobDefOf.Wait)
-			{
-				if (medic != null && !medic.Dead && patient.Map != null && medic.Map != null && patient.Map == medic.Map)
-				{
-					int patientId2 = patient.thingIDNumber;
-					int medicId2 = medic.thingIDNumber;
-
-					// If some other authority owns the forced wait, do nothing.
-					if (waitStopAuthorityByPatientId.TryGetValue(patientId2, out int existingAuthId2) && existingAuthId2 != medicId2)
-					{
-						return;
-					}
-
-					// If we own it (or no one is recorded yet), ensure mapping exists and exit.
-					if (!waitStopAuthorityByPatientId.ContainsKey(patientId2))
-						waitStopAuthorityByPatientId[patientId2] = medicId2;
-
-					return;
-				}
-			}
-
 			if (medic == null || medic.Dead)
 				return;
 
-			if (patient.Map == null || medic.Map == null)
+			if (medic.Map == null || patient.Map == null)
 				return;
 
-			if (patient.Map != medic.Map)
+			if (medic.Map != patient.Map)
 				return;
 
-			int patientId = patient.thingIDNumber;
-			int medicId = medic.thingIDNumber;
-
-			// If someone else already owns the forced Wait hold for this patient,
-			// do not overwrite it (prevents churn + ensures authority correctness).
-			if (waitStopAuthorityByPatientId.TryGetValue(patientId, out int existingAuthId))
+			// Alert-system authority check:
+			// - If the patient is held-for-tend, only the assigned medic may establish/maintain the forced Wait.
+			if (ArgrillianAlertSystem.IsPatientHeldForTend(patient))
 			{
-				// If we already own the forced wait mapping, exit.
-				if (existingAuthId == medicId)
+				int patientId = patient.thingIDNumber;
+				int assignedMedicId;
+
+				if (!ArgrillianAlertSystem.TryGetAssignedMedicIdForPatient(patient.Map, patientId, out assignedMedicId))
 					return;
 
-				return;
+				// Owner-only: prevent any other medic from interfering with the pipeline.
+				if (medic.thingIDNumber != assignedMedicId)
+					return;
+
+				// If already held as Wait during pipeline, idempotent no-op.
+				if (patient.CurJob != null && patient.CurJob.def == JobDefOf.Wait)
+					return;
+
+				// Fall through to force Wait (owner-only).
 			}
 
-			float tendStopMaxDistance = 3f;
-
-			float dist = medic.Position.DistanceTo(patient.Position);
-			if (dist > tendStopMaxDistance)
+			// If the patient is already in forced Wait and is NOT being held-for-tend,
+			// we still keep idempotent behavior: don’t override a current Wait job.
+			if (patient.CurJob != null && patient.CurJob.def == JobDefOf.Wait)
 				return;
 
-			Job curJob = patient.CurJob;
-
-			// If we're already forcing wait, make this idempotent.
-			if (curJob != null && curJob.def == JobDefOf.Wait)
-			{
-				// Ensure the authority mapping exists for the existing forced Wait.
-				if (!waitStopAuthorityByPatientId.ContainsKey(patientId))
-					waitStopAuthorityByPatientId[patientId] = medicId;
-
+			// If not in held-for-tend pipeline, do not forcibly stop jobs anymore:
+			// this class should only hard-hold when the alert system says the patient is in the medical pipeline.
+			if (!ArgrillianAlertSystem.IsPatientHeldForTend(patient))
 				return;
-			}
+
+			// From here on: patient is held-for-tend AND this medic is the assigned owner (authority).
+			// Force Wait immediately to prevent tend pipeline churn until tend eligibility is satisfied.
 
 			// Prevent any in-progress non-tend jobs from continuing.
 			// For TakeToBed, avoid StopAll(true); just clear queued jobs so we don't crash / churn.
+			Job curJob = patient.CurJob;
 			bool curIsTakeToBed = false;
 			if (curJob != null && curJob.def != null && !string.IsNullOrEmpty(curJob.def.defName))
 			{
@@ -5927,19 +5865,14 @@ namespace ArgrillianThreat
 			patient.jobs?.ClearQueuedJobs();
 			patient.pather?.StopDead();
 
-			// Force Wait immediately.
 			IntVec3 here = patient.Position;
-
 			Job waitJob = JobMaker.MakeJob(JobDefOf.Wait, here);
 			waitJob.count = 1;
 
 			patient.jobs?.StartJob(waitJob, JobCondition.InterruptForced);
 
-			// Record ownership of the forced Wait hold.
-			waitStopAuthorityByPatientId[patientId] = medicId;
-
 			Log.Message(
-				$"[ArgrillianThreat][HOLD] patientForcedWaitOnLock medic={medic?.thingIDNumber ?? -1} patient={patient.thingIDNumber} curJob={(patient.CurJob?.def?.defName ?? "null")}"
+				$"[ArgrillianThreat][HOLD] patientForcedWaitOnLock medic={medic.thingIDNumber} patient={patient.thingIDNumber} curJob={(patient.CurJob?.def?.defName ?? "null")}"
 			);
 		}
 
