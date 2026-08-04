@@ -5431,7 +5431,7 @@ namespace ArgrillianThreat
 		public int tendTaskStickinessTicks = 120;
 
 		// How close combat medics try to be
-		public float combatTendMaxDistance = 10f;
+		public float combatTendMaxDistance = 3f;
 
 		public bool stopPatientWhenUrgent = true;
 
@@ -5866,19 +5866,15 @@ namespace ArgrillianThreat
 			// do not overwrite it (prevents churn + ensures authority correctness).
 			if (waitStopAuthorityByPatientId.TryGetValue(patientId, out int existingAuthId))
 			{
-				// If we already own it, this call is idempotent: keep Wait as-is.
+				// NEW: make TryStop fire only once per (patient, owning medic).
+				// If we already own the forced wait mapping, exit immediately even if
+				// patient is not yet JobDefOf.Wait (prevents repeated StopAll/interrupt churn).
 				if (existingAuthId == medicId)
-				{
-					Job curAuthJob = patient.CurJob;
-					if (curAuthJob != null && curAuthJob.def == JobDefOf.Wait)
-						return;
-
-					// If job isn't Wait anymore, fall through to reacquire the hold.
-				}
-				else
 				{
 					return;
 				}
+
+				return;
 			}
 
 			float tendStopMaxDistance = 6f;
@@ -6816,13 +6812,11 @@ namespace ArgrillianThreat
 						patientClearedForCombat,
 						escortToMedicalRequired
 					);
-					//TryTimes = 0;
 					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(heldPatient);
 				}
 
 				if (patientInBedAndFullyTended || ArgrillianAlertSystem.IsPatientTransferedToMedicOrDoctor(heldPatient))
 				{
-					//TryTimes = 0;
 					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 				}
 
