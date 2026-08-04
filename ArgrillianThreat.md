@@ -5807,11 +5807,41 @@ namespace ArgrillianThreat
 
 		private static void TryStopPatientToAllowTend(Pawn medic, Pawn patient)
 		{
-			// If already in Wait and the pipeline already considers this patient held-for-tend,
-			// do NOTHING (prevents repeated Stop/interrupt churn + “tend breaks” oscillations).
-			if (patient != null
-				&& !patient.Dead
-				&& patient.CurJob != null
+			if (patient == null || patient.Dead)
+				return;
+
+			// If the patient is already in the held-for-tend pipeline, only the assigned handler
+			// is allowed to establish/maintain the forced Wait hold. This prevents repeated
+			// TryStop calls (while tendEligibleNow=false) from interrupting the pipeline.
+			if (ArgrillianAlertSystem.IsPatientHeldForTend(patient))
+			{
+				// If we can't resolve assignment, fail closed: do NOT force Wait.
+				if (medic == null || medic.Dead || medic.Map == null || patient.Map == null || patient.Map != medic.Map)
+					return;
+
+				int patientId = patient.thingIDNumber;
+				int medicId;
+				if (!ArgrillianAlertSystem.TryGetAssignedMedicIdForPatient(patient.Map, patientId, out medicId))
+					return;
+
+				// Owner-only: if this medic is not the assigned one, never interfere.
+				if (medic.thingIDNumber != medicId)
+					return;
+
+				// If already held-for-tend and already in Wait, keep idempotent no-op.
+				if (patient.CurJob != null && patient.CurJob.def == JobDefOf.Wait)
+				{
+					// Ensure authority mapping exists for the existing forced Wait.
+					if (!waitStopAuthorityByPatientId.ContainsKey(patientId))
+						waitStopAuthorityByPatientId[patientId] = medicId;
+
+					return;
+				}
+			}
+
+			// If already in Wait and the pipeline considers this patient held-for-tend,
+			// do nothing (prevents repeated Stop/interrupt churn + “tend breaks” oscillations).
+			if (patient.CurJob != null
 				&& patient.CurJob.def == JobDefOf.Wait
 				&& ArgrillianAlertSystem.IsPatientHeldForTend(patient))
 			{
@@ -5819,9 +5849,9 @@ namespace ArgrillianThreat
 			}
 
 			// Hard idempotency: if patient is already in forced Wait, exit BEFORE logging,
-			// and only allow early-return if authority mapping is either missing (we'll let
-			// mapping be acquired) or already owned by this medic.
-			if (patient != null && !patient.Dead && patient.CurJob != null && patient.CurJob.def == JobDefOf.Wait)
+			// and only allow early-return when authority mapping is either missing
+			// (we'll let mapping be acquired) or already owned by this medic.
+			if (patient.CurJob != null && patient.CurJob.def == JobDefOf.Wait)
 			{
 				if (medic != null && !medic.Dead && patient.Map != null && medic.Map != null && patient.Map == medic.Map)
 				{
@@ -5842,14 +5872,6 @@ namespace ArgrillianThreat
 				}
 			}
 
-			// Now that we know we’re not already idempotently holding, we can log entry.
-			Log.Message(
-				$"[ArgrillianThreat][TryStopPatientToAllowTend][ENTRY] medic={(medic != null ? medic.thingIDNumber.ToString() : "-1")} patient={(patient != null ? patient.thingIDNumber.ToString() : "-1")}"
-			);
-
-			if (patient == null || patient.Dead)
-				return;
-
 			if (medic == null || medic.Dead)
 				return;
 
@@ -5866,18 +5888,14 @@ namespace ArgrillianThreat
 			// do not overwrite it (prevents churn + ensures authority correctness).
 			if (waitStopAuthorityByPatientId.TryGetValue(patientId, out int existingAuthId))
 			{
-				// NEW: make TryStop fire only once per (patient, owning medic).
-				// If we already own the forced wait mapping, exit immediately even if
-				// patient is not yet JobDefOf.Wait (prevents repeated StopAll/interrupt churn).
+				// If we already own the forced wait mapping, exit.
 				if (existingAuthId == medicId)
-				{
 					return;
-				}
 
 				return;
 			}
 
-			float tendStopMaxDistance = 6f;
+			float tendStopMaxDistance = 3f;
 
 			float dist = medic.Position.DistanceTo(patient.Position);
 			if (dist > tendStopMaxDistance)
@@ -5895,8 +5913,8 @@ namespace ArgrillianThreat
 				return;
 			}
 
-			// If patient is in bed-taking flow, avoid StopAll(true) churn that can crash in
-			// JobDriver_TakeToBed reservation logic.
+			// Prevent any in-progress non-tend jobs from continuing.
+			// For TakeToBed, avoid StopAll(true); just clear queued jobs so we don't crash / churn.
 			bool curIsTakeToBed = false;
 			if (curJob != null && curJob.def != null && !string.IsNullOrEmpty(curJob.def.defName))
 			{
@@ -5904,8 +5922,7 @@ namespace ArgrillianThreat
 					curJob.def.defName.IndexOf("taketobed", System.StringComparison.OrdinalIgnoreCase) >= 0;
 			}
 
-			// Prevent any in-progress non-tend jobs from continuing.
-			// For TakeToBed, avoid StopAll(true); just clear queued jobs so we don't crash / churn.
+			// Prevent churn that can re-enable movement/combat while tend is not yet eligible.
 			if (!curIsTakeToBed)
 				patient.jobs?.StopAll(true);
 
