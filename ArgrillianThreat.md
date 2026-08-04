@@ -6531,7 +6531,7 @@ namespace ArgrillianThreat
 		{
 			if (pawn == null || pawn.Dead || pawn.Map == null) return null;
 			var medicComp = pawn.GetComp<CompArgrillianMedicSettings>();
-			if (medicComp == null || !medicComp.isMedic/*Not created yet: || medicComp.doctor*/) return null;
+			if (medicComp == null || !medicComp.isMedic || medicComp.doctor) return null;
 
 			// Acquire held patient from alert-system authority.
 			Pawn heldPatient = ArgrillianAlertSystem.GetHeldPatientForMedic(pawn);
