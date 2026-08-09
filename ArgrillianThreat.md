@@ -926,6 +926,30 @@ namespace ArgrillianThreat
 				lastCommitTick[Key(medic, patient)] = Now;
 			}
 		}
+
+		public class HoldPatient
+		{
+			private bool hasFired = false;
+			public void Stop(Pawn heldPatient)
+			{
+				if (!hasFired)
+				{
+					// Transition into forced hold exactly once.
+					heldPatient.jobs?.StopAll(true);
+					heldPatient.jobs?.ClearQueuedJobs();
+					heldPatient.pather?.StopDead();
+
+					Job waitJob = JobMaker.MakeJob(JobDefOf.Wait, heldPatient.Position);
+					waitJob.count = 999999; // long duration so it doesn't expire next tick and bounce
+					heldPatient.jobs?.StartJob(waitJob, JobCondition.InterruptForced);
+					hasFired = true;
+				}
+			}
+			public void Reset()
+			{
+				hasFired = false;
+			}
+		}
 	}
 
 	// NEW: Event Driven Alert System.
@@ -2876,7 +2900,7 @@ namespace ArgrillianThreat
 			Map map = pawn.Map;
 
 			// Locked hostile support (no map scanning).
-			Pawn hostileForPatient = hctx?.Hostile;
+			Pawn hostileForPatient = hctx.Hostile;
 			if (hostileForPatient == null || hostileForPatient.Dead || !hostileForPatient.Spawned || hostileForPatient.Map != map)
 				hostileForPatient = ArgrillianThreatState.CombatLock.TryGetLockedHostile(pawn);
 
@@ -2906,11 +2930,9 @@ namespace ArgrillianThreat
 					pawn,
 					hostileForPatient,
 					nearestMedic,
+					map,
 					patientRetreatSafeDistanceFromHostile,
 					patientRetreatSearchRadius,
-					patientRetreatPreferMedicRadius,
-					map,
-					scanRange,
 					out safeCell))
 			{
 				Job keep = ArgrillianGotoHelper.KeepIfSameGoto(pawn, safeCell);
@@ -5402,6 +5424,8 @@ namespace ArgrillianThreat
 		public int patientStableTicksRequired = 18;
 
 		private CompArgrillianMedicSettings Settings(Pawn pawn) => pawn?.GetComp<CompArgrillianMedicSettings>();
+
+		public ArgrillianMedicalState.HoldPatient holdPatient = new ArgrillianMedicalState.HoldPatient();
 		
 		public static bool IsValidTendTarget(Pawn patient, Pawn medic)
 		{
@@ -5426,81 +5450,6 @@ namespace ArgrillianThreat
 
 			return medic.CanReach(patient, endMode, danger);
 		}
-
-		/*private static void TryStopPatientToAllowTend(Pawn medic, Pawn patient)
-		{
-			if (patient == null || patient.Dead) return;
-			if (medic == null || medic.Dead) return;
-			if (medic.Map == null || patient.Map == null) return;
-			if (medic.Map != patient.Map) return;
-
-			// Never force a Wait job onto the medic itself.
-			if (medic == patient)
-			{
-				patient.jobs?.StopAll(true);
-				patient.jobs?.ClearQueuedJobs();
-				patient.pather?.StopDead();
-				return;
-			}
-
-			// Only the assigned medic can enforce the hold.
-			if (!ArgrillianAlertSystem.IsPatientHeldForTend(patient)) return;
-
-			int patientId = patient.thingIDNumber;
-			int assignedMedicId;
-			if (!ArgrillianAlertSystem.TryGetAssignedMedicIdForPatient(patient.Map, patientId, out assignedMedicId)) return;
-			if (medic.thingIDNumber != assignedMedicId) return;
-
-			// If the medic isn't actually on the tend/rescue job for THIS patient right now,
-			// do not keep interfering with the patient's job state.
-			Job medicJob = medic.CurJob;
-			if (!IsJobRelevantToCombatMedicUrgent(medicJob, patient)) return;
-
-			// Never fight TakeToBed flow.
-			Job patientCur = patient.CurJob;
-			if (patientCur != null && patientCur.def != null && !string.IsNullOrEmpty(patientCur.def.defName))
-			{
-				string defName = patientCur.def.defName;
-				if (defName.IndexOf("taketobed", System.StringComparison.OrdinalIgnoreCase) >= 0)
-				{
-					patient.jobs?.ClearQueuedJobs();
-					patient.pather?.StopDead();
-					return;
-				}
-			}
-
-			// Release enforcement once fully tended.
-			// (We consider "fully tended" = no remaining tendable hediffs with Severity > 0.)
-			bool fullyTended = true;
-			if (patient.health != null && patient.health.hediffSet != null && patient.health.hediffSet.hediffs != null)
-			{
-				for (int i = 0; i < patient.health.hediffSet.hediffs.Count; i++)
-				{
-					Hediff h = patient.health.hediffSet.hediffs[i];
-					if (h == null || h.def == null) continue;
-
-					if (h.def.tendable && h.Severity > 0f)
-					{
-						fullyTended = false;
-						break;
-					}
-				}
-			}
-
-			if (fullyTended) return;
-
-			// Idempotent: if already waiting, don't re-start it every tick.
-			if (patient.CurJob != null && patient.CurJob.def == JobDefOf.Wait) return;
-
-			// Enforce the hold so the patient doesn't bounce into Rest/movement while the medic tends.
-			patient.jobs?.StopAll(true);
-			patient.jobs?.ClearQueuedJobs();
-			patient.pather?.StopDead();
-
-			Job waitJob = JobMaker.MakeJob(JobDefOf.Wait, patient.Position);
-			waitJob.count = 1;
-			patient.jobs?.StartJob(waitJob, JobCondition.InterruptForced);
-		}*/
 
 		public static bool IsJobRelevantToCombatMedicUrgent(Job job, Pawn patient)
 		{
@@ -5834,15 +5783,11 @@ namespace ArgrillianThreat
 						tendJob2.count = 1;
 						return tendJob2;
 					}
-
-					// Transition into forced hold exactly once.
-					heldPatient.jobs?.StopAll(true);
-					heldPatient.jobs?.ClearQueuedJobs();
-					heldPatient.pather?.StopDead();
-
-					Job waitJob = JobMaker.MakeJob(JobDefOf.Wait, heldPatient.Position);
-					waitJob.count = 999999; // long duration so it doesn't expire next tick and bounce
-					heldPatient.jobs?.StartJob(waitJob, JobCondition.InterruptForced);
+					if (heldPatient.CurJob != null && heldPatient.CurJob.def != JobDefOf.Wait)
+					{
+						// Stop the patient
+						holdPatient.Stop(heldPatient);
+					}
 
 					// Now force the medic-side job choice.
 					if (heldPatient.Downed)
@@ -5897,13 +5842,17 @@ namespace ArgrillianThreat
 					}
 				}
 
-				if (patientIsFullyTended && patientClearedForCombat)
+				if (patientClearedForCombat)
 				{
+					// Reset the hold and return the patient to combat
+					holdPatient.Reset();
 					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(heldPatient);
 				}
 
 				if (patientInBedAndFullyTended || ArgrillianAlertSystem.IsPatientTransferedToMedicOrDoctor(heldPatient))
 				{
+					// Reset the hold on the patient and the combat medic returns to combat
+					holdPatient.Reset();
 					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 				}
 
