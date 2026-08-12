@@ -5783,12 +5783,11 @@ namespace ArgrillianThreat
 					// Strategy:
 					// - if medic is in reach: proceed with rescue/tend pipeline (same as your existing logic)
 					// - if medic is out of reach: allow attack jobs, but neutralize needs/leisure jobs
-
 					if (medicInReach)
 					{
-						// PERF FIX:
+						// PERF FIX + WAIT-LOCK GUARANTEE:
 						// If the held patient is already in the forced-hold Wait truth state,
-						// skip reinforcements (avoid repeated Stop churn).
+						// don't re-stop/restart them (prevents vanilla job churn).
 						bool forcedHoldWaitActive =
 							heldPatient.CurJob != null &&
 							heldPatient.CurJob.def != null &&
@@ -5799,28 +5798,24 @@ namespace ArgrillianThreat
 						{
 							holdPatient.Stop(heldPatient);
 						}
-
-						if (heldPatient.CurJob != null && heldPatient.CurJob.def != null && heldPatient.CurJob.def == JobDefOf.Wait)
+						
+						if (heldPatient.Downed)
 						{
-							if (heldPatient.Downed)
+							Building_Bed bed = null;
+							if (!TryGetRescueBedForPatient(pawn, heldPatient, out bed) || bed == null)
 							{
-								Building_Bed bed = null;
-								if (!TryGetRescueBedForPatient(pawn, heldPatient, out bed) || bed == null)
-								{
-									return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
-								}
-
-								Job rescueJob = JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
-								rescueJob.count = 1;
-								return rescueJob;
+								return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
 							}
 
-							Job tendJob2 = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
-							tendJob2.count = 1;
-							return tendJob2;
+							Job rescueJob = JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
+							rescueJob.count = 1;
+							return rescueJob;
 						}
 
-						return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
+						// Not downed -> tend
+						Job tendJob2 = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
+						tendJob2.count = 1;
+						return tendJob2;
 					}
 
 					// Medic NOT in reach: allow defense, but block vanilla needs jobs from taking over.
