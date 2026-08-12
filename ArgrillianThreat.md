@@ -929,7 +929,7 @@ namespace ArgrillianThreat
 
 		public class HoldPatient
 		{
-			private bool hasFired = false;
+			public static bool hasFired = false;
 
 			public void Stop(Pawn heldPatient)
 			{
@@ -5785,20 +5785,11 @@ namespace ArgrillianThreat
 					// - if medic is out of reach: allow attack jobs, but neutralize needs/leisure jobs
 					if (medicInReach)
 					{
-						// PERF FIX + WAIT-LOCK GUARANTEE:
-						// If the held patient is already in the forced-hold Wait truth state,
-						// don't re-stop/restart them (prevents vanilla job churn).
-						bool forcedHoldWaitActive =
-							heldPatient.CurJob != null &&
-							heldPatient.CurJob.def != null &&
-							heldPatient.CurJob.def == JobDefOf.Wait &&
-							heldPatient.CurJob.count >= 999000;
-
-						if (!forcedHoldWaitActive)
+						if (!ArgrillianMedicalState.HoldPatient.hasFired)
 						{
 							holdPatient.Stop(heldPatient);
 						}
-						
+
 						if (heldPatient.Downed)
 						{
 							Building_Bed bed = null;
