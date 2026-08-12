@@ -5776,39 +5776,33 @@ namespace ArgrillianThreat
 				// While held-for-tend, we keep patient “locked” until the medic pipeline ends
 				// (or the medic stops being in reach and we fall through to escort/combat logic).
 				bool medicInReach = pawn.Position.DistanceTo(heldPatient.Position) <= combatTendMaxDistance;
-
-				if (ArgrillianAlertSystem.IsPawnHeldPatient(heldPatient) && !IsArgrillianMedicPawn(heldPatient))
+				if (medicInReach)
 				{
-					// We want: prevent vanilla needs churn (Rest/Eat/Consume/...) while NOT breaking self-defense.
-					// Strategy:
-					// - if medic is in reach: proceed with rescue/tend pipeline (same as your existing logic)
-					// - if medic is out of reach: allow attack jobs, but neutralize needs/leisure jobs
-					if (medicInReach)
+					if (!ArgrillianMedicalState.HoldPatient.hasFired)
 					{
-						if (!ArgrillianMedicalState.HoldPatient.hasFired)
-						{
-							holdPatient.Stop(heldPatient);
-						}
-
-						if (heldPatient.Downed)
-						{
-							Building_Bed bed = null;
-							if (!TryGetRescueBedForPatient(pawn, heldPatient, out bed) || bed == null)
-							{
-								return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
-							}
-
-							Job rescueJob = JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
-							rescueJob.count = 1;
-							return rescueJob;
-						}
-
-						// Not downed -> tend
-						Job tendJob2 = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
-						tendJob2.count = 1;
-						return tendJob2;
+						holdPatient.Stop(heldPatient);
 					}
 
+					if (heldPatient.Downed)
+					{
+						Building_Bed bed = null;
+						if (!TryGetRescueBedForPatient(pawn, heldPatient, out bed) || bed == null)
+						{
+							return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
+						}
+
+						Job rescueJob = JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
+						rescueJob.count = 1;
+						return rescueJob;
+					}
+
+					// Not downed -> tend
+					Job tendJob2 = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
+					tendJob2.count = 1;
+					return tendJob2;
+				}
+				else
+				{
 					// Medic NOT in reach: allow defense, but block vanilla needs jobs from taking over.
 					string defName = heldPatient.CurJob != null && heldPatient.CurJob.def != null ? heldPatient.CurJob.def.defName : string.Empty;
 
@@ -5834,12 +5828,10 @@ namespace ArgrillianThreat
 						holdPatient.Reset();
 						holdPatient.Stop(heldPatient);
 					}
-
 					// Otherwise: escort medic toward patient so defense can continue while we close distance.
 					IntVec3 escortTarget2 = heldPatient.Position;
 					return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, escortTarget2);
 				}
-
 				// ----------------------------
 				// KEEP-ACTIVE-JOB GUARD (only when not held-for-tend)
 				// ----------------------------
