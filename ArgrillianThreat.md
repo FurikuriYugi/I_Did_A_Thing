@@ -931,30 +931,8 @@ namespace ArgrillianThreat
 		{
 			public static bool hasFired = false;
 
-			private static bool IsHeldWaitJobActive(Pawn heldPatient)
-			{
-				if (heldPatient == null) return false;
-				if (heldPatient.Dead) return false;
-				if (heldPatient.jobs == null) return false;
-				if (heldPatient.CurJob == null) return false;
-				if (heldPatient.CurJob.def != JobDefOf.Wait) return false;
-
-				// Must match the long-duration “do not bounce” window.
-				// (If vanilla replaced the job, this will fail.)
-				return heldPatient.CurJob.count >= 999000;
-			}
-
 			public void Stop(Pawn heldPatient)
 			{
-				if (heldPatient == null) return;
-
-				// If we already have the correct forced Wait running, just ensure the lock state stays true.
-				if (IsHeldWaitJobActive(heldPatient))
-				{
-					hasFired = true;
-					return;
-				}
-
 				heldPatient.jobs?.StopAll(true);
 				heldPatient.jobs?.ClearQueuedJobs();
 				heldPatient.pather?.StopDead();
@@ -5706,7 +5684,8 @@ namespace ArgrillianThreat
 							break;
 						}
 					}
-					else if (verb is Verb_Shoot shoot)
+
+					if (verb is Verb_Shoot shoot)
 					{
 						if (shoot.verbProps == null) continue;
 						if (shoot.verbProps.range > 0.01f)
@@ -5714,50 +5693,47 @@ namespace ArgrillianThreat
 							hasRanged = true;
 						}
 					}
-
-					if (hasMelee || hasRanged)
-						break;
 				}
 
 				return hasMelee || hasRanged;
 			}
 
-			// Cache patient health references once (avoid repeated null-chaining per tick).
-			var hp = heldPatient.health;
-			var hediffSet = hp != null ? hp.hediffSet : null;
-
 			// ----------------------------
 			// 0) TERMINAL COMPLETION CHECK
 			// ----------------------------
-			float patientHP = hp?.summaryHealth?.SummaryHealthPercent ?? 1f;
+			float patientHP = heldPatient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
 
 			bool patientInBed = heldPatient.InBed();
-			bool patientIsBleedingNow = hediffSet != null && hediffSet.HasHediff(HediffDefOf.BloodLoss);
+
+			bool patientIsBleedingNow = heldPatient.health?.hediffSet != null && heldPatient.health.hediffSet.HasHediff(HediffDefOf.BloodLoss);
 
 			int stableTicksNow = GetPatientStableTicksForTend(heldPatient);
+
 			int requiredStableTicksForTerminal = heldPatient.Downed ? 0 : patientStableTicksRequired;
+
 			bool patientStabilityOkForTerminal = stableTicksNow >= requiredStableTicksForTerminal;
 
 			// "Fully tended" = there are no remaining tendable hediffs that still have Severity > 0.
-			bool patientIsFullyTended = hediffSet == null || hediffSet.hediffs == null;
+			bool patientIsFullyTended =
+				heldPatient.health == null ||
+				heldPatient.health.hediffSet == null ||
+				heldPatient.health.hediffSet.hediffs == null;
 
-			if (!patientIsFullyTended)
+			if (heldPatient.health != null && heldPatient.health.hediffSet != null && heldPatient.health.hediffSet.hediffs != null)
 			{
-				var hediffs = hediffSet.hediffs;
-				if (hediffs != null)
-				{
-					for (int i = 0; i < hediffs.Count; i++)
-					{
-						Hediff h = hediffs[i];
-						if (h == null || h.def == null) continue;
+				patientIsFullyTended = true;
 
-						if (h.def.tendable && h.Severity > 0f)
-						{
-							patientIsFullyTended = false;
-							goto FullyTendedDone;
-						}
+				for (int i = 0; i < heldPatient.health.hediffSet.hediffs.Count; i++)
+				{
+					Hediff h = heldPatient.health.hediffSet.hediffs[i];
+					if (h == null || h.def == null)
+						continue;
+
+					if (h.def.tendable && h.Severity > 0f)
+					{
+						patientIsFullyTended = false;
+						break;
 					}
-					patientIsFullyTended = true;
 				}
 			}
 
@@ -5770,12 +5746,7 @@ namespace ArgrillianThreat
 				patientIsFullyTended;
 
 			// "Fully tended" can be used for combat-clearance even if not in bed
-			bool patientClearedForCombat =
-				(patientHP >= 0.8f &&
-				 !heldPatient.Downed &&
-				 !patientIsBleedingNow &&
-				 patientIsFullyTended &&
-				 IsPawnCombatCapable(heldPatient));
+			bool patientClearedForCombat = (patientHP >= 0.8f && !heldPatient.Downed && !patientIsBleedingNow && patientIsFullyTended && IsPawnCombatCapable(heldPatient));
 
 			bool escortToMedicalRequired = !patientClearedForCombat;
 
@@ -5803,6 +5774,7 @@ namespace ArgrillianThreat
 				bool patientIsBleeding = patientIsBleedingNow;
 
 				// While held-for-tend, we keep patient “locked” until the medic pipeline ends
+				// (or the medic stops being in reach and we fall through to escort/combat logic).
 				bool medicInReach = pawn.Position.DistanceTo(heldPatient.Position) <= combatTendMaxDistance;
 				if (medicInReach)
 				{
@@ -5856,13 +5828,11 @@ namespace ArgrillianThreat
 						holdPatient.Reset();
 						holdPatient.Stop(heldPatient);
 					}
-
 					// Otherwise: escort medic toward patient so defense can continue while we close distance.
 					IntVec3 escortTarget2 = heldPatient.Position;
 					return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, escortTarget2);
 				}
 			}
-
 			if (patientClearedForCombat)
 			{
 				// Reset the hold and return the patient to combat
@@ -5876,8 +5846,7 @@ namespace ArgrillianThreat
 				holdPatient.Reset();
 				return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 			}
-
-			return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
+			return null;
 		}
 
 		private bool TryGetRescueBedForPatient(Pawn medic, Pawn patient, out Building_Bed bed)
