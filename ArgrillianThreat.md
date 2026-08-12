@@ -940,7 +940,7 @@ namespace ArgrillianThreat
 				Job waitJob = JobMaker.MakeJob(JobDefOf.Wait);
 				waitJob.count = 999999; // long duration so it doesn't expire next tick and bounce
 
-				heldPatient.jobs?.StartJob(waitJob, JobCondition.InterruptForced);
+				heldPatient.jobs?.StartJob(waitJob, JobCondition.InterruptOnBroken);
 
 				hasFired = true;
 			}
