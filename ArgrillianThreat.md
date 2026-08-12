@@ -5782,40 +5782,67 @@ namespace ArgrillianThreat
 				// (or the medic stops being in reach and we fall through to escort/combat logic).
 				bool medicInReach = pawn.Position.DistanceTo(heldPatient.Position) <= combatTendMaxDistance;
 
-				if (medicInReach && ArgrillianAlertSystem.IsPawnHeldPatient(heldPatient) && !IsArgrillianMedicPawn(heldPatient))
+				if (ArgrillianAlertSystem.IsPawnHeldPatient(heldPatient) && !IsArgrillianMedicPawn(heldPatient))
 				{
-					// Idempotent: if the patient is already in our forced-hold Wait, don't restart it.
-					// (Prevents “bounced stand/rest” caused by restarting a 1-tick Wait repeatedly.)
-					if (heldPatient.CurJob != null && heldPatient.CurJob.def == JobDefOf.Wait)
+					// We want: prevent vanilla needs churn (Rest/Eat/Consume/...) while NOT breaking self-defense.
+					// Strategy:
+					// - if medic is in reach: proceed with rescue/tend pipeline (same as your existing logic)
+					// - if medic is out of reach: allow attack jobs, but neutralize needs/leisure jobs
+
+					if (medicInReach)
 					{
-						// If the medic is already close, push the medic-side pipeline choice.
-						if (heldPatient.Downed)
+						holdPatient.Stop(heldPatient);
+
+						if (heldPatient.CurJob != null && heldPatient.CurJob.def != null && heldPatient.CurJob.def == JobDefOf.Wait)
 						{
-							Building_Bed bed = null;
-							if (!TryGetRescueBedForPatient(pawn, heldPatient, out bed) || bed == null)
+							if (heldPatient.Downed)
 							{
-								return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
+								Building_Bed bed = null;
+								if (!TryGetRescueBedForPatient(pawn, heldPatient, out bed) || bed == null)
+								{
+									return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
+								}
+
+								Job rescueJob = JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
+								rescueJob.count = 1;
+								return rescueJob;
 							}
 
-							Job rescueJob = JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
-							rescueJob.count = 1;
-							return rescueJob;
+							Job tendJob2 = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
+							tendJob2.count = 1;
+							return tendJob2;
 						}
 
-						Job tendJob2 = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
-						tendJob2.count = 1;
-						return tendJob2;
+						return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
 					}
-					else
+
+					// Medic NOT in reach: allow defense, but block vanilla needs jobs from taking over.
+					string defName = heldPatient.CurJob != null && heldPatient.CurJob.def != null ? heldPatient.CurJob.def.defName : string.Empty;
+
+					bool isAttackJob =
+						defName.Contains("Attack") ||
+						defName.Contains("MeleeAttack") ||
+						defName.Contains("RangedAttack") ||
+						defName.Contains("Shoot") ||
+						defName.Contains("Bombard");
+
+					bool isNeedsOrLeisureJob =
+						defName.Contains("Rest") ||
+						defName.Contains("LayDown") ||
+						defName.Contains("Sleep") ||
+						defName.Contains("Eat") ||
+						defName.Contains("Consume") ||
+						defName.Contains("Drink");
+
+					// Hard guard: if vanilla tries to switch the patient to a needs/leisure job during the hold window,
+					// neutralize it without blocking combat.
+					if (!isAttackJob && isNeedsOrLeisureJob)
 					{
-						// Stop the patient
+						holdPatient.Reset();
 						holdPatient.Stop(heldPatient);
 					}
-				}
-				// If medic isn't in reach, we do not hard-hold; we let the patient proceed to the
-				// escort/combat logic that owns the job-changes.
-				else
-				{
+
+					// Otherwise: escort medic toward patient so defense can continue while we close distance.
 					IntVec3 escortTarget2 = heldPatient.Position;
 					return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, escortTarget2);
 				}
