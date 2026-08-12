@@ -930,21 +930,35 @@ namespace ArgrillianThreat
 		public class HoldPatient
 		{
 			private bool hasFired = false;
+
 			public void Stop(Pawn heldPatient)
 			{
-				if (!hasFired)
-				{
-					// Transition into forced hold exactly once.
-					heldPatient.jobs?.StopAll(true);
-					heldPatient.jobs?.ClearQueuedJobs();
-					heldPatient.pather?.StopDead();
+				if (heldPatient == null)
+					return;
 
-					Job waitJob = JobMaker.MakeJob(JobDefOf.Wait);//, heldPatient.Position);
-					waitJob.count = 999999; // long duration so it doesn't expire next tick and bounce
-					heldPatient.jobs?.StartJob(waitJob, JobCondition.InterruptForced);
-					hasFired = true;
-				}
+				// If we are already forcing a long Wait, do nothing.
+				// Otherwise, re-assert the forced-hold so patient-side Rest/LayDown can't win.
+				bool alreadyForcedWait =
+					hasFired &&
+					heldPatient.CurJob != null &&
+					heldPatient.CurJob.def == JobDefOf.Wait;
+
+				if (alreadyForcedWait)
+					return;
+
+				// Transition into forced hold (or re-assert it if something like Rest stole the job).
+				heldPatient.jobs?.StopAll(true);
+				heldPatient.jobs?.ClearQueuedJobs();
+				heldPatient.pather?.StopDead();
+
+				Job waitJob = JobMaker.MakeJob(JobDefOf.Wait);
+				waitJob.count = 999999; // long duration so it doesn't expire next tick and bounce
+
+				heldPatient.jobs?.StartJob(waitJob, JobCondition.InterruptForced);
+
+				hasFired = true;
 			}
+
 			public void Reset()
 			{
 				hasFired = false;
