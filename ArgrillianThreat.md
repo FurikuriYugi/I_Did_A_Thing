@@ -940,7 +940,7 @@ namespace ArgrillianThreat
 				Job waitJob = JobMaker.MakeJob(JobDefOf.Wait);
 				waitJob.count = 999999; // long duration so it doesn't expire next tick and bounce
 
-				heldPatient.jobs?.StartJob(waitJob, JobCondition.None);
+				heldPatient.jobs?.StartJob(waitJob, JobCondition.InterruptForced);
 
 				hasFired = true;
 			}
@@ -5771,11 +5771,6 @@ namespace ArgrillianThreat
 			// ----------------------------
 			if (medicComp.isMedic && medicComp.combatMedic)
 			{
-				if (heldPatient == null)
-				{
-					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
-				}
-
 				bool patientIsBleeding = patientIsBleedingNow;
 
 				// While held-for-tend, we keep patient “locked” until the medic pipeline ends
@@ -5791,7 +5786,19 @@ namespace ArgrillianThreat
 
 					if (medicInReach)
 					{
-						holdPatient.Stop(heldPatient);
+						// PERF FIX:
+						// If the held patient is already in the forced-hold Wait truth state,
+						// skip reinforcements (avoid repeated Stop churn).
+						bool forcedHoldWaitActive =
+							heldPatient.CurJob != null &&
+							heldPatient.CurJob.def != null &&
+							heldPatient.CurJob.def == JobDefOf.Wait &&
+							heldPatient.CurJob.count >= 999000;
+
+						if (!forcedHoldWaitActive)
+						{
+							holdPatient.Stop(heldPatient);
+						}
 
 						if (heldPatient.CurJob != null && heldPatient.CurJob.def != null && heldPatient.CurJob.def == JobDefOf.Wait)
 						{
