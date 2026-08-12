@@ -1166,6 +1166,27 @@ namespace ArgrillianThreat
 			public int lastPatientPruneTick = -1;
 		}
 
+		// ArgrillianAlertSystem (add this method anywhere inside the class)
+		public static bool IsPawnHeldPatient(Pawn patient)
+		{
+			if (patient == null) return false;
+			if (patient.Dead || !patient.Spawned) return false;
+			if (patient.Map == null) return false;
+
+			int pid = patient.thingIDNumber;
+			if (pid < 0) return false;
+
+			// Authority: uses only the alert-system assignment cache; no map scanning.
+			foreach (var kvp in assignedPatientIdByMedicId)
+			{
+				int heldPatientId = kvp.Value;
+				if (heldPatientId == pid)
+					return true;
+			}
+
+			return false;
+		}
+
 		private static readonly Dictionary<int, PatientMapCache> byPatientMapId = new Dictionary<int, PatientMapCache>();
 
 		// Soft cleanup cadence + TTL. Tune as desired.
@@ -5600,6 +5621,8 @@ namespace ArgrillianThreat
 
 		protected override Job TryGiveJob(Pawn pawn)
 		{
+			ArgrillianAlertSystem.NotifyPawnSelfState(pawn);
+
 			if (pawn == null || pawn.Dead || pawn.Map == null) return null;
 			var medicComp = pawn.GetComp<CompArgrillianMedicSettings>();
 			if (medicComp == null || !medicComp.isMedic || medicComp.doctor) return null;
@@ -5759,7 +5782,7 @@ namespace ArgrillianThreat
 				// (or the medic stops being in reach and we fall through to escort/combat logic).
 				bool medicInReach = pawn.Position.DistanceTo(heldPatient.Position) <= combatTendMaxDistance;
 
-				if (medicInReach)
+				if (medicInReach && ArgrillianAlertSystem.IsPawnHeldPatient(heldPatient) && !IsArgrillianMedicPawn(heldPatient))
 				{
 					// Idempotent: if the patient is already in our forced-hold Wait, don't restart it.
 					// (Prevents “bounced stand/rest” caused by restarting a 1-tick Wait repeatedly.)
@@ -5783,29 +5806,11 @@ namespace ArgrillianThreat
 						tendJob2.count = 1;
 						return tendJob2;
 					}
-					if (heldPatient.CurJob != null && heldPatient.CurJob.def != JobDefOf.Wait)
+					else
 					{
 						// Stop the patient
 						holdPatient.Stop(heldPatient);
 					}
-
-					// Now force the medic-side job choice.
-					if (heldPatient.Downed)
-					{
-						Building_Bed bed = null;
-						if (!TryGetRescueBedForPatient(pawn, heldPatient, out bed) || bed == null)
-						{
-							return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
-						}
-
-						Job rescueJob = JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
-						rescueJob.count = 1;
-						return rescueJob;
-					}
-
-					Job tendJob = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
-					tendJob.count = 1;
-					return tendJob;
 				}
 				// If medic isn't in reach, we do not hard-hold; we let the patient proceed to the
 				// escort/combat logic that owns the job-changes.
