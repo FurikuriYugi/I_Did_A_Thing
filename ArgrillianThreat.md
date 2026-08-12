@@ -933,20 +933,6 @@ namespace ArgrillianThreat
 
 			public void Stop(Pawn heldPatient)
 			{
-				if (heldPatient == null)
-					return;
-
-				// If we are already forcing a long Wait, do nothing.
-				// Otherwise, re-assert the forced-hold so patient-side Rest/LayDown can't win.
-				bool alreadyForcedWait =
-					hasFired &&
-					heldPatient.CurJob != null &&
-					heldPatient.CurJob.def == JobDefOf.Wait;
-
-				if (alreadyForcedWait)
-					return;
-
-				// Transition into forced hold (or re-assert it if something like Rest stole the job).
 				heldPatient.jobs?.StopAll(true);
 				heldPatient.jobs?.ClearQueuedJobs();
 				heldPatient.pather?.StopDead();
