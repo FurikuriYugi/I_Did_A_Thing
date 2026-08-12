@@ -5861,52 +5861,23 @@ namespace ArgrillianThreat
 					IntVec3 escortTarget2 = heldPatient.Position;
 					return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, escortTarget2);
 				}
+			}
 
-				// ----------------------------
-				// KEEP-ACTIVE-JOB GUARD (only when not held-for-tend)
-				// ----------------------------
-				if (pawn.CurJob != null && pawn.CurJob.def != null)
-				{
-					Job cur = pawn.CurJob;
-					JobDef def = cur.def;
+			if (patientClearedForCombat)
+			{
+				// Reset the hold and return the patient to combat
+				holdPatient.Reset();
+				return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(heldPatient);
+			}
 
-					if (def == JobDefOf.TendPatient || def == JobDefOf.Rescue)
-					{
-						if (def == JobDefOf.TendPatient && heldPatient.Downed)
-						{
-							Building_Bed bed;
-							if (!TryGetRescueBedForPatient(pawn, heldPatient, out bed) || bed == null)
-							{
-								return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
-							}
-
-							Job rescueJob = JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
-							rescueJob.count = 1;
-							return rescueJob;
-						}
-
-						return cur;
-					}
-				}
-
-				if (patientClearedForCombat)
-				{
-					// Reset the hold and return the patient to combat
-					holdPatient.Reset();
-					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(heldPatient);
-				}
-
-				if (patientInBedAndFullyTended || ArgrillianAlertSystem.IsPatientTransferedToMedicOrDoctor(heldPatient))
-				{
-					// Reset the hold on the patient and the combat medic returns to combat
-					holdPatient.Reset();
-					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
-				}
-
+			if (patientInBedAndFullyTended || ArgrillianAlertSystem.IsPatientTransferedToMedicOrDoctor(heldPatient))
+			{
+				// Reset the hold on the patient and the combat medic returns to combat
+				holdPatient.Reset();
 				return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 			}
 
-			return null;
+			return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 		}
 
 		private bool TryGetRescueBedForPatient(Pawn medic, Pawn patient, out Building_Bed bed)
