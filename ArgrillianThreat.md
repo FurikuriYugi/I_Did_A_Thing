@@ -11,8 +11,6 @@ namespace ArgrillianThreat
 		{
 			if (jt == null) return null;
 
-			// RimWorld 1.6: Pawn_JobTracker.pawn is private.
-			// Read it via reflection to avoid CS0122.
 			var f = HarmonyLib.AccessTools.Field(typeof(Pawn_JobTracker), "pawn");
 			if (f == null) return null;
 
@@ -25,11 +23,9 @@ namespace ArgrillianThreat
 			if (pawn.Dead || !pawn.Spawned) return false;
 			if (pawn.Map == null) return false;
 
-			// Only block if the medic has actually executed HoldPatient.Stop for this patient.
 			return ArgrillianAlertSystem.IsPawnHeldByMedicStop(pawn);
 		}
 
-		// 1) Block "issuing job packages"
 		[HarmonyPatch(typeof(ThinkNode_JobGiver), nameof(ThinkNode_JobGiver.TryIssueJobPackage))]
 		public static bool Prefix_ThinkNode_JobGiver_TryIssueJobPackage(Pawn pawn, ref Job __result)
 		{
@@ -37,8 +33,13 @@ namespace ArgrillianThreat
 			if (pawn.Dead) return true;
 			if (pawn.Map == null) return true;
 
-			if (IsPawnLocked(pawn))
+			bool locked = IsPawnLocked(pawn);
+			if (locked)
 			{
+				Verse.Log.Message(
+					$"[ArgrillianThreat] HeldPatientJobBlocker: BLOCK TryIssueJobPackage pawn={pawn.Name} locked=true"
+				);
+
 				__result = null;
 				return false;
 			}
@@ -46,7 +47,6 @@ namespace ArgrillianThreat
 			return true;
 		}
 
-		// 2) Block "starting jobs"
 		[HarmonyPatch(typeof(Pawn_JobTracker), "TryStartJob")]
 		public static bool Prefix_Pawn_JobTracker_TryStartJob(Pawn_JobTracker __instance, Job job)
 		{
@@ -55,7 +55,21 @@ namespace ArgrillianThreat
 			if (pawn.Dead) return true;
 
 			if (IsPawnLocked(pawn))
+			{
+				string jobLabel;
+				if (job == null)
+					jobLabel = "nullJob";
+				else if (job.def == null)
+					jobLabel = "nullJobDef";
+				else
+					jobLabel = job.def.defName;
+
+				Verse.Log.Message(
+					$"[ArgrillianThreat] HeldPatientJobBlocker: BLOCK TryStartJob pawn={pawn.Name} locked=true job={jobLabel}"
+				);
+
 				return false;
+			}
 
 			return true;
 		}
