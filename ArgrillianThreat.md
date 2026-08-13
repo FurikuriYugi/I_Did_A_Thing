@@ -1299,24 +1299,15 @@ namespace ArgrillianThreat
 			if (!medic.Spawned || medic.Dead) return;
 			if (medic.Map == null) return;
 
+			// If this medic had a mapped assigned patient, unlock that patient by patient id.
 			int mid = medic.thingIDNumber;
 			if (mid < 0) return;
 
-			int removedPid = -1;
-
-			// If this medic had a mapped assigned patient, unlock that patient by patient id.
 			if (assignedPatientIdByMedicId.TryGetValue(mid, out int pid))
 			{
 				if (pid >= 0)
-				{
-					removedPid = pid;
 					lockedPatientIds.Remove(pid);
-				}
 			}
-
-			Verse.Log.Message(
-				$"[ArgrillianThreat] ReleasePatientHeldByMedic medic={medic.Name} mid={mid} removedPid={removedPid} (note: if removedPid==-1, lock may be unmapped)"
-			);
 
 			// Also unlock any patient if caller directly removed assignment elsewhere (safety).
 		}
@@ -1853,6 +1844,8 @@ namespace ArgrillianThreat
 
 			int medicId = medic.thingIDNumber;
 
+			// IMPORTANT: patient unlock happens via ReleasePatientHeldByMedic (which depends on this mapping).
+			// So keep this method as "remove assignment mapping only".
 			assignedPatientIdByMedicId.Remove(medicId);
 		}
 
@@ -5815,6 +5808,7 @@ namespace ArgrillianThreat
 					retreatingHeldPatient: false
 				);
 				Pawn bestCandidate = ArgrillianAlertSystem.GetBestPatientFromCalls(pawn, searchRadius);
+
 				if (bestCandidate != null)
 				{
 					bool accepted = ArgrillianAlertSystem.TryReserveMedicForPatient(pawn, bestCandidate);
@@ -5845,6 +5839,7 @@ namespace ArgrillianThreat
 					tendEligibleNow: false,
 					retreatingHeldPatient: false
 				);
+
 				// For non-combat medics/doctors: this job-giver shouldn't do anything if no held patient exists.
 				return null;
 			}
@@ -5942,16 +5937,16 @@ namespace ArgrillianThreat
 			// 1) DOCTORS (non-combat) branch
 			// ----------------------------
 			if (medicComp.doctor)
-				{
-					JobGiver_ArgrillianThreatResponse.TraceMedKit(
-						"TryGiveJob_doctor_returnNull",
-						pawn,
-						heldPatient,
-						tendEligibleNow: false,
-						retreatingHeldPatient: true
-					);
-					return null;
-				}
+			{
+				JobGiver_ArgrillianThreatResponse.TraceMedKit(
+					"TryGiveJob_doctor_returnNull",
+					pawn,
+					heldPatient,
+					tendEligibleNow: false,
+					retreatingHeldPatient: true
+				);
+				return null;
+			}
 
 			// ----------------------------
 			// 2) MEDICS (non-combat) branch
@@ -5986,6 +5981,7 @@ namespace ArgrillianThreat
 						tendEligibleNow: true,
 						retreatingHeldPatient: true
 					);
+
 					if (!ArgrillianMedicalState.HoldPatient.hasFired)
 					{
 						ArgrillianAlertSystem.TryLockPatientHeldByMedic(pawn, heldPatient);
@@ -6018,7 +6014,7 @@ namespace ArgrillianThreat
 						tendEligibleNow: true,
 						retreatingHeldPatient: true
 					);
-					// Not downed -> tend
+
 					Job tendJob2 = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
 					tendJob2.count = 1;
 					return tendJob2;
@@ -6039,39 +6035,57 @@ namespace ArgrillianThreat
 			// ----------------------------
 			// 4) Medical Finalization Process
 			// ----------------------------
-			if (patientClearedForCombat)
+			if (medicComp.isMedic && medicComp.combatMedic)
 			{
-				JobGiver_ArgrillianThreatResponse.TraceMedKit(
-					"TryGiveJob_patientClearedForCombat_returnPatientToCombat",
-					pawn,
-					heldPatient,
-					tendEligibleNow: false,
-					retreatingHeldPatient: false
-				);
+				// Prevent premature unlock if the medic is still actively committed to medical work for this patient.
+				// This is the guard that prevents the patient from regaining job freedom mid-tend,
+				// which is the root cause of "patient tries to Consume and breaks tend".
+				bool medicHasMedicalJobNow =
+					pawn?.CurJob != null &&
+					ArgillianThreatPatientTuning.JobIsMedicalForPatient(pawn.CurJob, heldPatient);
 
-				// Reset the hold and return the patient to combat
-				ArgrillianAlertSystem.ReleaseMedicHold(pawn);
-				ArgrillianAlertSystem.ReleasePatientHeldByMedic(pawn);
-				holdPatient.Reset();
-				return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(heldPatient);
-			}
+				if (!medicHasMedicalJobNow)
+				{
+					if (patientClearedForCombat)
+					{
+						JobGiver_ArgrillianThreatResponse.TraceMedKit(
+							"TryGiveJob_patientClearedForCombat_returnPatientToCombat",
+							pawn,
+							heldPatient,
+							tendEligibleNow: false,
+							retreatingHeldPatient: false
+						);
 
-			if (patientInBedAndFullyTended || ArgrillianAlertSystem.IsPatientTransferedToMedicOrDoctor(heldPatient))
-			{
-				JobGiver_ArgrillianThreatResponse.TraceMedKit(
-					"TryGiveJob_medicMissionDone_returnMedicToCombat",
-					pawn,
-					heldPatient,
-					tendEligibleNow: false,
-					retreatingHeldPatient: false
-				);
+						// Correct unlock ordering:
+						// 1) unlock patient (needs assignment mapping)
+						// 2) then clear assignment mapping
+						ArgrillianAlertSystem.ReleasePatientHeldByMedic(pawn);
+						ArgrillianAlertSystem.ReleaseMedicHold(pawn);
+						holdPatient.Reset();
 
-				// Reset the hold on the patient and the combat medic returns to combat
-				ArgrillianAlertSystem.ReleaseMedicHold(pawn);
-				ArgrillianAlertSystem.ReleasePatientHeldByMedic(pawn);
-				holdPatient.Reset();
+						return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(heldPatient);
+					}
+
+					if (patientInBedAndFullyTended || ArgrillianAlertSystem.IsPatientTransferedToMedicOrDoctor(heldPatient))
+					{
+						JobGiver_ArgrillianThreatResponse.TraceMedKit(
+							"TryGiveJob_medicMissionDone_returnMedicToCombat",
+							pawn,
+							heldPatient,
+							tendEligibleNow: false,
+							retreatingHeldPatient: false
+						);
+
+						ArgrillianAlertSystem.ReleasePatientHeldByMedic(pawn);
+						ArgrillianAlertSystem.ReleaseMedicHold(pawn);
+						holdPatient.Reset();
+
+						return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
+					}
+				}
 				return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 			}
+
 			JobGiver_ArgrillianThreatResponse.TraceMedKit(
 				"TryGiveJob_noFinalization_returnNull",
 				pawn,
