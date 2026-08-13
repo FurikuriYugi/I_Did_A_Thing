@@ -36,7 +36,7 @@ namespace ArgrillianThreat
 			bool locked = IsPawnLocked(pawn);
 			if (locked)
 			{
-				Verse.Log.Message(
+				Log.Message(
 					$"[ArgrillianThreat] HeldPatientJobBlocker: BLOCK TryIssueJobPackage pawn={pawn.Name} locked=true"
 				);
 
@@ -64,7 +64,7 @@ namespace ArgrillianThreat
 				else
 					jobLabel = job.def.defName;
 
-				Verse.Log.Message(
+				Log.Message(
 					$"[ArgrillianThreat] HeldPatientJobBlocker: BLOCK TryStartJob pawn={pawn.Name} locked=true job={jobLabel}"
 				);
 
@@ -1274,7 +1274,7 @@ namespace ArgrillianThreat
 
 			if (!isAllowed)
 			{
-				Verse.Log.Message(
+				Log.Message(
 					$"[ArgrillianThreat] TryLockPatientHeldByMedic denied role pawn={medic?.Name} patient={patient?.Name}"
 				);
 				return false;
@@ -1286,7 +1286,7 @@ namespace ArgrillianThreat
 			lockedPatientIds.Add(pid);
 
 			// Log lock activation + current lock state
-			Verse.Log.Message(
+			Log.Message(
 				$"[ArgrillianThreat] TryLockPatientHeldByMedic LOCK pid={pid} medic={medic.Name} patient={patient.Name} combatMedic={medicComp.combatMedic} doctor={medicComp.doctor}"
 			);
 
@@ -5982,9 +5982,13 @@ namespace ArgrillianThreat
 						retreatingHeldPatient: true
 					);
 
-					if (!ArgrillianMedicalState.HoldPatient.hasFired)
+					if (!ArgrillianAlertSystem.IsPawnHeldByMedicStop(heldPatient))
 					{
 						ArgrillianAlertSystem.TryLockPatientHeldByMedic(pawn, heldPatient);
+					}
+
+					if (!ArgrillianMedicalState.HoldPatient.hasFired)
+					{
 						holdPatient.Stop(heldPatient);
 					}
 
@@ -6035,53 +6039,50 @@ namespace ArgrillianThreat
 			// ----------------------------
 			// 4) Medical Finalization Process
 			// ----------------------------
-			if (medicComp.isMedic && medicComp.combatMedic)
+			// Prevent premature unlock if the medic is still actively committed to medical work for this patient.
+			// This is the guard that prevents the patient from regaining job freedom mid-tend,
+			// which is the root cause of "patient tries to Consume and breaks tend".
+			bool medicHasMedicalJobNow =
+				pawn?.CurJob != null &&
+				ArgillianThreatPatientTuning.JobIsMedicalForPatient(pawn.CurJob, heldPatient);
+
+			if (!medicHasMedicalJobNow)
 			{
-				// Prevent premature unlock if the medic is still actively committed to medical work for this patient.
-				// This is the guard that prevents the patient from regaining job freedom mid-tend,
-				// which is the root cause of "patient tries to Consume and breaks tend".
-				bool medicHasMedicalJobNow =
-					pawn?.CurJob != null &&
-					ArgillianThreatPatientTuning.JobIsMedicalForPatient(pawn.CurJob, heldPatient);
-
-				if (!medicHasMedicalJobNow)
+				if (patientClearedForCombat)
 				{
-					if (patientClearedForCombat)
-					{
-						JobGiver_ArgrillianThreatResponse.TraceMedKit(
-							"TryGiveJob_patientClearedForCombat_returnPatientToCombat",
-							pawn,
-							heldPatient,
-							tendEligibleNow: false,
-							retreatingHeldPatient: false
-						);
+					JobGiver_ArgrillianThreatResponse.TraceMedKit(
+						"TryGiveJob_patientClearedForCombat_returnPatientToCombat",
+						pawn,
+						heldPatient,
+						tendEligibleNow: false,
+						retreatingHeldPatient: false
+					);
 
-						// Correct unlock ordering:
-						// 1) unlock patient (needs assignment mapping)
-						// 2) then clear assignment mapping
-						ArgrillianAlertSystem.ReleasePatientHeldByMedic(pawn);
-						ArgrillianAlertSystem.ReleaseMedicHold(pawn);
-						holdPatient.Reset();
+					// Correct unlock ordering:
+					// 1) unlock patient (needs assignment mapping)
+					// 2) then clear assignment mapping
+					ArgrillianAlertSystem.ReleasePatientHeldByMedic(pawn);
+					ArgrillianAlertSystem.ReleaseMedicHold(pawn);
+					holdPatient.Reset();
 
-						return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(heldPatient);
-					}
+					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(heldPatient);
+				}
 
-					if (patientInBedAndFullyTended || ArgrillianAlertSystem.IsPatientTransferedToMedicOrDoctor(heldPatient))
-					{
-						JobGiver_ArgrillianThreatResponse.TraceMedKit(
-							"TryGiveJob_medicMissionDone_returnMedicToCombat",
-							pawn,
-							heldPatient,
-							tendEligibleNow: false,
-							retreatingHeldPatient: false
-						);
+				if (patientInBedAndFullyTended || ArgrillianAlertSystem.IsPatientTransferedToMedicOrDoctor(heldPatient))
+				{
+					JobGiver_ArgrillianThreatResponse.TraceMedKit(
+						"TryGiveJob_medicMissionDone_returnMedicToCombat",
+						pawn,
+						heldPatient,
+						tendEligibleNow: false,
+						retreatingHeldPatient: false
+					);
 
-						ArgrillianAlertSystem.ReleasePatientHeldByMedic(pawn);
-						ArgrillianAlertSystem.ReleaseMedicHold(pawn);
-						holdPatient.Reset();
+					ArgrillianAlertSystem.ReleasePatientHeldByMedic(pawn);
+					ArgrillianAlertSystem.ReleaseMedicHold(pawn);
+					holdPatient.Reset();
 
-						return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
-					}
+					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 				}
 				return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 			}
