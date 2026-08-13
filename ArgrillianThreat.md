@@ -5806,11 +5806,16 @@ namespace ArgrillianThreat
 			var medicComp = pawn.GetComp<CompArgrillianMedicSettings>();
 			if (medicComp == null || !medicComp.isMedic || medicComp.doctor) return null;
 
+			int now = Find.TickManager != null ? Find.TickManager.TicksGame : 0;
+			int pid = pawn.thingIDNumber;
+			Log.Message($"[ArgrillianThreat][TRACE-RAW] TendRetreatingAllies.TryGiveJob entered pawn={pawn.LabelShort} id={pid} combatMedic={medicComp.combatMedic}");
+
 			// Acquire held patient from alert-system authority.
 			Pawn heldPatient = ArgrillianAlertSystem.GetHeldPatientForMedic(pawn);
 
 			if (heldPatient == null)
 			{
+				Log.Message($"[ArgrillianThreat][TRACE-RAW] TendRetreatingAllies.TryGiveJob returning null (pawn/map invalid) pawn={(pawn != null ? pawn.LabelShort : "null")}");
 				JobGiver_ArgrillianThreatResponse.TraceMedKit(
 					"TryGiveJob_noHeldPatient",
 					pawn,
@@ -5843,6 +5848,7 @@ namespace ArgrillianThreat
 					);
 					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 				}
+				Log.Message($"[ArgrillianThreat][TRACE-RAW] TendRetreatingAllies.TryGiveJob returning null (medic gating) pawn={(pawn != null ? pawn.LabelShort : "null")}");
 				JobGiver_ArgrillianThreatResponse.TraceMedKit(
 					"TryGiveJob_noHeldPatient_nonCombatMedic_returnNull",
 					pawn,
@@ -5949,6 +5955,7 @@ namespace ArgrillianThreat
 			// ----------------------------
 			if (medicComp.doctor)
 			{
+				Log.Message($"[ArgrillianThreat][TRACE-RAW] TendRetreatingAllies.TryGiveJob returning null (medic gating) pawn={(pawn != null ? pawn.LabelShort : "null")}");
 				JobGiver_ArgrillianThreatResponse.TraceMedKit(
 					"TryGiveJob_doctor_returnNull",
 					pawn,
@@ -5964,6 +5971,7 @@ namespace ArgrillianThreat
 			// ----------------------------
 			if (!medicComp.combatMedic && medicComp.isMedic)
 			{
+				Log.Message($"[ArgrillianThreat][TRACE-RAW] TendRetreatingAllies.TryGiveJob returning null (medic gating) pawn={(pawn != null ? pawn.LabelShort : "null")}");
 				JobGiver_ArgrillianThreatResponse.TraceMedKit(
 					"TryGiveJob_nonCombatMedic_returnNull",
 					pawn,
@@ -6108,7 +6116,7 @@ namespace ArgrillianThreat
 				}
 				return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 			}
-
+			Log.Message($"[ArgrillianThreat][TRACE-RAW] TendRetreatingAllies.TryGiveJob returning null (medic gating) pawn={(pawn != null ? pawn.LabelShort : "null")}");
 			JobGiver_ArgrillianThreatResponse.TraceMedKit(
 				"TryGiveJob_noFinalization_returnNull",
 				pawn,
