@@ -5800,6 +5800,7 @@ namespace ArgrillianThreat
 
 		protected override Job TryGiveJob(Pawn pawn)
 		{
+			Log.Message($"[ArgrillianThreat][FORCE] TryGiveJob ENTER pawn={(pawn != null ? pawn.LabelShort : "null")} tick={(Find.TickManager != null ? Find.TickManager.TicksGame : -1)}");
 			ArgrillianAlertSystem.NotifyPawnSelfState(pawn);
 
 			if (pawn == null || pawn.Dead || pawn.Map == null) return null;
