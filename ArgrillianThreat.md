@@ -7,22 +7,16 @@ namespace ArgrillianThreat
 	[HarmonyPatch]
 	public static class ArgrillianHeldPatientJobBlocker
 	{
-		// Matches the job package issuance hook used by RimWorld 1.6.x.
-		// If your compiler says the signature differs, paste the compile error and I’ll adjust it.
-		[HarmonyPrefix]
-		[HarmonyPatch(typeof(Verse.AI.ThinkNode_JobGiver), nameof(Verse.AI.ThinkNode_JobGiver.TryIssueJobPackage))]
-		public static bool Prefix_ThinkNode_JobGiver_TryIssueJobPackage(ref Verse.AI.Job __result, Verse.Pawn pawn)
+		// Patient-only hard block: if pawn is the currently held patient, prevent RimWorld from assigning a new job.
+		// Medic is never blocked.
+		[HarmonyPatch(typeof(ThinkNode_JobGiver), nameof(ThinkNode_JobGiver.TryIssueJobPackage))]
+		public static bool Prefix_ThinkNode_JobGiver_TryIssueJobPackage(Pawn pawn, ref Job __result)
 		{
 			if (pawn == null) return true;
-			if (!pawn.Spawned) return true;
 			if (pawn.Dead) return true;
+			if (pawn.Map == null) return true;
 
-			Verse.Map map = pawn.Map;
-			if (map == null) return true;
-
-			// Authority: if any medic is currently assigned/holding this patient in cache,
-			// block new job assignment entirely so jobs never get fired.
-			if (ArgrillianAlertSystem.TryGetAssignedMedicIdForPatient(map, pawn.thingIDNumber, out int _))
+			if (ArgrillianAlertSystem.IsPawnHeldPatient(pawn))
 			{
 				__result = null;
 				return false;
@@ -31,6 +25,7 @@ namespace ArgrillianThreat
 			return true;
 		}
 	}
+	
 	// -----------------------------
 	// Shared Helper Classes
 	// -----------------------------
