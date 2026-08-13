@@ -7,8 +7,19 @@ namespace ArgrillianThreat
 	[HarmonyPatch]
 	public static class ArgrillianHeldPatientJobBlocker
 	{
-		// Patient-only hard block: if pawn is the currently held patient, prevent RimWorld from assigning a new job.
-		// Medic is never blocked.
+		private static Pawn GetPawnFromJobTracker(Pawn_JobTracker jt)
+		{
+			if (jt == null) return null;
+
+			// RimWorld 1.6: Pawn_JobTracker.pawn is private.
+			// Read it via reflection to avoid CS0122.
+			var f = HarmonyLib.AccessTools.Field(typeof(Pawn_JobTracker), "pawn");
+			if (f == null) return null;
+
+			return f.GetValue(jt) as Pawn;
+		}
+
+		// 1) Block "issuing job packages"
 		[HarmonyPatch(typeof(ThinkNode_JobGiver), nameof(ThinkNode_JobGiver.TryIssueJobPackage))]
 		public static bool Prefix_ThinkNode_JobGiver_TryIssueJobPackage(Pawn pawn, ref Job __result)
 		{
@@ -21,6 +32,21 @@ namespace ArgrillianThreat
 				__result = null;
 				return false;
 			}
+
+			return true;
+		}
+
+		// 2) Block "starting jobs" (this is what your symptom indicates is bypassing the first patch)
+		// If RimWorld is interrupting into Rest/Consume/etc, it will still need to call into job tracker.
+		[HarmonyPatch(typeof(Pawn_JobTracker), "TryStartJob")]
+		public static bool Prefix_Pawn_JobTracker_TryStartJob(Pawn_JobTracker __instance, Job job)
+		{
+			Pawn pawn = GetPawnFromJobTracker(__instance);
+			if (pawn == null) return true;
+			if (pawn.Dead) return true;
+
+			if (ArgrillianAlertSystem.IsPawnHeldPatient(pawn))
+				return false;
 
 			return true;
 		}
