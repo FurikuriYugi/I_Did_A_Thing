@@ -6008,6 +6008,7 @@ namespace ArgrillianThreat
 
 						Job rescueJob = JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
 						rescueJob.count = 1;
+						ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn);
 						return rescueJob;
 					}
 
@@ -6021,6 +6022,7 @@ namespace ArgrillianThreat
 
 					Job tendJob2 = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
 					tendJob2.count = 1;
+					ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn);
 					return tendJob2;
 				}
 
