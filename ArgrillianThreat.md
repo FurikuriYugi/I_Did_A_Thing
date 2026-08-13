@@ -12,32 +12,35 @@ namespace ArgrillianThreat
 			if (jt == null) return null;
 
 			// RimWorld 1.6: Pawn_JobTracker.pawn is private.
-			// Try the known name first, then fall back to other likely field names.
-			var f =
-				HarmonyLib.AccessTools.Field(typeof(Pawn_JobTracker), "pawn") ??
-				HarmonyLib.AccessTools.Field(typeof(Pawn_JobTracker), "_pawn") ??
-				HarmonyLib.AccessTools.Field(typeof(Pawn_JobTracker), "Pawn") ??
-				HarmonyLib.AccessTools.Field(typeof(Pawn_JobTracker), "_Pawn");
-
-			if (f == null)
-			{
-				// Last-resort: try public property accessor (some versions/builds differ).
-				var prop =
-					HarmonyLib.AccessTools.Property(typeof(Pawn_JobTracker), "pawn") ??
-					HarmonyLib.AccessTools.Property(typeof(Pawn_JobTracker), "_pawn") ??
-					HarmonyLib.AccessTools.Property(typeof(Pawn_JobTracker), "Pawn") ??
-					HarmonyLib.AccessTools.Property(typeof(Pawn_JobTracker), "_Pawn");
-
-				if (prop != null)
-				{
-					var v = prop.GetValue(jt);
-					return v as Pawn;
-				}
-
-				return null;
-			}
+			// Read it via reflection to avoid CS0122.
+			var f = HarmonyLib.AccessTools.Field(typeof(Pawn_JobTracker), "pawn");
+			if (f == null) return null;
 
 			return f.GetValue(jt) as Pawn;
+		}
+
+		private static bool IsPawnLocked(Pawn pawn)
+		{
+			if (pawn == null) return false;
+			if (pawn.Dead || !pawn.Spawned) return false;
+			if (pawn.Map == null) return false;
+
+			// (A) Medic-held authority (reservation cache)
+			if (ArgrillianAlertSystem.IsPawnHeldPatient(pawn))
+				return true;
+
+			// (B) Self/state authority: active PatientCall in the cache
+			// Block urgent med lanes so the patient can't swap to Rest mid-wait.
+			if (ArgrillianAlertSystem.TryGetCachedPatientCallSeverity(
+				pawn.Map,
+				pawn,
+				out ArgrillianAlertSystem.PatientCallSeverityPublic sev))
+			{
+				return sev == ArgrillianAlertSystem.PatientCallSeverityPublic.Downed
+					|| sev == ArgrillianAlertSystem.PatientCallSeverityPublic.Bleed;
+			}
+
+			return false;
 		}
 
 		// 1) Block "issuing job packages"
@@ -48,7 +51,7 @@ namespace ArgrillianThreat
 			if (pawn.Dead) return true;
 			if (pawn.Map == null) return true;
 
-			if (ArgrillianAlertSystem.IsPawnHeldPatient(pawn))
+			if (IsPawnLocked(pawn))
 			{
 				__result = null;
 				return false;
@@ -57,8 +60,7 @@ namespace ArgrillianThreat
 			return true;
 		}
 
-		// 2) Block "starting jobs" (this is what your symptom indicates is bypassing the first patch)
-		// If RimWorld is interrupting into Rest/Consume/etc, it will still need to call into job tracker.
+		// 2) Block "starting jobs"
 		[HarmonyPatch(typeof(Pawn_JobTracker), "TryStartJob")]
 		public static bool Prefix_Pawn_JobTracker_TryStartJob(Pawn_JobTracker __instance, Job job)
 		{
@@ -66,7 +68,7 @@ namespace ArgrillianThreat
 			if (pawn == null) return true;
 			if (pawn.Dead) return true;
 
-			if (ArgrillianAlertSystem.IsPawnHeldPatient(pawn))
+			if (IsPawnLocked(pawn))
 				return false;
 
 			return true;
