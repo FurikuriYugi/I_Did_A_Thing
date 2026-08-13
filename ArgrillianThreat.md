@@ -6042,9 +6042,14 @@ namespace ArgrillianThreat
 			// Prevent premature unlock if the medic is still actively committed to medical work for this patient.
 			// This is the guard that prevents the patient from regaining job freedom mid-tend,
 			// which is the root cause of "patient tries to Consume and breaks tend".
+			// Keep the patient locked while the medic is in the “tend just starting” window.
+			// CurJob can be null / temporarily non-medical for a tick during job transitions.
+			int tendStickinessTicks = 60;
+
 			bool medicHasMedicalJobNow =
-				pawn?.CurJob != null &&
-				ArgillianThreatPatientTuning.JobIsMedicalForPatient(pawn.CurJob, heldPatient);
+				(pawn?.CurJob != null &&
+				 ArgillianThreatPatientTuning.JobIsMedicalForPatient(pawn.CurJob, heldPatient)) ||
+				ArgrillianMedicalState.MedicTendTaskStickiness.RecentlyTookTendTask(pawn, tendStickinessTicks);
 
 			if (!medicHasMedicalJobNow)
 			{
