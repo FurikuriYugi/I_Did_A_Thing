@@ -4697,19 +4697,30 @@ namespace ArgrillianThreat
 
 		public static void TraceMedKit(string eventName, Pawn medic, Pawn patient, bool tendEligibleNow, bool retreatingHeldPatient)
 		{
-			if (medic == null || medic.Map == null) return;
-			if (patient == null || patient.Map == null) return;
+			if (medic == null) return;
 
 			int now = Find.TickManager.TicksGame;
 			int mid = medic.thingIDNumber;
+
+			if (mid < 0) return;
 
 			if (lastTraceTickByPawnId.TryGetValue(mid, out int last) && (now - last) < TraceLogCooldownTicks)
 				return;
 
 			lastTraceTickByPawnId[mid] = now;
 
-			float pHp = patient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
-			string held = (patient != null ? patient.thingIDNumber.ToString() : "null");
+			// Don’t hard-return if Map is null; we still want a trace for job transition bugs.
+			float pHp = 1f;
+			string held = "null";
+
+			if (patient != null)
+			{
+				held = (patient.thingIDNumber >= 0 ? patient.thingIDNumber.ToString() : "null");
+
+				var summary = patient.health?.summaryHealth;
+				if (summary != null)
+					pHp = summary.SummaryHealthPercent;
+			}
 
 			Log.Message(
 				$"[ArgrillianThreat][TRACE] {eventName} medic={mid} patient={held} pHP={pHp:0.00} tendEligibleNow={tendEligibleNow} retreatingHeldPatient={retreatingHeldPatient}"
