@@ -9,7 +9,6 @@ namespace ArgrillianThreat
 	{
 		private static Pawn GetPawnFromJobTracker(Pawn_JobTracker jt)
 		{
-			Log.Message("GetPawnFromJobTracker Entered");
 			if (jt == null) return null;
 
 			var f = HarmonyLib.AccessTools.Field(typeof(Pawn_JobTracker), "pawn");
@@ -20,7 +19,6 @@ namespace ArgrillianThreat
 
 		private static bool IsPawnLocked(Pawn pawn)
 		{
-			Log.Message("IsPawnLocked Entered");
 			if (pawn == null) return false;
 			if (pawn.Dead || !pawn.Spawned) return false;
 			if (pawn.Map == null) return false;
@@ -31,7 +29,6 @@ namespace ArgrillianThreat
 		[HarmonyPatch(typeof(ThinkNode_JobGiver), nameof(ThinkNode_JobGiver.TryIssueJobPackage))]
 		public static bool Prefix_ThinkNode_JobGiver_TryIssueJobPackage(Pawn pawn, ref Job __result)
 		{
-			Log.Message("Prefix_ThinkNode_JobGiver_TryIssueJobPackage Entered");
 			if (pawn == null) return true;
 			if (pawn.Dead) return true;
 			if (pawn.Map == null) return true;
@@ -53,7 +50,6 @@ namespace ArgrillianThreat
 		[HarmonyPatch(typeof(Pawn_JobTracker), "TryStartJob")]
 		public static bool Prefix_Pawn_JobTracker_TryStartJob(Pawn_JobTracker __instance, Job job)
 		{
-			Log.Message("Prefix_Pawn_JobTracker_TryStartJob Entered");
 			Pawn pawn = GetPawnFromJobTracker(__instance);
 			if (pawn == null) return true;
 			if (pawn.Dead) return true;
@@ -5763,7 +5759,6 @@ namespace ArgrillianThreat
 
 		protected override Job TryGiveJob(Pawn pawn)
 		{
-			Log.Message("TryGiveJob Entered");
 			Log.Message($"[ArgrillianThreat][FORCE] TryGiveJob ENTER pawn={(pawn != null ? pawn.LabelShort : "null")} tick={(Find.TickManager != null ? Find.TickManager.TicksGame : -1)}");
 			ArgrillianAlertSystem.NotifyPawnSelfState(pawn);
 
