@@ -1272,12 +1272,24 @@ namespace ArgrillianThreat
 				(medicComp.isMedic && !medicComp.combatMedic) ||
 				(medicComp.isMedic && medicComp.combatMedic);
 
-			if (!isAllowed) return false;
+			if (!isAllowed)
+			{
+				Verse.Log.Message(
+					$"[ArgrillianThreat] TryLockPatientHeldByMedic denied role pawn={medic?.Name} patient={patient?.Name}"
+				);
+				return false;
+			}
 
 			int pid = patient.thingIDNumber;
 			if (pid < 0) return false;
 
 			lockedPatientIds.Add(pid);
+
+			// Log lock activation + current lock state
+			Verse.Log.Message(
+				$"[ArgrillianThreat] TryLockPatientHeldByMedic LOCK pid={pid} medic={medic.Name} patient={patient.Name} combatMedic={medicComp.combatMedic} doctor={medicComp.doctor}"
+			);
+
 			return true;
 		}
 
@@ -1287,15 +1299,24 @@ namespace ArgrillianThreat
 			if (!medic.Spawned || medic.Dead) return;
 			if (medic.Map == null) return;
 
-			// If this medic had a mapped assigned patient, unlock that patient by patient id.
 			int mid = medic.thingIDNumber;
 			if (mid < 0) return;
 
+			int removedPid = -1;
+
+			// If this medic had a mapped assigned patient, unlock that patient by patient id.
 			if (assignedPatientIdByMedicId.TryGetValue(mid, out int pid))
 			{
 				if (pid >= 0)
+				{
+					removedPid = pid;
 					lockedPatientIds.Remove(pid);
+				}
 			}
+
+			Verse.Log.Message(
+				$"[ArgrillianThreat] ReleasePatientHeldByMedic medic={medic.Name} mid={mid} removedPid={removedPid} (note: if removedPid==-1, lock may be unmapped)"
+			);
 
 			// Also unlock any patient if caller directly removed assignment elsewhere (safety).
 		}
