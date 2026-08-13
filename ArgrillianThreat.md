@@ -26,7 +26,7 @@ namespace ArgrillianThreat
 			if (pawn.Map == null) return false;
 
 			// (A) Medic-held authority (reservation cache)
-			if (ArgrillianAlertSystem.IsPawnHeldPatient(pawn))
+			if (ArgrillianAlertSystem.IsPawnAssignedPatient(pawn))
 				return true;
 
 			// (B) Self/state authority: active PatientCall in the cache
@@ -1242,7 +1242,7 @@ namespace ArgrillianThreat
 		}
 
 		// ArgrillianAlertSystem (add this method anywhere inside the class)
-		public static bool IsPawnHeldPatient(Pawn patient)
+		public static bool IsPawnAssignedPatient(Pawn patient)
 		{
 			if (patient == null) return false;
 			if (patient.Dead || !patient.Spawned) return false;
