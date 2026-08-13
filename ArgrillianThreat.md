@@ -25,7 +25,7 @@ namespace ArgrillianThreat
 			return true;
 		}
 	}
-	
+
 	// -----------------------------
 	// Shared Helper Classes
 	// -----------------------------
@@ -5806,6 +5806,7 @@ namespace ArgrillianThreat
 				{
 					if (!ArgrillianMedicalState.HoldPatient.hasFired)
 					{
+						ArgrillianAlertSystem.TryReserveMedicForPatient(pawn, heldPatient);
 						holdPatient.Stop(heldPatient);
 					}
 
@@ -5851,7 +5852,9 @@ namespace ArgrillianThreat
 					// neutralize it without blocking combat.
 					if (!isAttackJob && isNeedsOrLeisureJob)
 					{
+						ArgrillianAlertSystem.ReleaseMedicHold(pawn);
 						holdPatient.Reset();
+						ArgrillianAlertSystem.TryReserveMedicForPatient(pawn, heldPatient);
 						holdPatient.Stop(heldPatient);
 					}
 					// Otherwise: escort medic toward patient so defense can continue while we close distance.
@@ -5862,6 +5865,7 @@ namespace ArgrillianThreat
 			if (patientClearedForCombat)
 			{
 				// Reset the hold and return the patient to combat
+				ArgrillianAlertSystem.ReleaseMedicHold(pawn);
 				holdPatient.Reset();
 				return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(heldPatient);
 			}
@@ -5869,6 +5873,7 @@ namespace ArgrillianThreat
 			if (patientInBedAndFullyTended || ArgrillianAlertSystem.IsPatientTransferedToMedicOrDoctor(heldPatient))
 			{
 				// Reset the hold on the patient and the combat medic returns to combat
+				ArgrillianAlertSystem.ReleaseMedicHold(pawn);
 				holdPatient.Reset();
 				return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 			}
