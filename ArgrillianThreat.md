@@ -25,22 +25,8 @@ namespace ArgrillianThreat
 			if (pawn.Dead || !pawn.Spawned) return false;
 			if (pawn.Map == null) return false;
 
-			// (A) Medic-held authority (reservation cache)
-			if (ArgrillianAlertSystem.IsPawnAssignedPatient(pawn))
-				return true;
-
-			// (B) Self/state authority: active PatientCall in the cache
-			// Block urgent med lanes so the patient can't swap to Rest mid-wait.
-			if (ArgrillianAlertSystem.TryGetCachedPatientCallSeverity(
-				pawn.Map,
-				pawn,
-				out ArgrillianAlertSystem.PatientCallSeverityPublic sev))
-			{
-				return sev == ArgrillianAlertSystem.PatientCallSeverityPublic.Downed
-					|| sev == ArgrillianAlertSystem.PatientCallSeverityPublic.Bleed;
-			}
-
-			return false;
+			// Only block if the medic has actually executed HoldPatient.Stop for this patient.
+			return ArgrillianAlertSystem.IsPawnHeldByMedicStop(pawn);
 		}
 
 		// 1) Block "issuing job packages"
@@ -1239,6 +1225,65 @@ namespace ArgrillianThreat
 		{
 			public readonly Dictionary<int, PatientCallEntry> byPatientId = new Dictionary<int, PatientCallEntry>();
 			public int lastPatientPruneTick = -1;
+		}
+
+		private static readonly HashSet<int> lockedPatientIds = new HashSet<int>();
+
+		public static bool IsPawnHeldByMedicStop(Pawn patient)
+		{
+			if (patient == null) return false;
+			if (patient.Dead || !patient.Spawned) return false;
+			if (patient.Map == null) return false;
+
+			int pid = patient.thingIDNumber;
+			if (pid < 0) return false;
+
+			return lockedPatientIds.Contains(pid);
+		}
+
+		public static bool TryLockPatientHeldByMedic(Pawn medic, Pawn patient)
+		{
+			if (medic == null || patient == null) return false;
+			if (!medic.Spawned || medic.Dead) return false;
+			if (!patient.Spawned || patient.Dead) return false;
+			if (medic.Map == null || patient.Map == null) return false;
+			if (medic.Map != patient.Map) return false;
+
+			// Role gate: only Doctor / Medic / Combat Medic can set the behavioral lock.
+			var medicComp = medic.GetComp<CompArgrillianMedicSettings>();
+			if (medicComp == null) return false;
+
+			bool isAllowed =
+				medicComp.doctor ||
+				(medicComp.isMedic && !medicComp.combatMedic) ||
+				(medicComp.isMedic && medicComp.combatMedic);
+
+			if (!isAllowed) return false;
+
+			int pid = patient.thingIDNumber;
+			if (pid < 0) return false;
+
+			lockedPatientIds.Add(pid);
+			return true;
+		}
+
+		public static void ReleasePatientHeldByMedic(Pawn medic)
+		{
+			if (medic == null) return;
+			if (!medic.Spawned || medic.Dead) return;
+			if (medic.Map == null) return;
+
+			// If this medic had a mapped assigned patient, unlock that patient by patient id.
+			int mid = medic.thingIDNumber;
+			if (mid < 0) return;
+
+			if (assignedPatientIdByMedicId.TryGetValue(mid, out int pid))
+			{
+				if (pid >= 0)
+					lockedPatientIds.Remove(pid);
+			}
+
+			// Also unlock any patient if caller directly removed assignment elsewhere (safety).
 		}
 
 		// ArgrillianAlertSystem (add this method anywhere inside the class)
@@ -5852,6 +5897,7 @@ namespace ArgrillianThreat
 					if (!ArgrillianMedicalState.HoldPatient.hasFired)
 					{
 						ArgrillianAlertSystem.TryReserveMedicForPatient(pawn, heldPatient);
+						ArgrillianAlertSystem.TryLockPatientHeldByMedic(pawn, heldPatient);
 						holdPatient.Stop(heldPatient);
 					}
 
@@ -5884,6 +5930,7 @@ namespace ArgrillianThreat
 			{
 				// Reset the hold and return the patient to combat
 				ArgrillianAlertSystem.ReleaseMedicHold(pawn);
+				ArgrillianAlertSystem.ReleasePatientHeldByMedic(pawn);
 				holdPatient.Reset();
 				return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(heldPatient);
 			}
@@ -5892,6 +5939,7 @@ namespace ArgrillianThreat
 			{
 				// Reset the hold on the patient and the combat medic returns to combat
 				ArgrillianAlertSystem.ReleaseMedicHold(pawn);
+				ArgrillianAlertSystem.ReleasePatientHeldByMedic(pawn);
 				holdPatient.Reset();
 				return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 			}
