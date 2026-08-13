@@ -3848,19 +3848,19 @@ namespace ArgrillianThreat
 
 				// Heuristic scoring:
 				// - prioritize larger hostDist (move away)
-				// - prioritize moving a bit (avoid tiny dithering)
+				// - prioritize breaking LOS
 				float distTarget = hostDist - desiredCombatDistanceNow;
 				float awayScore = -Mathf.Abs(distTarget);
 
-				float movementScore = dist;
-				if (movementScore < 2f)
-					movementScore *= 0.25f;
+				// FIX: stop strongly rewarding "farthest ring edge".
+				// Prefer a mid movement distance instead of monotonic "dist = edge wins".
+				float targetMove = Mathf.Clamp(desiredCombatDistanceNow * 0.6f, 1f, (float)effectiveRadius);
+				float movementScore = -Mathf.Abs(dist - targetMove);
 
 				// lockIn encourages stronger LOS-break commitment.
 				float lockPenalty = lockIn ? Mathf.Abs(hostDist - (desiredCombatDistanceNow * 0.8f)) * 0.25f : 0f;
 				float losStrength = losBreakBonus * (lockIn ? 1.35f : 1f);
 
-				// Candidate is valid only if LOS is broken; thus add base.
 				float score = (awayScore * 2.0f) + movementScore + losStrength - lockPenalty;
 
 				if (score > bestScore)
