@@ -3786,28 +3786,22 @@ namespace ArgrillianThreat
 			if (!pawn.Spawned || !hostile.Spawned)
 				return false;
 
-			// We’ll sample candidate cells around the patient and pick the best one that breaks LOS.
-			// Prefer farther-from-hostile when not lock-in; when lock-in, allow closer “panic breaks”
-			// but still require LOS break.
 			float bestScore = float.NegativeInfinity;
 			IntVec3 bestCell = pawn.Position;
 
 			IntVec3 origin = pawn.Position;
 
 			// Convert scanRange (float) to a practical max radius.
-			// Important: don’t always scan all the way to the maximum ring;
-			// otherwise the heuristic can pick “edge-of-scan” cells far from the patient.
 			int requestedRadius = Mathf.CeilToInt(scanRange);
 			requestedRadius = Mathf.Clamp(requestedRadius, 3, 90);
 
-			// Bind the effective radius to desiredCombatDistanceNow so we don’t retreat extremely far
-			// just because the scan allows it.
-			// Tuned to be permissive enough to find LOS breaks, but not “run away to the map edge”.
+			// IMPORTANT: prevent “edge-of-scan” behavior that makes patients retreat extremely far.
+			// Bind the effective radius to the desired combat distance.
+			// This keeps LOS-break exploration local enough to avoid long-distance retreats.
 			float desired = Mathf.Max(1f, desiredCombatDistanceNow);
 			int effectiveRadius = Mathf.CeilToInt(Mathf.Min(requestedRadius, desired + 18f));
 			effectiveRadius = Mathf.Clamp(effectiveRadius, 3, 90);
 
-			// Initial LOS status for gating/scoring.
 			bool currentlyHasLos = GenSight.LineOfSight(hostile.Position, origin, map);
 
 			Log.Message(
@@ -3818,7 +3812,6 @@ namespace ArgrillianThreat
 				$"currentlyHasLos={currentlyHasLos}"
 			);
 
-			// Try candidate cells in rings, but cap attempts to keep it cheap.
 			int attempts = 0;
 			const int maxAttempts = 220;
 
@@ -3843,7 +3836,6 @@ namespace ArgrillianThreat
 				bool candidateHasLos = GenSight.LineOfSight(hostile.Position, c, map);
 
 				// If there was no LOS to begin with, retreat-to-LOS-break is pointless; don’t force it.
-				// We still allow movement if candidate is strictly "more broken".
 				if (!currentlyHasLos && candidateHasLos)
 					continue;
 
@@ -3857,8 +3849,6 @@ namespace ArgrillianThreat
 				// Heuristic scoring:
 				// - prioritize larger hostDist (move away)
 				// - prioritize moving a bit (avoid tiny dithering)
-				// - lockIn slightly relaxes distance preference
-				// - losBreakBonus biases stronger LOS-breaking when lockIn
 				float distTarget = hostDist - desiredCombatDistanceNow;
 				float awayScore = -Mathf.Abs(distTarget);
 
@@ -3866,13 +3856,9 @@ namespace ArgrillianThreat
 				if (movementScore < 2f)
 					movementScore *= 0.25f;
 
-				float lockPenalty = lockIn
-					? Mathf.Abs(hostDist - (desiredCombatDistanceNow * 0.8f)) * 0.25f
-					: 0f;
-
-				float losStrength = losBreakBonus;
-				if (lockIn)
-					losStrength *= 1.35f;
+				// lockIn encourages stronger LOS-break commitment.
+				float lockPenalty = lockIn ? Mathf.Abs(hostDist - (desiredCombatDistanceNow * 0.8f)) * 0.25f : 0f;
+				float losStrength = losBreakBonus * (lockIn ? 1.35f : 1f);
 
 				// Candidate is valid only if LOS is broken; thus add base.
 				float score = (awayScore * 2.0f) + movementScore + losStrength - lockPenalty;
@@ -3884,19 +3870,16 @@ namespace ArgrillianThreat
 				}
 			}
 
-			// Require we found something that actually breaks LOS.
 			if (bestCell == origin)
 			{
 				Log.Message(
 					$"[ArgrillianThreat][LOS-BREAK] TryPickOutOfLineOfSightCell result=false " +
-					$"patient={pawn.Name} hostile={hostile.Name} origin={origin} currentlyHasLos={currentlyHasLos} " +
-					$"effectiveRadius={effectiveRadius}"
+					$"patient={pawn.Name} hostile={hostile.Name} origin={origin} currentlyHasLos={currentlyHasLos} effectiveRadius={effectiveRadius}"
 				);
 				return false;
 			}
 
-			bool breaks = !GenSight.LineOfSight(hostile.Position, bestCell, map);
-			if (breaks)
+			if (!GenSight.LineOfSight(hostile.Position, bestCell, map))
 			{
 				outCell = bestCell;
 
@@ -3911,8 +3894,7 @@ namespace ArgrillianThreat
 
 			Log.Message(
 				$"[ArgrillianThreat][LOS-BREAK] TryPickOutOfLineOfSightCell result=false " +
-				$"patient={pawn.Name} hostile={hostile.Name} origin={origin} chosen={bestCell} " +
-				$"breaksLos=false effectiveRadius={effectiveRadius}"
+				$"patient={pawn.Name} hostile={hostile.Name} origin={origin} chosen={bestCell} breaksLos=false effectiveRadius={effectiveRadius}"
 			);
 
 			return false;
