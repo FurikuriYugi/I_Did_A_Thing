@@ -5856,33 +5856,6 @@ namespace ArgrillianThreat
 				}
 				else
 				{
-					// Medic NOT in reach: allow defense, but block vanilla needs jobs from taking over.
-					string defName = heldPatient.CurJob != null && heldPatient.CurJob.def != null ? heldPatient.CurJob.def.defName : string.Empty;
-
-					bool isAttackJob =
-						defName.Contains("Attack") ||
-						defName.Contains("MeleeAttack") ||
-						defName.Contains("RangedAttack") ||
-						defName.Contains("Shoot") ||
-						defName.Contains("Bombard");
-
-					bool isNeedsOrLeisureJob =
-						defName.Contains("Rest") ||
-						defName.Contains("LayDown") ||
-						defName.Contains("Sleep") ||
-						defName.Contains("Eat") ||
-						defName.Contains("Consume") ||
-						defName.Contains("Drink");
-
-					// Hard guard: if vanilla tries to switch the patient to a needs/leisure job during the hold window,
-					// neutralize it without blocking combat.
-					if (!isAttackJob && isNeedsOrLeisureJob)
-					{
-						ArgrillianAlertSystem.ReleaseMedicHold(pawn);
-						holdPatient.Reset();
-						ArgrillianAlertSystem.TryReserveMedicForPatient(pawn, heldPatient);
-						holdPatient.Stop(heldPatient);
-					}
 					// Otherwise: escort medic toward patient so defense can continue while we close distance.
 					IntVec3 escortTarget2 = heldPatient.Position;
 					return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, escortTarget2);
