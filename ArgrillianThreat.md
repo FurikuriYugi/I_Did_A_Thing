@@ -9,6 +9,7 @@ namespace ArgrillianThreat
 	{
 		private static Pawn GetPawnFromJobTracker(Pawn_JobTracker jt)
 		{
+			Log.Message("GetPawnFromJobTracker Entered");
 			if (jt == null) return null;
 
 			var f = HarmonyLib.AccessTools.Field(typeof(Pawn_JobTracker), "pawn");
@@ -19,6 +20,7 @@ namespace ArgrillianThreat
 
 		private static bool IsPawnLocked(Pawn pawn)
 		{
+			Log.Message("IsPawnLocked Entered");
 			if (pawn == null) return false;
 			if (pawn.Dead || !pawn.Spawned) return false;
 			if (pawn.Map == null) return false;
@@ -29,6 +31,7 @@ namespace ArgrillianThreat
 		[HarmonyPatch(typeof(ThinkNode_JobGiver), nameof(ThinkNode_JobGiver.TryIssueJobPackage))]
 		public static bool Prefix_ThinkNode_JobGiver_TryIssueJobPackage(Pawn pawn, ref Job __result)
 		{
+			Log.Message("Prefix_ThinkNode_JobGiver_TryIssueJobPackage Entered");
 			if (pawn == null) return true;
 			if (pawn.Dead) return true;
 			if (pawn.Map == null) return true;
@@ -50,6 +53,7 @@ namespace ArgrillianThreat
 		[HarmonyPatch(typeof(Pawn_JobTracker), "TryStartJob")]
 		public static bool Prefix_Pawn_JobTracker_TryStartJob(Pawn_JobTracker __instance, Job job)
 		{
+			Log.Message("Prefix_Pawn_JobTracker_TryStartJob Entered");
 			Pawn pawn = GetPawnFromJobTracker(__instance);
 			if (pawn == null) return true;
 			if (pawn.Dead) return true;
@@ -3215,113 +3219,22 @@ namespace ArgrillianThreat
 
 			bool isRanged = hctx.IsRanged;
 
-			// NEW (patient-only): if a medic is actively tending this pawn, patient must hold position
-			if (!IsArgrillianMedicPawn(pawn))
-			{
-				// If already on a tend/rescue, let it continue.
-				if (pawn.CurJob != null)
-				{
-					var def = pawn.CurJob.def;
-					if (def == JobDefOf.TendPatient || def == JobDefOf.Rescue)
-						return pawn.CurJob;
-
-					// If somehow forced into movement during tend, stop it.
-					if (def == JobDefOf.Goto)
-						return pawn.CurJob;
-				}
-
-				ArgrillianThreatState.ThreatTickCache.MarkNow(pawn);
-				return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, pawn.Position);
-			}
-
-			// EXISTING lockout short-circuit (keep your current behavior)
-			bool retreatLockout = ArgrillianThreatState.FightLockoutAfterRetreat
-				.RecentlyEndedRetreat(pawn, ArgrillianThreatTuning.PatientFightLockoutAfterRetreatTicks);
-
-			if (retreatLockout)
-			{
-				if (pawn.CurJob != null)
-				{
-					var def = pawn.CurJob.def;
-					if (def == JobDefOf.TendPatient || def == JobDefOf.Rescue)
-						return pawn.CurJob;
-					if (def == JobDefOf.Goto)
-						return pawn.CurJob;
-				}
-
-				skipAggressiveStart = true;
-
-				if (TryPickCoverCell(pawn, hostile, desiredCombatDistanceNow, losBreakBonus, out IntVec3 coverCell))
-				{
-					ArgrillianThreatState.ThreatTickCache.MarkNow(pawn);
-					var keep = ArgrillianGotoHelper.KeepIfSameGoto(pawn, coverCell);
-					if (keep != null) return keep;
-
-					return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, coverCell);
-				}
-
-				var keepHold = ArgrillianGotoHelper.KeepIfSameGoto(pawn, pawn.Position);
-				if (keepHold != null) return keepHold;
-
-				ArgrillianThreatState.ThreatTickCache.MarkNow(pawn);
-				return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, pawn.Position);
-			}
-
-			// NEW CHANGE: injuredGate tuning for patients/combat medics
-			// - Patients: retreat/stop when HP < 80% so Tend/Rescue can start reliably.
-			// - Combat medics: require a higher injury threshold before they stop engaging.
-			float effectiveRetreatMinHP = IsArgrillianMedicPawn(pawn) ? JobGiver_ArgrillianThreatResponse.combatMedicInjuredHPPercentThreshold : JobGiver_ArgrillianThreatResponse.patientRetreatMinHPPercentToTreatAsPatient;
-
-			bool injuredGate = IsInjuredPatientOrInjuredMedicStopAttacking(pawn, effectiveRetreatMinHP);
-
-			if (injuredGate)
-			{
-				// IMPORTANT: HP<80% injured patients must enter tend-eligible safety behavior
-				// even if the hostile is still considered "imminent" to them. This prevents
-				// the patient from continuing the attack/move-away bounce while a medic tries to tend.
-				skipAggressiveStart = true;
-
-				if (pawn.CurJob != null)
-				{
-					var def = pawn.CurJob.def;
-					if (def == JobDefOf.TendPatient || def == JobDefOf.Rescue)
-						return pawn.CurJob;
-					if (def == JobDefOf.Goto)
-						return pawn.CurJob;
-				}
-
-				if (TryPickCoverCell(pawn, hostile, desiredCombatDistanceNow, losBreakBonus, out IntVec3 coverCell))
-				{
-					ArgrillianThreatState.ThreatTickCache.MarkNow(pawn);
-					var keep = ArgrillianGotoHelper.KeepIfSameGoto(pawn, coverCell);
-					if (keep != null) return keep;
-
-					return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, coverCell);
-				}
-
-				var keepHold = ArgrillianGotoHelper.KeepIfSameGoto(pawn, pawn.Position);
-				if (keepHold != null) return keepHold;
-
-				ArgrillianThreatState.ThreatTickCache.MarkNow(pawn);
-				return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, pawn.Position);
-			}
+			// ---- Fight-mode starts here. No medical/patient/held-patient decisions allowed in this method. ----
 
 			// NORMAL FIGHT MODE
 			ArgrillianThreatState.ModeTickCache.MarkMode(pawn, 0);
 			ArgrillianThreatState.CombatLock.MarkSeen(pawn, hostile);
 			ArgrillianThreatState.ThreatTickCache.MarkNow(pawn);
-			
-			// NEW: downed-hostile gate must apply even when skipAggressiveStart == true.
-			// Otherwise melee/positioning can still orbit the downed anchor.
-			if (!IsArgrillianMedicPawn(pawn) && hostile != null && hostile.Downed && !isRanged)
+
+			// NEW gate (combat-only): downed-hostile orbit suppression respects FinishOff, but does not
+			// branch into any medic/patient/held logic.
+			if (!skipAggressiveStart && hostile != null && hostile.Downed && !isRanged)
 			{
 				CompArgrillianThreatSettings comp = pawn.GetComp<CompArgrillianThreatSettings>();
 				bool finishOff = comp != null && comp.finishOff;
 
 				if (!finishOff)
-				{
 					return null;
-				}
 			}
 
 			if (ArgrillianThreatState.CombatCommit.RecentlyCommitted(pawn) &&
@@ -3343,16 +3256,8 @@ namespace ArgrillianThreat
 
 						if (!finishOff)
 						{
-							// Do not derail combat-medic tending behavior.
-							CompArgrillianMedicSettings medicComp = pawn.GetComp<CompArgrillianMedicSettings>();
-							bool combatMedic = medicComp != null && medicComp.combatMedic;
-
-							if (!combatMedic)
-							{
-								pawn.jobs?.StopAll(true); 
-								pawn.pather?.StopDead();
-								return null;
-							}
+							// Do not derail combat logic via medic/patient handling. (Handled elsewhere.)
+							return pawn.CurJob;
 						}
 					}
 
@@ -3371,25 +3276,6 @@ namespace ArgrillianThreat
 					ArgrillianThreatState.CombatCommit.Mark(pawn, hostile);
 					ArgrillianThreatState.ThreatTickCache.MarkNow(pawn);
 					return attackJob;
-				}
-
-				// HARD GATE FIX:
-				// FinishOff OFF => ignore downed hostiles (stop orbiting/moving around them),
-				// but DO NOT abort combat-medic logic. Medics must stay in their
-				// patient-tending flow for downed colonists.
-				if (hostile != null && hostile.Downed)
-				{
-					CompArgrillianThreatSettings comp = pawn.GetComp<CompArgrillianThreatSettings>();
-					bool finishOff = comp != null && comp.finishOff;
-
-					if (!finishOff)
-					{
-						CompArgrillianMedicSettings medicComp = pawn.GetComp<CompArgrillianMedicSettings>();
-						bool combatMedic = medicComp != null && medicComp.combatMedic;
-
-						if (!combatMedic)
-							return null;
-					}
 				}
 			}
 
@@ -3410,14 +3296,13 @@ namespace ArgrillianThreat
 
 					int slot = SquadSlotIndex(pawn, anchor);
 					float ringRadius = Mathf.Max(2.5f, desiredCombatDistanceNow * (pursueAdvance ? 1.6f : 1.15f));
-					float strafeStep = pursueAdvance ? 1.8f : 1.25f;
 
 					int wave = slot / 2 + 1;
 					int side = (slot % 2 == 0) ? 1 : -1;
 
 					Vector3 desiredPoint = anchor.Position.ToVector3Shifted()
 						+ forward * (desiredCombatDistanceNow * (pursueAdvance ? 0.65f : 0.35f))
-						+ right * (side * wave * strafeStep);
+						+ right * (side * wave * (pursueAdvance ? 1.0f : 0.75f));
 
 					IntVec3 desiredCell = desiredPoint.ToIntVec3();
 
@@ -3622,7 +3507,7 @@ namespace ArgrillianThreat
 			// -------- MELEE KITE ABORT / RE-CHASE RE-ENTRY --------
 			// If we're currently trying to melee-attack/chase, but we remain out of melee band for N ticks,
 			// clear combat commit and go back to chase/approach movement.
-			// This is intentionally suppressed by injuredGate (since early code returned cover/hold when not imminent).
+			// This is intentionally suppressed by injuredGate in prior versions; medical gating is removed from this method.
 			if (pawn.CurJob != null && (pawn.CurJob.def == JobDefOf.AttackMelee || pawn.CurJob.def == JobDefOf.AttackStatic || pawn.CurJob.def == JobDefOf.Goto))
 			{
 				// Define “melee band”:
@@ -3634,7 +3519,6 @@ namespace ArgrillianThreat
 				bool currentlyOutOfBand = (dist < bandMin) || (dist > bandMax);
 
 				// N ticks: use minStepCooldownTicks as your tuning proxy (it already exists in your signature).
-				// If you want a dedicated config, replace this with a param (e.g. meleeKiteAbortTicks).
 				int requiredTicks = Mathf.Max(10, (int)minStepCooldownTicks); // at least 10 ticks
 
 				int currentTick = Find.TickManager.TicksGame;
@@ -3788,36 +3672,6 @@ namespace ArgrillianThreat
 			if (pawn == null || pawn.Dead || pawn.Map == null) return null;
 			if (pawn.Downed) return null;
 
-			// MEDIC-ONLY override (conditioned):
-			// If this medic's own job is Tend/Rescue, keep it as long as the target is still in the medic's medical pipeline.
-			if (IsArgrillianMedicPawn(pawn) && pawn.CurJob != null)
-			{
-				Job curJob = pawn.CurJob;
-				JobDef def = curJob.def;
-
-				if (def == JobDefOf.TendPatient || def == JobDefOf.Rescue)
-				{
-					Pawn held = ArgrillianAlertSystem.GetHeldPatientForMedic(pawn);
-
-					if (held != null && !held.Dead && held.Spawned && held.Map == pawn.Map)
-					{
-						bool jobIsForHeldPatient = JobGiver_TendRetreatingAllies.IsJobRelevantToCombatMedicUrgent(curJob, held);
-
-						// Rescue is for downed/unable patients.
-						if (def == JobDefOf.Rescue)
-							jobIsForHeldPatient = jobIsForHeldPatient && held.Downed;
-
-						if (jobIsForHeldPatient)
-							return pawn.CurJob;
-					}
-				}
-			}
-
-			// HARD HOLD RELEASE ARBITRATION REMOVED:
-			// Do not release heldPatient from here.
-			// The single-owner rule is enforced by the tend/rescue completion path only.
-			// This prevents the medic from "bouncing" and causing the held patient to re-enter combat/attacks while tend/rescue isn't resolved.
-
 			Map map = pawn.Map;
 
 			bool highAlert = ArgrillianThreatState.AwarenessCache.IsHighAlert(pawn);
@@ -3915,6 +3769,115 @@ namespace ArgrillianThreat
 
 			ArgrillianThreatState.ThreatTickCache.MarkNow(pawn);
 			return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, pawn.Position);
+		}
+
+		private static bool TryPickOutOfLineOfSightCell(
+	Pawn pawn,
+	Pawn hostile,
+	float desiredCombatDistanceNow,
+	float losBreakBonus,
+	bool lockIn,
+	Map map,
+	float scanRange,
+	out IntVec3 outCell)
+		{
+			outCell = default;
+
+			if (pawn == null || hostile == null || map == null)
+				return false;
+			if (pawn.Dead || hostile.Dead)
+				return false;
+			if (!pawn.Spawned || !hostile.Spawned)
+				return false;
+
+			// We’ll sample candidate cells around the patient and pick the best one that breaks LOS.
+			// Prefer farther-from-hostile when not lock-in; when lock-in, allow closer “panic breaks”
+			// but still require LOS break.
+			float bestScore = float.NegativeInfinity;
+			IntVec3 bestCell = pawn.Position;
+
+			IntVec3 origin = pawn.Position;
+
+			// ScanRange is a float in your signature; convert to a practical max radius.
+			int radius = Mathf.CeilToInt(scanRange);
+			radius = Mathf.Clamp(radius, 3, 90);
+
+			// Try candidate cells in rings, but cap attempts to keep it cheap.
+			int attempts = 0;
+			const int maxAttempts = 220;
+
+			foreach (IntVec3 c in GenRadial.RadialCellsAround(origin, radius, true))
+			{
+				if (attempts++ >= maxAttempts)
+					break;
+
+				if (!c.InBounds(map))
+					continue;
+
+				if (c == origin)
+					continue;
+
+				// Must be traversable.
+				if (!c.Walkable(map))
+					continue;
+				if (!pawn.CanReach(c, PathEndMode.ClosestTouch, Danger.None, false))
+					continue;
+
+				// Must break LOS from hostile to this cell’s position.
+				// Use GenSight with hostile->candidate, and also ensure hostile->origin was previously LOS/meaningful.
+				bool currentlyHasLos = GenSight.LineOfSight(hostile.Position, origin, map);
+				bool candidateHasLos = GenSight.LineOfSight(hostile.Position, c, map);
+
+				// If there was no LOS to begin with, retreat-to-LOS-break is pointless; don’t force it.
+				// We still allow movement if candidate is strictly "more broken".
+				if (!currentlyHasLos && candidateHasLos)
+					continue;
+
+				if (candidateHasLos)
+					continue;
+
+				float dist = c.DistanceTo(origin);
+				float hostDist = c.DistanceTo(hostile.Position);
+
+				// Heuristic scoring:
+				// - prioritize larger hostDist (move away)
+				// - prioritize moving a bit (avoid tiny dithering)
+				// - lockIn slightly relaxes distance preference
+				// - losBreakBonus biases stronger LOS-breaking when lockIn
+				float distTarget = hostDist - desiredCombatDistanceNow;
+				float awayScore = -Mathf.Abs(distTarget);
+
+				float movementScore = dist;
+				if (movementScore < 2f)
+					movementScore *= 0.25f;
+
+				float lockPenalty = lockIn ? Mathf.Abs(hostDist - (desiredCombatDistanceNow * 0.8f)) * 0.25f : 0f;
+
+				float losStrength = losBreakBonus;
+				if (lockIn)
+					losStrength *= 1.35f;
+
+				// Candidate is valid only if LOS is broken; thus add base.
+				float score = (awayScore * 2.0f) + movementScore + losStrength - lockPenalty;
+
+				if (score > bestScore)
+				{
+					bestScore = score;
+					bestCell = c;
+				}
+			}
+
+			// Require we found something that actually breaks LOS.
+			if (bestCell == origin)
+				return false;
+
+			if (!GenSight.LineOfSight(hostile.Position, bestCell, map))
+			{
+				outCell = bestCell;
+				return true;
+			}
+
+			return false;
 		}
 
 
@@ -5800,6 +5763,7 @@ namespace ArgrillianThreat
 
 		protected override Job TryGiveJob(Pawn pawn)
 		{
+			Log.Message("TryGiveJob Entered");
 			Log.Message($"[ArgrillianThreat][FORCE] TryGiveJob ENTER pawn={(pawn != null ? pawn.LabelShort : "null")} tick={(Find.TickManager != null ? Find.TickManager.TicksGame : -1)}");
 			ArgrillianAlertSystem.NotifyPawnSelfState(pawn);
 
