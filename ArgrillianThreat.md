@@ -12,9 +12,30 @@ namespace ArgrillianThreat
 			if (jt == null) return null;
 
 			// RimWorld 1.6: Pawn_JobTracker.pawn is private.
-			// Read it via reflection to avoid CS0122.
-			var f = HarmonyLib.AccessTools.Field(typeof(Pawn_JobTracker), "pawn");
-			if (f == null) return null;
+			// Try the known name first, then fall back to other likely field names.
+			var f =
+				HarmonyLib.AccessTools.Field(typeof(Pawn_JobTracker), "pawn") ??
+				HarmonyLib.AccessTools.Field(typeof(Pawn_JobTracker), "_pawn") ??
+				HarmonyLib.AccessTools.Field(typeof(Pawn_JobTracker), "Pawn") ??
+				HarmonyLib.AccessTools.Field(typeof(Pawn_JobTracker), "_Pawn");
+
+			if (f == null)
+			{
+				// Last-resort: try public property accessor (some versions/builds differ).
+				var prop =
+					HarmonyLib.AccessTools.Property(typeof(Pawn_JobTracker), "pawn") ??
+					HarmonyLib.AccessTools.Property(typeof(Pawn_JobTracker), "_pawn") ??
+					HarmonyLib.AccessTools.Property(typeof(Pawn_JobTracker), "Pawn") ??
+					HarmonyLib.AccessTools.Property(typeof(Pawn_JobTracker), "_Pawn");
+
+				if (prop != null)
+				{
+					var v = prop.GetValue(jt);
+					return v as Pawn;
+				}
+
+				return null;
+			}
 
 			return f.GetValue(jt) as Pawn;
 		}
