@@ -5772,6 +5772,13 @@ namespace ArgrillianThreat
 
 			if (heldPatient == null)
 			{
+				JobGiver_ArgrillianThreatResponse.TraceMedKit(
+					"TryGiveJob_noHeldPatient",
+					pawn,
+					patient: null,
+					tendEligibleNow: false,
+					retreatingHeldPatient: false
+				);
 				Pawn bestCandidate = ArgrillianAlertSystem.GetBestPatientFromCalls(pawn, searchRadius);
 				if (bestCandidate != null)
 				{
@@ -5786,11 +5793,34 @@ namespace ArgrillianThreat
 			{
 				// For combat medics: let them fall back to threat job generation only when there is no held patient.
 				if (medicComp.combatMedic)
+				{
+					JobGiver_ArgrillianThreatResponse.TraceMedKit(
+						"TryGiveJob_noHeldPatient_fallbackCombatThreat",
+						pawn,
+						null,
+						tendEligibleNow: false,
+						retreatingHeldPatient: false
+					);
 					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
-
+				}
+				JobGiver_ArgrillianThreatResponse.TraceMedKit(
+					"TryGiveJob_noHeldPatient_nonCombatMedic_returnNull",
+					pawn,
+					null,
+					tendEligibleNow: false,
+					retreatingHeldPatient: false
+				);
 				// For non-combat medics/doctors: this job-giver shouldn't do anything if no held patient exists.
 				return null;
 			}
+
+			JobGiver_ArgrillianThreatResponse.TraceMedKit(
+				"TryGiveJob_enteredWithHeldPatient",
+				pawn,
+				heldPatient,
+				tendEligibleNow: false,
+				retreatingHeldPatient: true
+			);
 
 			// Combat capable check.
 			bool IsPawnCombatCapable(Pawn heldPatient)
@@ -5876,12 +5906,32 @@ namespace ArgrillianThreat
 			// ----------------------------
 			// 1) DOCTORS (non-combat) branch
 			// ----------------------------
-			if (medicComp.doctor) return null;
+			if (medicComp.doctor)
+				{
+					JobGiver_ArgrillianThreatResponse.TraceMedKit(
+						"TryGiveJob_doctor_returnNull",
+						pawn,
+						heldPatient,
+						tendEligibleNow: false,
+						retreatingHeldPatient: true
+					);
+					return null;
+				}
 
 			// ----------------------------
 			// 2) MEDICS (non-combat) branch
 			// ----------------------------
-			if (!medicComp.combatMedic && medicComp.isMedic) return null;
+			if (!medicComp.combatMedic && medicComp.isMedic)
+			{
+				JobGiver_ArgrillianThreatResponse.TraceMedKit(
+					"TryGiveJob_nonCombatMedic_returnNull",
+					pawn,
+					heldPatient,
+					tendEligibleNow: false,
+					retreatingHeldPatient: true
+				);
+				return null;
+			}
 
 			// ----------------------------
 			// 3) COMBAT MEDIC branch
@@ -5894,15 +5944,29 @@ namespace ArgrillianThreat
 
 				if (medicInReach)
 				{
+					JobGiver_ArgrillianThreatResponse.TraceMedKit(
+						"TryGiveJob_combatMedicInReach",
+						pawn,
+						heldPatient,
+						tendEligibleNow: true,
+						retreatingHeldPatient: true
+					);
 					if (!ArgrillianMedicalState.HoldPatient.hasFired)
 					{
-						ArgrillianAlertSystem.TryReserveMedicForPatient(pawn, heldPatient);
 						ArgrillianAlertSystem.TryLockPatientHeldByMedic(pawn, heldPatient);
 						holdPatient.Stop(heldPatient);
 					}
 
 					if (heldPatient.Downed)
 					{
+						JobGiver_ArgrillianThreatResponse.TraceMedKit(
+							"TryGiveJob_patientDowned_rescueJob",
+							pawn,
+							heldPatient,
+							tendEligibleNow: true,
+							retreatingHeldPatient: true
+						);
+
 						Building_Bed bed = null;
 						if (!TryGetRescueBedForPatient(pawn, heldPatient, out bed) || bed == null)
 							return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
@@ -5912,12 +5976,26 @@ namespace ArgrillianThreat
 						return rescueJob;
 					}
 
+					JobGiver_ArgrillianThreatResponse.TraceMedKit(
+						"TryGiveJob_patientNotDowned_tendJob",
+						pawn,
+						heldPatient,
+						tendEligibleNow: true,
+						retreatingHeldPatient: true
+					);
 					// Not downed -> tend
 					Job tendJob2 = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
 					tendJob2.count = 1;
 					return tendJob2;
 				}
 
+				JobGiver_ArgrillianThreatResponse.TraceMedKit(
+					"TryGiveJob_combatMedicOutOfReach_escort",
+					pawn,
+					heldPatient,
+					tendEligibleNow: false,
+					retreatingHeldPatient: true
+				);
 				// Otherwise: escort medic toward patient so defense can continue while we close distance.
 				IntVec3 escortTarget2 = heldPatient.Position;
 				return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, escortTarget2);
@@ -5928,6 +6006,14 @@ namespace ArgrillianThreat
 			// ----------------------------
 			if (patientClearedForCombat)
 			{
+				JobGiver_ArgrillianThreatResponse.TraceMedKit(
+					"TryGiveJob_patientClearedForCombat_returnPatientToCombat",
+					pawn,
+					heldPatient,
+					tendEligibleNow: false,
+					retreatingHeldPatient: false
+				);
+
 				// Reset the hold and return the patient to combat
 				ArgrillianAlertSystem.ReleaseMedicHold(pawn);
 				ArgrillianAlertSystem.ReleasePatientHeldByMedic(pawn);
@@ -5937,13 +6023,27 @@ namespace ArgrillianThreat
 
 			if (patientInBedAndFullyTended || ArgrillianAlertSystem.IsPatientTransferedToMedicOrDoctor(heldPatient))
 			{
+				JobGiver_ArgrillianThreatResponse.TraceMedKit(
+					"TryGiveJob_medicMissionDone_returnMedicToCombat",
+					pawn,
+					heldPatient,
+					tendEligibleNow: false,
+					retreatingHeldPatient: false
+				);
+
 				// Reset the hold on the patient and the combat medic returns to combat
 				ArgrillianAlertSystem.ReleaseMedicHold(pawn);
 				ArgrillianAlertSystem.ReleasePatientHeldByMedic(pawn);
 				holdPatient.Reset();
 				return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 			}
-
+			JobGiver_ArgrillianThreatResponse.TraceMedKit(
+				"TryGiveJob_noFinalization_returnNull",
+				pawn,
+				heldPatient,
+				tendEligibleNow: false,
+				retreatingHeldPatient: true
+			);
 			return null;
 		}
 
