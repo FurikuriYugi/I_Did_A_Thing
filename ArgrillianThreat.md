@@ -5607,7 +5607,7 @@ namespace ArgrillianThreat
 		public float combatMedicInjuredHPPercentThreshold = 0.85f;
 
 		// How close combat medics try to be
-		public float combatTendMaxDistance = 3f;
+		public float combatTendMaxDistance = 6f;
 
 		public float hospitalBedMaxDist = 70f;
 
