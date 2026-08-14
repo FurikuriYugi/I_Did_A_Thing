@@ -5986,7 +5986,7 @@ namespace ArgrillianThreat
 				}
 
 				if (pawn == null || pawn.Map == null || heldPatient.Map == null || pawn.Map != heldPatient.Map) return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
-				
+
 				// While held-for-tend, we keep patient “locked” until the medic pipeline ends
 				// (or the medic stops being in reach and we fall through to escort/combat logic).
 				bool medicInReach = pawn.Position.DistanceTo(heldPatient.Position) <= combatTendMaxDistance;
@@ -6076,6 +6076,34 @@ namespace ArgrillianThreat
 
 				if (!medicHasMedicalJobNow)
 				{
+					// If we’re mid "retreatingHeldPatient" medical pipeline and patient is still injured,
+					// don’t switch away from medical during CurJob transition ticks.
+					// Just keep re-issuing tend/rescue until they’re combat-cleared.
+					if (retreatingHeldPatient && escortToMedicalRequired)
+					{
+						// patientClearedForCombat == !escortToMedicalRequired
+						// pHP==0.73 in your logs falls under this path.
+
+						// Re-lock just in case the transition tick momentarily dropped the lock.
+						if (!ArgrillianAlertSystem.IsPawnHeldByMedicStop(heldPatient))
+						{
+							ArgrillianAlertSystem.TryLockPatientHeldByMedic(pawn, heldPatient);
+						}
+
+						if (!ArgrillianMedicalState.HoldPatient.hasFired)
+						{
+							holdPatient.Stop(heldPatient);
+						}
+
+						Job keepMedicalJob = heldPatient.Downed
+							? JobMaker.MakeJob(JobDefOf.Rescue, heldPatient)
+							: JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
+
+						keepMedicalJob.count = 1;
+						ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn);
+						return keepMedicalJob;
+					}
+					
 					if (patientClearedForCombat)
 					{
 						JobGiver_ArgrillianThreatResponse.TraceMedKit(
