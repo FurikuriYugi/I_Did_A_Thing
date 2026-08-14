@@ -4008,7 +4008,7 @@ namespace ArgrillianThreat
 			return bestCell != pawn.Position;
 		}
 
-		private bool TryPickRetreatCell(
+		public static bool TryPickRetreatCell(
 			Pawn pawn,
 			Pawn attacker,
 			Pawn nearestMedic,
@@ -4041,7 +4041,6 @@ namespace ArgrillianThreat
 				bool pawnWantsMedicTendFocus = pawnHP <= 0.75f;
 
 				float medicProgressWeight = pawnWantsMedicTendFocus ? 1.6f : 0.8f;
-
 				float stationaryBias = pawnWantsMedicTendFocus ? 0.15f : 0f;
 
 				foreach (IntVec3 c in GenRadial.RadialCellsAround(pawn.Position, r, true))
@@ -4070,7 +4069,6 @@ namespace ArgrillianThreat
 						medicProgress = (pawn.Position.DistanceTo(nearestMedic.Position) - distToMedic) * medicProgressWeight;
 					}
 
-					// Very light preference to avoid totally random far jumps.
 					float closeness = -c.DistanceTo(pawn.Position) * 0.08f;
 					if (pawnWantsMedicTendFocus)
 						closeness += stationaryBias;
@@ -4143,7 +4141,6 @@ namespace ArgrillianThreat
 				float bandTooLow = Mathf.Max(0f, desiredDistance - d);
 				float score = d - bandTooLow * 2.0f;
 
-				// Keep existing behavior.
 				if (!GenSight.LineOfSight(c, pawn.Position, map))
 					score += 2f;
 
