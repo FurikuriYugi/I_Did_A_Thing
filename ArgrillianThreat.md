@@ -1852,16 +1852,10 @@ namespace ArgrillianThreat
 			if (medic.Map == null) return;
 			if (!medic.Spawned) return;
 
-			// If the medic is actively/just-actively in the tend pipeline,
-			// do NOT remove the held-patient mapping (prevents "medic leaves" while patient is still being tended).
-			// Keep this window aligned with TendRetreatingAllies' tendStickinessTicks.
-			int tendStickinessTicks = 60;
-
-			bool recentlyTookTend =
-				ArgrillianMedicalState.MedicTendTaskStickiness != null &&
-				ArgrillianMedicalState.MedicTendTaskStickiness.RecentlyTookTendTask(medic, tendStickinessTicks);
-
-			if (recentlyTookTend)
+			// If the medic is still actively in the tend pipeline, keep the held-patient mapping.
+			// This prevents: tend -> transient non-medical job state -> medic gets released -> heldPatient becomes null.
+			const int tendStickinessTicks = 60;
+			if (ArgrillianMedicalState.MedicTendTaskStickiness.RecentlyTookTendTask(medic, tendStickinessTicks))
 				return;
 
 			// ROLE GATE: only Doctor / Medic / Combat Medic can mutate held-patient assignment state.
