@@ -4040,7 +4040,7 @@ namespace ArgrillianThreat
 			return false;
 		}
 
-		private static bool TryPickRetreatCell(
+		public static bool TryPickRetreatCell(
 			Pawn pawn,
 			Pawn attacker,
 			Pawn nearestMedic,
