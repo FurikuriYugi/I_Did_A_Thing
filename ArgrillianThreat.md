@@ -3126,24 +3126,9 @@ namespace ArgrillianThreat
 
 			if (hostileForPatient == null || hostileForPatient.Dead || !hostileForPatient.Spawned || hostileForPatient.Map != map) return null;
 
-			// Step 2 stop decision (retreat movement re-eval):
-			// Stop retreat once the patient is no longer currently hit-able by hostile hitability
-			// (distance + LOS/cover via CanHitTarget).
-			{
-				Verb attackVerb = hostileForPatient.TryGetAttackVerb(pawn);
-				if (attackVerb == null)
-					return null;
-
-				// Cheap distance gate first (prevents unnecessary CanHitTarget calls when far away).
-				float d = hostileForPatient.Position.DistanceTo(pawn.Position);
-				if (d > scanRange)
-					return null;
-
-				// If LOS is not present, CanHitTarget may still succeed for some verb types.
-				// But per hitability definition, this is still the authority.
-				if (!attackVerb.CanHitTarget(pawn))
-					return null;
-			}
+				// Step 2 stop decision (retreat movement re-eval):
+				// Stop retreat once the patient is no longer currently hit-able by hostile hitability
+				if (!IsImminentThreatToTarget(hostileForPatient, pawn, scanRange)) return null;
 
 			// Hysteresis: don’t flip into retreat instantly after fight.
 			byte modeNow = ArgrillianThreatState.ModeTickCache.GetMode(pawn);
