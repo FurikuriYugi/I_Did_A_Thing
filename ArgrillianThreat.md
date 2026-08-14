@@ -5979,6 +5979,14 @@ namespace ArgrillianThreat
 			// ----------------------------
 			if (medicComp.isMedic && medicComp.combatMedic)
 			{
+				if (heldPatient == null || heldPatient.Dead || heldPatient.Spawned == false)
+				{
+					// Give back control to the threat response / other jobgivers.
+					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
+				}
+
+				if (pawn == null || pawn.Map == null || heldPatient.Map == null || pawn.Map != heldPatient.Map) return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
+				
 				// While held-for-tend, we keep patient “locked” until the medic pipeline ends
 				// (or the medic stops being in reach and we fall through to escort/combat logic).
 				bool medicInReach = pawn.Position.DistanceTo(heldPatient.Position) <= combatTendMaxDistance;
