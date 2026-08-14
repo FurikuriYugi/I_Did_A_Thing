@@ -6049,7 +6049,6 @@ namespace ArgrillianThreat
 					return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, escortTarget2);
 				}
 
-				// ----------------------------
 				// Combat Medic Finalization Process
 				// ----------------------------
 				// Prevent premature unlock if the medic is still actively committed to medical work for this patient.
@@ -6059,10 +6058,17 @@ namespace ArgrillianThreat
 				// CurJob can be null / temporarily non-medical for a tick during job transitions.
 				int tendStickinessTicks = 60;
 
+				// Split “has medical job now” into:
+				// - explicit medical curjob state
+				// - and the stickiness window
+				// so we can prevent unlock/release during the stickiness transition tick(s).
+				bool recentlyTookTendTask =
+					ArgrillianMedicalState.MedicTendTaskStickiness.RecentlyTookTendTask(pawn, tendStickinessTicks);
+
 				bool medicHasMedicalJobNow =
 					(pawn?.CurJob != null &&
 					 ArgillianThreatPatientTuning.JobIsMedicalForPatient(pawn.CurJob, heldPatient)) ||
-					ArgrillianMedicalState.MedicTendTaskStickiness.RecentlyTookTendTask(pawn, tendStickinessTicks);
+					recentlyTookTendTask;
 
 				if (!medicHasMedicalJobNow)
 				{
@@ -6088,6 +6094,17 @@ namespace ArgrillianThreat
 						return tendJob2;
 					}
 
+					// Step 4/5: if we are still within the “just started tending” stickiness window,
+					// do NOT unlock/release heldPatient even if the patient is (momentarily) meeting terminal clearance tests.
+					// Continue tend to avoid transient heldPatient release during CurJob transition ticks.
+					if (recentlyTookTendTask)
+					{
+						Job tendJob3 = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
+						tendJob3.count = 1;
+						ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn);
+						return tendJob3;
+					}
+
 					if (patientClearedForCombat)
 					{
 						// Correct unlock ordering:
@@ -6110,14 +6127,14 @@ namespace ArgrillianThreat
 						ArgrillianAlertSystem.ReleaseMedicHold(pawn);
 						holdPatient.Reset();
 
-						return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
+						return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(heldPatient);
 					}
 
 					// Not <80 anymore, but not fully cleared either: continue tending to avoid medic leaving too early.
-					Job tendJob3 = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
-					tendJob3.count = 1;
+					Job tendJob4 = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
+					tendJob4.count = 1;
 					ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn);
-					return tendJob3;
+					return tendJob4;
 				}
 				Log.Message(
 					$"[ArgrillianThreat][TendRetreatingAllies] missionDone unlock medic={pawn.LabelShort} patient={heldPatient.LabelShort}"
