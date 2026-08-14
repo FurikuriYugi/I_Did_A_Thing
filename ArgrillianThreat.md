@@ -3066,8 +3066,8 @@ namespace ArgrillianThreat
 			return attackVerb.CanHitTarget(target);
 		}
 
-		// -------- Patient retreat --------
-		public static Job ExecutePatientRetreat(
+		// -------- Retreat --------
+		public static Job ExecuteRetreat(
 			Pawn pawn,
 			ThreatContext tctx,
 			HostileContext hctx,
@@ -5255,7 +5255,7 @@ namespace ArgrillianThreat
 				{
 					Pawn nearestMedic = ArgrillianThreatExecution.FindNearestMedic(pawn);
 
-					return ArgrillianThreatExecution.ExecutePatientRetreat(
+					return ArgrillianThreatExecution.ExecuteRetreat(
 						pawn,
 						tctx,
 						hctx,
@@ -5294,7 +5294,7 @@ namespace ArgrillianThreat
 						{
 							Pawn nearestMedic = ArgrillianThreatExecution.FindNearestMedic(pawn);
 
-							return ArgrillianThreatExecution.ExecutePatientRetreat(
+							return ArgrillianThreatExecution.ExecuteRetreat(
 								pawn,
 								tctx,
 								hctx,
@@ -5321,7 +5321,7 @@ namespace ArgrillianThreat
 						{
 							Pawn nearestMedic = ArgrillianThreatExecution.FindNearestMedic(pawn);
 
-							return ArgrillianThreatExecution.ExecutePatientRetreat(
+							return ArgrillianThreatExecution.ExecuteRetreat(
 								pawn,
 								tctx,
 								hctx,
@@ -5354,7 +5354,7 @@ namespace ArgrillianThreat
 			{
 				Pawn nearestMedic = ArgrillianThreatExecution.FindNearestMedic(pawn);
 
-				return ArgrillianThreatExecution.ExecutePatientRetreat(
+				return ArgrillianThreatExecution.ExecuteRetreat(
 					pawn,
 					tctx,
 					hctx,
@@ -5485,7 +5485,7 @@ namespace ArgrillianThreat
 						if (!immediateThreat && useImmediateHardGate)
 						{
 							Pawn nearestMedic = ArgrillianThreatExecution.FindNearestMedic(pawn);
-							return ArgrillianThreatExecution.ExecutePatientRetreat(
+							return ArgrillianThreatExecution.ExecuteRetreat(
 								pawn,
 								tctx,
 								hctx,
