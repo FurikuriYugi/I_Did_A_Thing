@@ -4040,7 +4040,7 @@ namespace ArgrillianThreat
 			return false;
 		}
 
-		public static bool TryPickRetreatCell(
+		private static bool TryPickRetreatCell(
 			Pawn pawn,
 			Pawn attacker,
 			Pawn nearestMedic,
@@ -4059,19 +4059,17 @@ namespace ArgrillianThreat
 			if (attacker == null || attacker.Dead) return false;
 			if (!pawn.Spawned || !attacker.Spawned) return false;
 
-			Area homeArea = pawn.HomeArea;
-			bool hasHomeArea = homeArea != null;
+			// A2 soft home-area preference (home = RimWorld Area_Home).
+			// Area membership uses Area's boolean grid indexer: homeArea[c].
+			Area homeArea = null;
+			if (map.areaManager != null)
+				homeArea = map.areaManager.Home;
 
 			float GetHomeAreaSoftBonus(IntVec3 c)
 			{
-				if (!hasHomeArea) return 0f;
-
-				// Soft preference (A2): small reward if candidate is in the pawn's home area.
-				// No enumeration of Area cells; only membership test.
-				if (homeArea.Contains(c))
-					return 7.5f;
-
-				return 0f;
+				if (homeArea == null) return 0f;
+				if (c == IntVec3.Invalid) return 0f;
+				return homeArea[c] ? 7.5f : 0f;
 			}
 
 			// Patient-safe retreat path (merged from TryPickPatientSafeRetreatCell).
@@ -4099,9 +4097,10 @@ namespace ArgrillianThreat
 
 					float dToHostile = c.DistanceTo(attacker.Position);
 
-					float distanceScore = dToHostile >= patientSafeDistanceFromHostile
-						? (dToHostile - patientSafeDistanceFromHostile) * 6f
-						: -(patientSafeDistanceFromHostile - dToHostile) * 4f;
+					float distanceScore =
+						dToHostile >= patientSafeDistanceFromHostile
+							? (dToHostile - patientSafeDistanceFromHostile) * 6f
+							: -(patientSafeDistanceFromHostile - dToHostile) * 4f;
 
 					bool hostileSeesCandidate = GenSight.LineOfSight(attacker.Position, c, map);
 					float losScore = hostileSeesCandidate ? -90f : 90f;
