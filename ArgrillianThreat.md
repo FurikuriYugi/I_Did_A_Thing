@@ -3077,8 +3077,16 @@ namespace ArgrillianThreat
 					return null;
 			}
 
-			// Only retreating patients (injured enough).
 			float hpPct = pawn.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
+
+			// LOCKED CONTRACT:
+			// During retreat, if the patient's HP drops below 80%, the patient stops retreating
+			// (returns null here) so the medic can interrupt and start tending immediately.
+			const float StopRetreatHPPercent = 0.80f;
+			if (hpPct < StopRetreatHPPercent)
+				return null;
+
+			// Existing patient-retreat eligibility: stop retreat once patient is “too healthy”.
 			if (hpPct > patientRetreatMinHPPercentToTreatAsPatient && hpPct > retreatMinHealthPercent)
 				return null;
 
