@@ -4059,6 +4059,21 @@ namespace ArgrillianThreat
 			if (attacker == null || attacker.Dead) return false;
 			if (!pawn.Spawned || !attacker.Spawned) return false;
 
+			Area homeArea = pawn.HomeArea;
+			bool hasHomeArea = homeArea != null;
+
+			float GetHomeAreaSoftBonus(IntVec3 c)
+			{
+				if (!hasHomeArea) return 0f;
+
+				// Soft preference (A2): small reward if candidate is in the pawn's home area.
+				// No enumeration of Area cells; only membership test.
+				if (homeArea.Contains(c))
+					return 7.5f;
+
+				return 0f;
+			}
+
 			// Patient-safe retreat path (merged from TryPickPatientSafeRetreatCell).
 			if (wantsPatientSafeRetreat)
 			{
@@ -4105,7 +4120,7 @@ namespace ArgrillianThreat
 					if (pawnWantsMedicTendFocus)
 						closeness += stationaryBias;
 
-					float score = distanceScore + losScore + medicProgress + closeness;
+					float score = distanceScore + losScore + medicProgress + closeness + GetHomeAreaSoftBonus(c);
 
 					if (score > bestScore + 0.01f)
 					{
@@ -4144,7 +4159,8 @@ namespace ArgrillianThreat
 				float d = c.DistanceTo(attacker.Position);
 
 				float bandTooLow = Mathf.Max(0f, desiredDistance - d);
-				float score = d - bandTooLow * 1.8f;
+
+				float score = d - bandTooLow * 1.8f + GetHomeAreaSoftBonus(c);
 
 				if (score > bestScoreGeneric)
 				{
@@ -4175,6 +4191,8 @@ namespace ArgrillianThreat
 
 				if (!GenSight.LineOfSight(c, pawn.Position, map))
 					score += 2f;
+
+				score += GetHomeAreaSoftBonus(c);
 
 				if (score > bestScoreGeneric + 0.01f)
 				{
