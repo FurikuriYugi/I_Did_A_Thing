@@ -3165,7 +3165,7 @@ namespace ArgrillianThreat
 
 			// (1) Safe distance / out-of-range retreat.
 			IntVec3 safeCell;
-			if (TryPickPatientSafeRetreatCell(
+			if (TryPickRetreatCell(
 					pawn,
 					hostileForPatient,
 					nearestMedic,
@@ -4008,77 +4008,153 @@ namespace ArgrillianThreat
 			return bestCell != pawn.Position;
 		}
 
-		private static bool TryPickPatientSafeRetreatCell(
-		Pawn patient,
-		Pawn hostile,
-		Pawn nearestMedic,
-		Map map,
-		float safeDistance,
-		float searchRadius,
-		out IntVec3 bestCell)
+		private bool TryPickRetreatCell(
+			Pawn pawn,
+			Pawn attacker,
+			Pawn nearestMedic,
+			float desiredDistance,
+			bool wantsPatientSafeRetreat,
+			float patientSafeDistanceFromHostile,
+			float patientRetreatSearchRadius,
+			float retreatSearchRadius,
+			out IntVec3 bestCell)
 		{
-			bestCell = patient.Position;
+			bestCell = pawn?.Position ?? IntVec3.Invalid;
 
-			if (patient == null || hostile == null) return false;
+			if (pawn == null || pawn.Dead || pawn.Map == null) return false;
+			Map map = pawn.Map;
+			if (map == null) return false;
+			if (attacker == null || attacker.Dead) return false;
+			if (!pawn.Spawned || !attacker.Spawned) return false;
 
-			float r = ArgrillianThreatMath.ClampRadialRadius(searchRadius);
-
-			float bestScore = float.NegativeInfinity;
-
-			bool hostileSeesPatientNow = GenSight.LineOfSight(hostile.Position, patient.Position, map);
-
-			float patientHP = patient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
-			bool patientWantsMedicTendFocus = patientHP <= 0.75f;
-
-			// When <= 75% HP, strongly bias movement toward the medic so tend can happen quickly.
-			float medicProgressWeight = patientWantsMedicTendFocus ? 1.6f : 0.8f;
-
-			// “Stay put” bias: allow patient to remain where it is if that already satisfies safety.
-			// (This is handled naturally by bestCell initial value + score weights, but we slightly reinforce it at <=75%.)
-			float stationaryBias = patientWantsMedicTendFocus ? 0.15f : 0f;
-
-			foreach (IntVec3 c in GenRadial.RadialCellsAround(patient.Position, r, true))
+			// Patient-safe retreat path (merged from TryPickPatientSafeRetreatCell).
+			if (wantsPatientSafeRetreat)
 			{
-				if (!c.InBounds(map) || c.Fogged(map)) continue;
-				if (!c.Standable(map) || !c.Walkable(map)) continue;
-				if (c.GetFirstPawn(map) != null && c != patient.Position) continue;
-				if (!patient.CanReach(c, PathEndMode.ClosestTouch, Danger.Some)) continue;
+				bestCell = pawn.Position;
 
-				float dToHostile = c.DistanceTo(hostile.Position);
+				float r = ArgrillianThreatMath.ClampRadialRadius(patientRetreatSearchRadius);
+				float bestScore = float.NegativeInfinity;
 
-				float distanceScore = dToHostile >= safeDistance
-					? (dToHostile - safeDistance) * 6f
-					: -(safeDistance - dToHostile) * 4f;
+				bool hostileSeesPatientNow = GenSight.LineOfSight(attacker.Position, pawn.Position, map);
 
-				bool hostileSeesCandidate = GenSight.LineOfSight(hostile.Position, c, map);
-				float losScore = hostileSeesCandidate ? -90f : 90f;
+				float pawnHP = pawn.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
+				bool pawnWantsMedicTendFocus = pawnHP <= 0.75f;
 
-				if (hostileSeesPatientNow && !hostileSeesCandidate) losScore += 25f;
+				float medicProgressWeight = pawnWantsMedicTendFocus ? 1.6f : 0.8f;
 
-				float medicProgress = 0f;
-				if (nearestMedic != null && !nearestMedic.Dead && nearestMedic.Spawned && nearestMedic.Map == map)
+				float stationaryBias = pawnWantsMedicTendFocus ? 0.15f : 0f;
+
+				foreach (IntVec3 c in GenRadial.RadialCellsAround(pawn.Position, r, true))
 				{
-					float distToMedic = c.DistanceTo(nearestMedic.Position);
-					// Higher weight when <= 75% so the patient moves toward the medic (or stays if current cell is already good).
-					medicProgress = (patient.Position.DistanceTo(nearestMedic.Position) - distToMedic) * medicProgressWeight;
+					if (!c.InBounds(map) || c.Fogged(map)) continue;
+					if (!c.Standable(map) || !c.Walkable(map)) continue;
+					if (c.GetFirstPawn(map) != null && c != pawn.Position) continue;
+					if (!pawn.CanReach(c, PathEndMode.ClosestTouch, Danger.Some)) continue;
+
+					float dToHostile = c.DistanceTo(attacker.Position);
+
+					float distanceScore = dToHostile >= patientSafeDistanceFromHostile
+						? (dToHostile - patientSafeDistanceFromHostile) * 6f
+						: -(patientSafeDistanceFromHostile - dToHostile) * 4f;
+
+					bool hostileSeesCandidate = GenSight.LineOfSight(attacker.Position, c, map);
+					float losScore = hostileSeesCandidate ? -90f : 90f;
+
+					if (hostileSeesPatientNow && !hostileSeesCandidate)
+						losScore += 25f;
+
+					float medicProgress = 0f;
+					if (nearestMedic != null && !nearestMedic.Dead && nearestMedic.Spawned && nearestMedic.Map == map)
+					{
+						float distToMedic = c.DistanceTo(nearestMedic.Position);
+						medicProgress = (pawn.Position.DistanceTo(nearestMedic.Position) - distToMedic) * medicProgressWeight;
+					}
+
+					// Very light preference to avoid totally random far jumps.
+					float closeness = -c.DistanceTo(pawn.Position) * 0.08f;
+					if (pawnWantsMedicTendFocus)
+						closeness += stationaryBias;
+
+					float score = distanceScore + losScore + medicProgress + closeness;
+
+					if (score > bestScore + 0.01f)
+					{
+						bestScore = score;
+						bestCell = c;
+					}
 				}
 
-				// Small penalty for moving away from the current position.
-				// Reinforced slightly at <= 75% so “stay still to be tended” is favored when both are safe.
-				float closeness = -c.DistanceTo(patient.Position) * 0.08f;
-				if (patientWantsMedicTendFocus)
-					closeness += stationaryBias;
+				return bestCell != pawn.Position;
+			}
 
-				float score = distanceScore + losScore + medicProgress + closeness;
+			// Generic tactical retreat path (merged from TryPickRetreatCell).
+			bestCell = pawn.Position;
 
-				if (score > bestScore + 0.01f)
+			float bestScoreGeneric = float.NegativeInfinity;
+
+			bool avoidBeingInFriendlyLineOfFire = true;
+			float friendlyLineToleranceTiles = 2.5f;
+			float friendScanRadius = 25f;
+
+			// Keep existing “Adj8 quick candidates” behavior.
+			for (int i = 0; i < ArgrillianThreatGeometry.GetAdj8().Length; i++)
+			{
+				IntVec3 off = ArgrillianThreatGeometry.GetAdj8()[i];
+				IntVec3 c = pawn.Position + off;
+
+				if (!c.InBounds(map) || c.Fogged(map)) continue;
+				if (!c.Standable(map) || !c.Walkable(map)) continue;
+				if (c.GetFirstPawn(map) != null) continue;
+				if (!pawn.CanReach(c, PathEndMode.ClosestTouch, Danger.Some)) continue;
+
+				if (avoidBeingInFriendlyLineOfFire &&
+					IsCellInFriendlyLineOfFireForRetreat(pawn, attacker, c, friendlyLineToleranceTiles, friendScanRadius))
+					continue;
+
+				float d = c.DistanceTo(attacker.Position);
+
+				float bandTooLow = Mathf.Max(0f, desiredDistance - d);
+				float score = d - bandTooLow * 1.8f;
+
+				if (score > bestScoreGeneric)
 				{
-					bestScore = score;
+					bestScoreGeneric = score;
 					bestCell = c;
 				}
 			}
 
-			return bestCell != patient.Position;
+			if (bestCell != pawn.Position)
+				return true;
+
+			// Then consider retreatSearchRadius cells.
+			foreach (IntVec3 c in GenRadial.RadialCellsAround(pawn.Position, retreatSearchRadius, true))
+			{
+				if (!c.InBounds(map) || c.Fogged(map)) continue;
+				if (!c.Standable(map) || !c.Walkable(map)) continue;
+				if (c.GetFirstPawn(map) != null) continue;
+				if (!pawn.CanReach(c, PathEndMode.ClosestTouch, Danger.Some)) continue;
+
+				if (avoidBeingInFriendlyLineOfFire &&
+					IsCellInFriendlyLineOfFireForRetreat(pawn, attacker, c, friendlyLineToleranceTiles, friendScanRadius))
+					continue;
+
+				float d = c.DistanceTo(attacker.Position);
+
+				float bandTooLow = Mathf.Max(0f, desiredDistance - d);
+				float score = d - bandTooLow * 2.0f;
+
+				// Keep existing behavior.
+				if (!GenSight.LineOfSight(c, pawn.Position, map))
+					score += 2f;
+
+				if (score > bestScoreGeneric + 0.01f)
+				{
+					bestScoreGeneric = score;
+					bestCell = c;
+				}
+			}
+
+			return bestCell != pawn.Position;
 		}
 
 		private static Job TryMakeAttackJobIfCanHitNow(
@@ -4942,75 +5018,6 @@ namespace ArgrillianThreat
 			return d <= engageBand;
 		}
 
-		private bool TryPickRetreatCell(Pawn pawn, Pawn attacker, float desiredDistance, out IntVec3 bestCell)
-		{
-			bestCell = pawn.Position;
-			Map map = pawn.Map;
-
-			float bestScore = float.NegativeInfinity;
-
-			bool avoidBeingInFriendlyLineOfFire = true;
-			float friendlyLineToleranceTiles = 2.5f;
-			float friendScanRadius = 25f;
-
-			for (int i = 0; i < ArgrillianThreatGeometry.GetAdj8().Length; i++)
-			{
-				IntVec3 off = ArgrillianThreatGeometry.GetAdj8()[i];
-				IntVec3 c = pawn.Position + off;
-
-				if (!c.InBounds(map) || c.Fogged(map)) continue;
-				if (!c.Standable(map) || !c.Walkable(map)) continue;
-				if (c.GetFirstPawn(map) != null) continue;
-				if (!pawn.CanReach(c, PathEndMode.ClosestTouch, Danger.Some)) continue;
-
-				if (avoidBeingInFriendlyLineOfFire &&
-					IsCellInFriendlyLineOfFireForRetreat(pawn, attacker, c, friendlyLineToleranceTiles, friendScanRadius))
-					continue;
-
-				float d = c.DistanceTo(attacker.Position);
-
-				float bandTooLow = Mathf.Max(0f, desiredDistance - d);
-				float score = d - bandTooLow * 1.8f;
-
-				if (score > bestScore)
-				{
-					bestScore = score;
-					bestCell = c;
-				}
-			}
-
-			if (bestCell != pawn.Position)
-				return true;
-
-			foreach (IntVec3 c in GenRadial.RadialCellsAround(pawn.Position, retreatSearchRadius, true))
-			{
-				if (!c.InBounds(map) || c.Fogged(map)) continue;
-				if (!c.Standable(map) || !c.Walkable(map)) continue;
-				if (c.GetFirstPawn(map) != null) continue;
-				if (!pawn.CanReach(c, PathEndMode.ClosestTouch, Danger.Some)) continue;
-
-				if (avoidBeingInFriendlyLineOfFire &&
-					IsCellInFriendlyLineOfFireForRetreat(pawn, attacker, c, friendlyLineToleranceTiles, friendScanRadius))
-					continue;
-
-				float d = c.DistanceTo(attacker.Position);
-
-				float bandTooLow = Mathf.Max(0f, desiredDistance - d);
-				float score = d - bandTooLow * 2.0f;
-
-				if (!GenSight.LineOfSight(c, pawn.Position, map))
-					score += 2f;
-
-				if (score > bestScore + 0.01f)
-				{
-					bestScore = score;
-					bestCell = c;
-				}
-			}
-
-			return bestCell != pawn.Position;
-		}
-
 		private bool IsCellInFriendlyLineOfFireForRetreat(Pawn self, Pawn hostile, IntVec3 candidateCell, float friendlyLineToleranceTiles, float friendScanRadius)
 		{
 			if (self == null || hostile == null || self.Map == null) return false;
@@ -5546,7 +5553,7 @@ namespace ArgrillianThreat
 			{
 				ArgrillianThreatState.CombatCommit.Clear(pawn);
 
-				if (TryPickRetreatCell(pawn, hostile, desiredCombatDistanceNow, out IntVec3 retreatCell))
+				if (ArgrillianThreatExecution.TryPickRetreatCell(pawn, hostile, desiredCombatDistanceNow, out IntVec3 retreatCell))
 				{
 					var keep = ArgrillianGotoHelper.KeepIfSameGoto(pawn, retreatCell);
 					if (keep != null) return keep;
