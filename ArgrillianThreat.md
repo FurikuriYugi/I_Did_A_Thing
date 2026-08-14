@@ -7,6 +7,31 @@ namespace ArgrillianThreat
 	[HarmonyPatch]
 	public static class ArgrillianHeldPatientJobBlocker
 	{
+		private static readonly Dictionary<int, int> heldBlockLogTickByPawnId = new Dictionary<int, int>();
+		private const int HeldBlockLogCooldownTicks = 30;
+
+		private static void LogHeldBlock(string where, Pawn pawn, Job jobOrNull)
+		{
+			if (pawn == null) return;
+			if (pawn.Map == null) return;
+
+			int now = Find.TickManager.TicksGame;
+			int id = pawn.thingIDNumber;
+
+			if (heldBlockLogTickByPawnId.TryGetValue(id, out int last) && (now - last) < HeldBlockLogCooldownTicks)
+				return;
+
+			heldBlockLogTickByPawnId[id] = now;
+
+			string jobLabel = "nullJob";
+			if (jobOrNull != null && jobOrNull.def != null)
+				jobLabel = jobOrNull.def.defName;
+
+			Log.Message(
+				$"[ArgrillianThreat][HeldPatient] BLOCK where={where} pawn={pawn.Name} job={jobLabel}"
+			);
+		}
+
 		private static Pawn GetPawnFromJobTracker(Pawn_JobTracker jt)
 		{
 			if (jt == null) return null;
@@ -36,9 +61,7 @@ namespace ArgrillianThreat
 			bool locked = IsPawnLocked(pawn);
 			if (locked)
 			{
-				Log.Message(
-					$"[ArgrillianThreat] HeldPatientJobBlocker: BLOCK TryIssueJobPackage pawn={pawn.Name} locked=true"
-				);
+				LogHeldBlock("TryIssueJobPackage", pawn, null);
 
 				__result = null;
 				return false;
@@ -64,9 +87,7 @@ namespace ArgrillianThreat
 				else
 					jobLabel = job.def.defName;
 
-				Log.Message(
-					$"[ArgrillianThreat] HeldPatientJobBlocker: BLOCK TryStartJob pawn={pawn.Name} locked=true job={jobLabel}"
-				);
+				LogHeldBlock("TryStartJob", pawn, job);
 
 				return false;
 			}
@@ -3813,11 +3834,10 @@ namespace ArgrillianThreat
 			bool currentlyHasLos = GenSight.LineOfSight(hostile.Position, origin, map);
 
 			Log.Message(
-				$"[ArgrillianThreat][LOS-BREAK] TryPickOutOfLineOfSightCell patient={pawn.Name}#{pawn.thingIDNumber} " +
-				$"hostile={hostile.Name}#{hostile.thingIDNumber} origin={origin} hostilePos={hostile.Position} " +
-				$"desiredCombatDistanceNow={desiredCombatDistanceNow:F2} lockIn={lockIn} " +
-				$"scanRange={scanRange:F2} requestedRadius={requestedRadius} effectiveRadius={effectiveRadius} " +
-				$"currentlyHasLos={currentlyHasLos}"
+				$"[ArgrillianThreat][RetreatLOS] patient={patient.LabelShort} hostile={hostile?.LabelShort ?? "null"} " +
+					$"chosenCell=({chosenCell.x},{chosenCell.y},{chosenCell.z}) " +
+					$"scanParams={scanRange:0.##} " +
+					$"losBroken={losActuallyBroken} reason={losReason}"
 			);
 
 			int attempts = 0;
@@ -3881,8 +3901,10 @@ namespace ArgrillianThreat
 			if (bestCell == origin)
 			{
 				Log.Message(
-					$"[ArgrillianThreat][LOS-BREAK] TryPickOutOfLineOfSightCell result=false " +
-					$"patient={pawn.Name} hostile={hostile.Name} origin={origin} currentlyHasLos={currentlyHasLos} effectiveRadius={effectiveRadius}"
+					$"[ArgrillianThreat][RetreatLOS] patient={patient.LabelShort} hostile={hostile?.LabelShort ?? "null"} " +
+						$"chosenCell=({chosenCell.x},{chosenCell.y},{chosenCell.z}) " +
+						$"scanParams={scanRange:0.##} " +
+						$"losBroken={losActuallyBroken} reason={losReason}"
 				);
 				return false;
 			}
@@ -3892,17 +3914,20 @@ namespace ArgrillianThreat
 				outCell = bestCell;
 
 				Log.Message(
-					$"[ArgrillianThreat][LOS-BREAK] TryPickOutOfLineOfSightCell result=true " +
-					$"patient={pawn.Name} hostile={hostile.Name} origin={origin} chosen={bestCell} " +
-					$"breaksLos=true bestScore={bestScore:F3} effectiveRadius={effectiveRadius}"
+					$"[ArgrillianThreat][RetreatLOS] patient={patient.LabelShort} hostile={hostile?.LabelShort ?? "null"} " +
+						$"chosenCell=({chosenCell.x},{chosenCell.y},{chosenCell.z}) " +
+						$"scanParams={scanRange:0.##} " +
+						$"losBroken={losActuallyBroken} reason={losReason}"
 				);
 
 				return true;
 			}
 
 			Log.Message(
-				$"[ArgrillianThreat][LOS-BREAK] TryPickOutOfLineOfSightCell result=false " +
-				$"patient={pawn.Name} hostile={hostile.Name} origin={origin} chosen={bestCell} breaksLos=false effectiveRadius={effectiveRadius}"
+				$"[ArgrillianThreat][RetreatLOS] patient={patient.LabelShort} hostile={hostile?.LabelShort ?? "null"} " +
+					$"chosenCell=({chosenCell.x},{chosenCell.y},{chosenCell.z}) " +
+					$"scanParams={scanRange:0.##} " +
+					$"losBroken={losActuallyBroken} reason={losReason}"
 			);
 
 			return false;
@@ -4840,6 +4865,11 @@ namespace ArgrillianThreat
 
 		private bool IsInjuredEnoughForCombatMedicToStopFighting(Pawn p)
 		{
+			Log.Message(
+				$"[ArgrillianThreat][RetreatGate] HP interrupt to tend: medic={medic.LabelShort} patient={patient.LabelShort} " +
+					$"patientHP={patient.health.summaryHealth.SummaryHealthPercent:0.00} " +
+					$"switching from={fromState} to=tendNow"
+			);
 			if (p == null || p.Dead || p.health == null) return false;
 			float hpPct = p.health.summaryHealth.SummaryHealthPercent;
 			return hpPct <= combatMedicInjuredHPPercentThreshold;
@@ -5755,7 +5785,6 @@ namespace ArgrillianThreat
 
 		protected override Job TryGiveJob(Pawn pawn)
 		{
-			Log.Message($"[ArgrillianThreat][FORCE] TryGiveJob ENTER pawn={(pawn != null ? pawn.LabelShort : "null")} tick={(Find.TickManager != null ? Find.TickManager.TicksGame : -1)}");
 			ArgrillianAlertSystem.NotifyPawnSelfState(pawn);
 
 			if (pawn == null || pawn.Dead || pawn.Map == null) return null;
@@ -5764,14 +5793,16 @@ namespace ArgrillianThreat
 
 			int now = Find.TickManager != null ? Find.TickManager.TicksGame : 0;
 			int pid = pawn.thingIDNumber;
-			Log.Message($"[ArgrillianThreat][TRACE-RAW] TendRetreatingAllies.TryGiveJob entered pawn={pawn.LabelShort} id={pid} combatMedic={medicComp.combatMedic}");
 
 			// Acquire held patient from alert-system authority.
 			Pawn heldPatient = ArgrillianAlertSystem.GetHeldPatientForMedic(pawn);
 
 			if (heldPatient == null)
 			{
-				Log.Message($"[ArgrillianThreat][TRACE-RAW] TendRetreatingAllies.TryGiveJob returning null (pawn/map invalid) pawn={(pawn != null ? pawn.LabelShort : "null")}");
+				Log.Message(
+					$"[ArgrillianThreat][TendRetreatingAllies] TryGiveJob null (gate) pawn={(pawn != null ? pawn.LabelShort : "null")} heldPatient={(heldPatient != null ? heldPatient.LabelShort : "null")} " +
+						$"tendEligible=false retreatingHeldPatient=true"
+				);
 				Pawn bestCandidate = ArgrillianAlertSystem.GetBestPatientFromCalls(pawn, searchRadius);
 
 				if (bestCandidate != null)
@@ -5790,7 +5821,10 @@ namespace ArgrillianThreat
 				{
 					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 				}
-				Log.Message($"[ArgrillianThreat][TRACE-RAW] TendRetreatingAllies.TryGiveJob returning null (medic gating) pawn={(pawn != null ? pawn.LabelShort : "null")}");
+				Log.Message(
+					$"[ArgrillianThreat][TendRetreatingAllies] TryGiveJob null (gate) pawn={(pawn != null ? pawn.LabelShort : "null")} heldPatient={(heldPatient != null ? heldPatient.LabelShort : "null")} " +
+						$"tendEligible=false retreatingHeldPatient=true"
+				);
 
 				// For non-combat medics/doctors: this job-giver shouldn't do anything if no held patient exists.
 				return null;
@@ -5882,7 +5916,10 @@ namespace ArgrillianThreat
 			// ----------------------------
 			if (medicComp.doctor)
 			{
-				Log.Message($"[ArgrillianThreat][TRACE-RAW] TendRetreatingAllies.TryGiveJob returning null (medic gating) pawn={(pawn != null ? pawn.LabelShort : "null")}");
+				Log.Message(
+					$"[ArgrillianThreat][TendRetreatingAllies] TryGiveJob null (gate) pawn={(pawn != null ? pawn.LabelShort : "null")} heldPatient={(heldPatient != null ? heldPatient.LabelShort : "null")} " +
+						$"tendEligible=false retreatingHeldPatient=true"
+				);
 				return null;
 			}
 
@@ -5891,7 +5928,10 @@ namespace ArgrillianThreat
 			// ----------------------------
 			if (!medicComp.combatMedic && medicComp.isMedic)
 			{
-				Log.Message($"[ArgrillianThreat][TRACE-RAW] TendRetreatingAllies.TryGiveJob returning null (medic gating) pawn={(pawn != null ? pawn.LabelShort : "null")}");
+				Log.Message(
+					$"[ArgrillianThreat][TendRetreatingAllies] TryGiveJob null (gate) pawn={(pawn != null ? pawn.LabelShort : "null")} heldPatient={(heldPatient != null ? heldPatient.LabelShort : "null")} " +
+						$"tendEligible=false retreatingHeldPatient=true"
+				);
 				return null;
 			}
 
@@ -5914,6 +5954,11 @@ namespace ArgrillianThreat
 
 				if (medicInReach)
 				{
+					Log.Message(
+						$"[ArgrillianThreat][TendRetreatingAllies] combatMedicInReach medic={pawn.LabelShort} patient={heldPatient.LabelShort} " +
+							$"patientDowned={heldPatient.Downed} tendEligible=true"
+					);
+
 					if (!ArgrillianAlertSystem.IsPawnHeldByMedicStop(heldPatient))
 					{
 						ArgrillianAlertSystem.TryLockPatientHeldByMedic(pawn, heldPatient);
@@ -5944,6 +5989,10 @@ namespace ArgrillianThreat
 
 				if(!medicInReach)
 				{
+					Log.Message(
+						$"[ArgrillianThreat][TendRetreatingAllies] combatMedicOutOfReach escort medic={pawn.LabelShort} patient={heldPatient.LabelShort} tendEligible=false"
+					);
+
 					// Otherwise: escort medic toward patient so defense can continue while we close distance.
 					IntVec3 escortTarget2 = heldPatient.Position;
 					return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, escortTarget2);
@@ -5980,6 +6029,10 @@ namespace ArgrillianThreat
 
 					if (patientInBedAndFullyTended || ArgrillianAlertSystem.IsPatientTransferedToMedicOrDoctor(heldPatient))
 					{
+						Log.Message(
+							$"[ArgrillianThreat][TendRetreatingAllies] missionDone unlock medic={pawn.LabelShort} patient={heldPatient.LabelShort}"
+						);
+
 						ArgrillianAlertSystem.ReleasePatientHeldByMedic(pawn);
 						ArgrillianAlertSystem.ReleaseMedicHold(pawn);
 						holdPatient.Reset();
@@ -5988,9 +6041,16 @@ namespace ArgrillianThreat
 					}
 					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 				}
+				Log.Message(
+					$"[ArgrillianThreat][TendRetreatingAllies] missionDone unlock medic={pawn.LabelShort} patient={heldPatient.LabelShort}"
+				);
+
 				return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 			}
-			Log.Message($"[ArgrillianThreat][TRACE-RAW] TendRetreatingAllies.TryGiveJob returning null (medic gating) pawn={(pawn != null ? pawn.LabelShort : "null")}");
+			Log.Message(
+				$"[ArgrillianThreat][TendRetreatingAllies] TryGiveJob null (gate) pawn={(pawn != null ? pawn.LabelShort : "null")} heldPatient={(heldPatient != null ? heldPatient.LabelShort : "null")} " +
+					$"tendEligible=false retreatingHeldPatient=true"
+			);
 			return null;
 		}
 
