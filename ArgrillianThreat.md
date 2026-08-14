@@ -3169,7 +3169,7 @@ namespace ArgrillianThreat
 					pawn,
 					hostileForPatient,
 					nearestMedic,
-					patientRetreatSafeDistanceFromHostile,
+					desiredCombatDistanceNow,
 					wantsPatientSafeRetreat: true,
 					patientSafeDistanceFromHostile: patientRetreatSafeDistanceFromHostile,
 					patientRetreatSearchRadius: patientRetreatSearchRadius,
