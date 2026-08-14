@@ -3833,13 +3833,6 @@ namespace ArgrillianThreat
 
 			bool currentlyHasLos = GenSight.LineOfSight(hostile.Position, origin, map);
 
-			Log.Message(
-				$"[ArgrillianThreat][RetreatLOS] patient={patient.LabelShort} hostile={hostile?.LabelShort ?? "null"} " +
-					$"chosenCell=({chosenCell.x},{chosenCell.y},{chosenCell.z}) " +
-					$"scanParams={scanRange:0.##} " +
-					$"losBroken={losActuallyBroken} reason={losReason}"
-			);
-
 			int attempts = 0;
 			const int maxAttempts = 220;
 
@@ -3898,39 +3891,52 @@ namespace ArgrillianThreat
 				}
 			}
 
+			// If we didn't find any usable cell.
 			if (bestCell == origin)
 			{
+				bool losActuallyBroken = false;
+				string reason = "noCandidateOrNoValidLOSBreak";
+
 				Log.Message(
-					$"[ArgrillianThreat][RetreatLOS] patient={patient.LabelShort} hostile={hostile?.LabelShort ?? "null"} " +
-						$"chosenCell=({chosenCell.x},{chosenCell.y},{chosenCell.z}) " +
-						$"scanParams={scanRange:0.##} " +
-						$"losBroken={losActuallyBroken} reason={losReason}"
+					$"[ArgrillianThreat][RetreatLOS] patient={pawn.LabelShort} hostile={hostile?.LabelShort ?? "null"} " +
+					$"chosenCell=({bestCell.x},{bestCell.y},{bestCell.z}) " +
+					$"scanParams={scanRange:0.##} effRadius={effectiveRadius} " +
+					$"losBroken={losActuallyBroken} reason={reason}"
 				);
+
 				return false;
 			}
 
-			if (!GenSight.LineOfSight(hostile.Position, bestCell, map))
+			bool losBrokenNow = !GenSight.LineOfSight(hostile.Position, bestCell, map);
+			if (losBrokenNow)
 			{
 				outCell = bestCell;
 
+				string reason = lockIn ? "losBreak_locked" : "losBreak";
+
 				Log.Message(
-					$"[ArgrillianThreat][RetreatLOS] patient={patient.LabelShort} hostile={hostile?.LabelShort ?? "null"} " +
-						$"chosenCell=({chosenCell.x},{chosenCell.y},{chosenCell.z}) " +
-						$"scanParams={scanRange:0.##} " +
-						$"losBroken={losActuallyBroken} reason={losReason}"
+					$"[ArgrillianThreat][RetreatLOS] patient={pawn.LabelShort} hostile={hostile?.LabelShort ?? "null"} " +
+					$"chosenCell=({bestCell.x},{bestCell.y},{bestCell.z}) " +
+					$"scanParams={scanRange:0.##} effRadius={effectiveRadius} " +
+					$"losBroken={true} reason={reason}"
 				);
 
 				return true;
 			}
 
-			Log.Message(
-				$"[ArgrillianThreat][RetreatLOS] patient={patient.LabelShort} hostile={hostile?.LabelShort ?? "null"} " +
-					$"chosenCell=({chosenCell.x},{chosenCell.y},{chosenCell.z}) " +
-					$"scanParams={scanRange:0.##} " +
-					$"losBroken={losActuallyBroken} reason={losReason}"
-			);
+			// Best candidate still doesn't actually break LOS (should be rare; logs help confirm).
+			{
+				string reason = "bestCellDidNotActuallyBreakLOS";
 
-			return false;
+				Log.Message(
+					$"[ArgrillianThreat][RetreatLOS] patient={pawn.LabelShort} hostile={hostile?.LabelShort ?? "null"} " +
+					$"chosenCell=({bestCell.x},{bestCell.y},{bestCell.z}) " +
+					$"scanParams={scanRange:0.##} effRadius={effectiveRadius} " +
+					$"losBroken={false} reason={reason}"
+				);
+
+				return false;
+			}
 		}
 
 
@@ -4865,14 +4871,18 @@ namespace ArgrillianThreat
 
 		private bool IsInjuredEnoughForCombatMedicToStopFighting(Pawn p)
 		{
-			Log.Message(
-				$"[ArgrillianThreat][RetreatGate] HP interrupt to tend: medic={medic.LabelShort} patient={patient.LabelShort} " +
-					$"patientHP={patient.health.summaryHealth.SummaryHealthPercent:0.00} " +
-					$"switching from={fromState} to=tendNow"
-			);
-			if (p == null || p.Dead || p.health == null) return false;
+			if (p == null || p.Dead || p.health == null)
+				return false;
+
 			float hpPct = p.health.summaryHealth.SummaryHealthPercent;
-			return hpPct <= combatMedicInjuredHPPercentThreshold;
+			bool stop = hpPct <= combatMedicInjuredHPPercentThreshold;
+
+			Log.Message(
+				$"[ArgrillianThreat][RetreatGate] stopFightingIfInjured: pawn={p.LabelShort} " +
+				$"hpPct={hpPct:0.00} threshold={combatMedicInjuredHPPercentThreshold:0.00} result={stop}"
+			);
+
+			return stop;
 		}
 
 		private CompArgrillianThreatSettings Settings(Pawn pawn) => pawn?.GetComp<CompArgrillianThreatSettings>();
