@@ -4682,42 +4682,6 @@ namespace ArgrillianThreat
 	// -----------------------------
 	public class JobGiver_ArgrillianThreatResponse : ThinkNode_JobGiver
 	{
-		// LOGGING-TRACE
-		private static readonly Dictionary<int, int> lastTraceTickByPawnId = new Dictionary<int, int>();
-		private const int TraceLogCooldownTicks = 30;
-
-		public static void TraceMedKit(string eventName, Pawn medic, Pawn patient, bool tendEligibleNow, bool retreatingHeldPatient)
-		{
-			if (medic == null) return;
-
-			int now = Find.TickManager.TicksGame;
-			int mid = medic.thingIDNumber;
-
-			if (mid < 0) return;
-
-			if (lastTraceTickByPawnId.TryGetValue(mid, out int last) && (now - last) < TraceLogCooldownTicks)
-				return;
-
-			lastTraceTickByPawnId[mid] = now;
-
-			// Don’t hard-return if Map is null; we still want a trace for job transition bugs.
-			float pHp = 1f;
-			string held = "null";
-
-			if (patient != null)
-			{
-				held = (patient.thingIDNumber >= 0 ? patient.thingIDNumber.ToString() : "null");
-
-				var summary = patient.health?.summaryHealth;
-				if (summary != null)
-					pHp = summary.SummaryHealthPercent;
-			}
-
-			Log.Message(
-				$"[ArgrillianThreat][TRACE] {eventName} medic={mid} patient={held} pHP={pHp:0.00} tendEligibleNow={tendEligibleNow} retreatingHeldPatient={retreatingHeldPatient}"
-			);
-		}
-
 		public float scanRange = 60f;
 		public float assistAllyScanRange = 50f;
 
@@ -5808,13 +5772,6 @@ namespace ArgrillianThreat
 			if (heldPatient == null)
 			{
 				Log.Message($"[ArgrillianThreat][TRACE-RAW] TendRetreatingAllies.TryGiveJob returning null (pawn/map invalid) pawn={(pawn != null ? pawn.LabelShort : "null")}");
-				JobGiver_ArgrillianThreatResponse.TraceMedKit(
-					"TryGiveJob_noHeldPatient",
-					pawn,
-					patient: null,
-					tendEligibleNow: false,
-					retreatingHeldPatient: false
-				);
 				Pawn bestCandidate = ArgrillianAlertSystem.GetBestPatientFromCalls(pawn, searchRadius);
 
 				if (bestCandidate != null)
@@ -5831,35 +5788,13 @@ namespace ArgrillianThreat
 				// For combat medics: let them fall back to threat job generation only when there is no held patient.
 				if (medicComp.combatMedic)
 				{
-					JobGiver_ArgrillianThreatResponse.TraceMedKit(
-						"TryGiveJob_noHeldPatient_fallbackCombatThreat",
-						pawn,
-						null,
-						tendEligibleNow: false,
-						retreatingHeldPatient: false
-					);
 					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 				}
 				Log.Message($"[ArgrillianThreat][TRACE-RAW] TendRetreatingAllies.TryGiveJob returning null (medic gating) pawn={(pawn != null ? pawn.LabelShort : "null")}");
-				JobGiver_ArgrillianThreatResponse.TraceMedKit(
-					"TryGiveJob_noHeldPatient_nonCombatMedic_returnNull",
-					pawn,
-					null,
-					tendEligibleNow: false,
-					retreatingHeldPatient: false
-				);
 
 				// For non-combat medics/doctors: this job-giver shouldn't do anything if no held patient exists.
 				return null;
 			}
-
-			JobGiver_ArgrillianThreatResponse.TraceMedKit(
-				"TryGiveJob_enteredWithHeldPatient",
-				pawn,
-				heldPatient,
-				tendEligibleNow: false,
-				retreatingHeldPatient: true
-			);
 
 			// Combat capable check.
 			bool IsPawnCombatCapable(Pawn heldPatient)
@@ -5948,13 +5883,6 @@ namespace ArgrillianThreat
 			if (medicComp.doctor)
 			{
 				Log.Message($"[ArgrillianThreat][TRACE-RAW] TendRetreatingAllies.TryGiveJob returning null (medic gating) pawn={(pawn != null ? pawn.LabelShort : "null")}");
-				JobGiver_ArgrillianThreatResponse.TraceMedKit(
-					"TryGiveJob_doctor_returnNull",
-					pawn,
-					heldPatient,
-					tendEligibleNow: false,
-					retreatingHeldPatient: true
-				);
 				return null;
 			}
 
@@ -5964,13 +5892,6 @@ namespace ArgrillianThreat
 			if (!medicComp.combatMedic && medicComp.isMedic)
 			{
 				Log.Message($"[ArgrillianThreat][TRACE-RAW] TendRetreatingAllies.TryGiveJob returning null (medic gating) pawn={(pawn != null ? pawn.LabelShort : "null")}");
-				JobGiver_ArgrillianThreatResponse.TraceMedKit(
-					"TryGiveJob_nonCombatMedic_returnNull",
-					pawn,
-					heldPatient,
-					tendEligibleNow: false,
-					retreatingHeldPatient: true
-				);
 				return null;
 			}
 
@@ -5993,14 +5914,6 @@ namespace ArgrillianThreat
 
 				if (medicInReach)
 				{
-					JobGiver_ArgrillianThreatResponse.TraceMedKit(
-						"TryGiveJob_combatMedicInReach",
-						pawn,
-						heldPatient,
-						tendEligibleNow: true,
-						retreatingHeldPatient: true
-					);
-
 					if (!ArgrillianAlertSystem.IsPawnHeldByMedicStop(heldPatient))
 					{
 						ArgrillianAlertSystem.TryLockPatientHeldByMedic(pawn, heldPatient);
@@ -6013,14 +5926,6 @@ namespace ArgrillianThreat
 
 					if (heldPatient.Downed)
 					{
-						JobGiver_ArgrillianThreatResponse.TraceMedKit(
-							"TryGiveJob_patientDowned_rescueJob",
-							pawn,
-							heldPatient,
-							tendEligibleNow: true,
-							retreatingHeldPatient: true
-						);
-
 						Building_Bed bed = null;
 						if (!TryGetRescueBedForPatient(pawn, heldPatient, out bed) || bed == null)
 							return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
@@ -6031,14 +5936,6 @@ namespace ArgrillianThreat
 						return rescueJob;
 					}
 
-					JobGiver_ArgrillianThreatResponse.TraceMedKit(
-						"TryGiveJob_patientNotDowned_tendJob",
-						pawn,
-						heldPatient,
-						tendEligibleNow: true,
-						retreatingHeldPatient: true
-					);
-
 					Job tendJob2 = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
 					tendJob2.count = 1;
 					ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn);
@@ -6047,13 +5944,6 @@ namespace ArgrillianThreat
 
 				if(!medicInReach)
 				{
-					JobGiver_ArgrillianThreatResponse.TraceMedKit(
-						"TryGiveJob_combatMedicOutOfReach_escort",
-						pawn,
-						heldPatient,
-						tendEligibleNow: false,
-						retreatingHeldPatient: true
-						);
 					// Otherwise: escort medic toward patient so defense can continue while we close distance.
 					IntVec3 escortTarget2 = heldPatient.Position;
 					return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, escortTarget2);
@@ -6076,44 +5966,8 @@ namespace ArgrillianThreat
 
 				if (!medicHasMedicalJobNow)
 				{
-					// If we’re mid "retreatingHeldPatient" medical pipeline and patient is still injured,
-					// don’t switch away from medical during CurJob transition ticks.
-					// Just keep re-issuing tend/rescue until they’re combat-cleared.
-					if (retreatingHeldPatient && escortToMedicalRequired)
-					{
-						// patientClearedForCombat == !escortToMedicalRequired
-						// pHP==0.73 in your logs falls under this path.
-
-						// Re-lock just in case the transition tick momentarily dropped the lock.
-						if (!ArgrillianAlertSystem.IsPawnHeldByMedicStop(heldPatient))
-						{
-							ArgrillianAlertSystem.TryLockPatientHeldByMedic(pawn, heldPatient);
-						}
-
-						if (!ArgrillianMedicalState.HoldPatient.hasFired)
-						{
-							holdPatient.Stop(heldPatient);
-						}
-
-						Job keepMedicalJob = heldPatient.Downed
-							? JobMaker.MakeJob(JobDefOf.Rescue, heldPatient)
-							: JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
-
-						keepMedicalJob.count = 1;
-						ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn);
-						return keepMedicalJob;
-					}
-					
 					if (patientClearedForCombat)
 					{
-						JobGiver_ArgrillianThreatResponse.TraceMedKit(
-							"TryGiveJob_patientClearedForCombat_returnPatientToCombat",
-							pawn,
-							heldPatient,
-							tendEligibleNow: false,
-							retreatingHeldPatient: false
-						);
-
 						// Correct unlock ordering:
 						// 1) unlock patient (needs assignment mapping)
 						// 2) then clear assignment mapping
@@ -6126,14 +5980,6 @@ namespace ArgrillianThreat
 
 					if (patientInBedAndFullyTended || ArgrillianAlertSystem.IsPatientTransferedToMedicOrDoctor(heldPatient))
 					{
-						JobGiver_ArgrillianThreatResponse.TraceMedKit(
-							"TryGiveJob_medicMissionDone_returnMedicToCombat",
-							pawn,
-							heldPatient,
-							tendEligibleNow: false,
-							retreatingHeldPatient: false
-						);
-
 						ArgrillianAlertSystem.ReleasePatientHeldByMedic(pawn);
 						ArgrillianAlertSystem.ReleaseMedicHold(pawn);
 						holdPatient.Reset();
@@ -6145,13 +5991,6 @@ namespace ArgrillianThreat
 				return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 			}
 			Log.Message($"[ArgrillianThreat][TRACE-RAW] TendRetreatingAllies.TryGiveJob returning null (medic gating) pawn={(pawn != null ? pawn.LabelShort : "null")}");
-			JobGiver_ArgrillianThreatResponse.TraceMedKit(
-				"TryGiveJob_noFinalization_returnNull",
-				pawn,
-				heldPatient,
-				tendEligibleNow: false,
-				retreatingHeldPatient: true
-			);
 			return null;
 		}
 
@@ -6221,14 +6060,6 @@ namespace ArgrillianThreat
 			if (pawn == null || patient == null) return false;
 			if (patient.Dead) return false;
 
-			JobGiver_ArgrillianThreatResponse.TraceMedKit(
-				"canTendNow_enter",
-				pawn,
-				patient,
-				tendEligibleNow: false,
-				retreatingHeldPatient: false
-			);
-
 			// Keep-active-job guard: if we're already tending/rescuing this exact patient, don't fail eligibility.
 			Job cur = pawn.CurJob;
 			if (cur != null && cur.def != null)
@@ -6259,13 +6090,6 @@ namespace ArgrillianThreat
 			if (patient.Downed)
 			{
 				bool ok = IsValidTendTarget(patient, pawn);
-				JobGiver_ArgrillianThreatResponse.TraceMedKit(
-					"canTendNow_downedFinalGates",
-					pawn,
-					patient,
-					tendEligibleNow: ok,
-					retreatingHeldPatient: false
-				);
 				return ok;
 			}
 
@@ -6278,14 +6102,6 @@ namespace ArgrillianThreat
 			bool stableOk = stableTicksNow >= requiredStableTicksNow;
 
 			bool tendOk = reachableNow && stableOk;
-
-			JobGiver_ArgrillianThreatResponse.TraceMedKit(
-				"canTendNow_injuredFinalGates",
-				pawn,
-				patient,
-				tendEligibleNow: tendOk,
-				retreatingHeldPatient: false
-			);
 
 			return tendOk;
 		}
