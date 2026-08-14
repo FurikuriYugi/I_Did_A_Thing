@@ -3088,7 +3088,6 @@ namespace ArgrillianThreat
 		{
 			if (pawn == null) return null;
 			if (pawn.Dead) return null;
-			if (pawn.Map == null) return null;
 			if (!pawn.Spawned) return null;
 			if (pawn.Downed) return null;
 
@@ -3110,16 +3109,13 @@ namespace ArgrillianThreat
 			// During retreat, if the patient's HP drops below 80%, the patient stops retreating
 			// (returns null here) so the medic can interrupt and start tending immediately.
 			const float StopRetreatHPPercent = 0.80f;
-			if (hpPct < StopRetreatHPPercent)
-				return null;
+			if (hpPct < StopRetreatHPPercent) return null;
 
 			// Existing patient-retreat eligibility: stop retreat once patient is “too healthy”.
-			if (hpPct > patientRetreatMinHPPercentToTreatAsPatient && hpPct > retreatMinHealthPercent)
-				return null;
+			if (hpPct > patientRetreatMinHPPercentToTreatAsPatient && hpPct > retreatMinHealthPercent) return null;
 
 			// If combat lockout says “don’t retreat right now”, do nothing.
-			if (ArgrillianThreatState.FightLockoutAfterRetreat.RecentlyEndedRetreat(pawn, PatientFightLockoutAfterRetreatTicks))
-				return null;
+			if (ArgrillianThreatState.FightLockoutAfterRetreat.RecentlyEndedRetreat(pawn, PatientFightLockoutAfterRetreatTicks)) return null;
 
 			Map map = pawn.Map;
 
@@ -3128,11 +3124,30 @@ namespace ArgrillianThreat
 			if (hostileForPatient == null || hostileForPatient.Dead || !hostileForPatient.Spawned || hostileForPatient.Map != map)
 				hostileForPatient = ArgrillianThreatState.CombatLock.TryGetLockedHostile(pawn);
 
-			if (hostileForPatient == null || hostileForPatient.Dead || !hostileForPatient.Spawned || hostileForPatient.Map != map)
-				return null;
+			if (hostileForPatient == null || hostileForPatient.Dead || !hostileForPatient.Spawned || hostileForPatient.Map != map) return null;
+
+			// Step 2 stop decision (retreat movement re-eval):
+			// Stop retreat once the patient is no longer currently hit-able by hostile hitability
+			// (distance + LOS/cover via CanHitTarget).
+			{
+				Verb attackVerb = hostileForPatient.TryGetAttackVerb(pawn);
+				if (attackVerb == null)
+					return null;
+
+				// Cheap distance gate first (prevents unnecessary CanHitTarget calls when far away).
+				float d = hostileForPatient.Position.DistanceTo(pawn.Position);
+				if (d > scanRange)
+					return null;
+
+				// If LOS is not present, CanHitTarget may still succeed for some verb types.
+				// But per hitability definition, this is still the authority.
+				if (!attackVerb.CanHitTarget(pawn))
+					return null;
+			}
 
 			// Hysteresis: don’t flip into retreat instantly after fight.
 			byte modeNow = ArgrillianThreatState.ModeTickCache.GetMode(pawn);
+
 			if (modeNow == 0 && !ArgrillianThreatState.ModeTickCache.CanSwitchMode(pawn, patientRetreatModeHysteresisTicks))
 				return null;
 
