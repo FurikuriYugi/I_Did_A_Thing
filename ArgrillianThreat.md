@@ -5550,7 +5550,19 @@ namespace ArgrillianThreat
 			{
 				ArgrillianThreatState.CombatCommit.Clear(pawn);
 
-				if (ArgrillianThreatExecution.TryPickRetreatCell(pawn, hostile, desiredCombatDistanceNow, out IntVec3 retreatCell))
+				Pawn nearestMedic = ArgrillianThreatExecution.FindNearestMedic(pawn);
+
+				// Retreat for combat/patient-agnostic behavior (patient-safe retreat is handled via the wantsPatientSafeRetreat flag path).
+				if (ArgrillianThreatExecution.TryPickRetreatCell(
+						pawn,
+						hostile,
+						nearestMedic,
+						desiredCombatDistanceNow,
+						wantsPatientSafeRetreat: false,
+						patientSafeDistanceFromHostile: patientRetreatSafeDistanceFromHostile,
+						patientRetreatSearchRadius: patientRetreatSearchRadius,
+						retreatSearchRadius: scanRange,
+						out IntVec3 retreatCell))
 				{
 					var keep = ArgrillianGotoHelper.KeepIfSameGoto(pawn, retreatCell);
 					if (keep != null) return keep;
