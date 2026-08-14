@@ -3169,9 +3169,11 @@ namespace ArgrillianThreat
 					pawn,
 					hostileForPatient,
 					nearestMedic,
-					map,
 					patientRetreatSafeDistanceFromHostile,
-					patientRetreatSearchRadius,
+					wantsPatientSafeRetreat: true,
+					patientSafeDistanceFromHostile: patientRetreatSafeDistanceFromHostile,
+					patientRetreatSearchRadius: patientRetreatSearchRadius,
+					retreatSearchRadius: patientRetreatSearchRadius,
 					out safeCell))
 			{
 				Job keep = ArgrillianGotoHelper.KeepIfSameGoto(pawn, safeCell);
@@ -4006,6 +4008,51 @@ namespace ArgrillianThreat
 			}
 
 			return bestCell != pawn.Position;
+		}
+
+		private static bool IsCellInFriendlyLineOfFireForRetreat(Pawn self, Pawn hostile, IntVec3 candidateCell, float friendlyLineToleranceTiles, float friendScanRadius)
+		{
+			if (self == null || hostile == null || self.Map == null) return false;
+
+			Map map = self.Map;
+			Vector3 candidate = candidateCell.ToVector3Shifted();
+
+			float r = Mathf.Max(1f, friendScanRadius);
+
+			foreach (IntVec3 c in GenRadial.RadialCellsAround(self.Position, r, true))
+			{
+				if (!c.InBounds(map) || c.Fogged(map)) continue;
+
+				foreach (Thing thing in c.GetThingList(map))
+				{
+					if (thing is not Pawn friend) continue;
+					if (friend == self || friend.Dead) continue;
+					if (friend.Faction != self.Faction) continue;
+
+					Verb fv = friend.TryGetAttackVerb(hostile);
+					if (fv == null || fv is not Verb_Shoot) continue;
+
+					if (!GenSight.LineOfSight(friend.Position, hostile.Position, map)) continue;
+
+					Vector3 shooter = friend.Position.ToVector3Shifted();
+					Vector3 hostilePos = hostile.Position.ToVector3Shifted();
+
+					Vector3 seg = hostilePos - shooter;
+					float segLenSq = seg.sqrMagnitude;
+					if (segLenSq < 0.001f) continue;
+
+					float projT = Vector3.Dot(candidate - shooter, seg) / segLenSq;
+					projT = Mathf.Clamp01(projT);
+
+					Vector3 closest = shooter + seg * projT;
+					float distToLine = Vector3.Distance(candidate, closest);
+
+					if (distToLine <= friendlyLineToleranceTiles)
+						return true;
+				}
+			}
+
+			return false;
 		}
 
 		public static bool TryPickRetreatCell(
@@ -5013,51 +5060,6 @@ namespace ArgrillianThreat
 			// Engage band grows with desired distance, but has a floor to avoid "always false" at small bands.
 			float engageBand = Mathf.Max(8f, desiredDistanceBand * combatMedicAssistEngageDistanceMultiplier);
 			return d <= engageBand;
-		}
-
-		private bool IsCellInFriendlyLineOfFireForRetreat(Pawn self, Pawn hostile, IntVec3 candidateCell, float friendlyLineToleranceTiles, float friendScanRadius)
-		{
-			if (self == null || hostile == null || self.Map == null) return false;
-
-			Map map = self.Map;
-			Vector3 candidate = candidateCell.ToVector3Shifted();
-
-			float r = Mathf.Max(1f, friendScanRadius);
-
-			foreach (IntVec3 c in GenRadial.RadialCellsAround(self.Position, r, true))
-			{
-				if (!c.InBounds(map) || c.Fogged(map)) continue;
-
-				foreach (Thing thing in c.GetThingList(map))
-				{
-					if (thing is not Pawn friend) continue;
-					if (friend == self || friend.Dead) continue;
-					if (friend.Faction != self.Faction) continue;
-
-					Verb fv = friend.TryGetAttackVerb(hostile);
-					if (fv == null || fv is not Verb_Shoot) continue;
-
-					if (!GenSight.LineOfSight(friend.Position, hostile.Position, map)) continue;
-
-					Vector3 shooter = friend.Position.ToVector3Shifted();
-					Vector3 hostilePos = hostile.Position.ToVector3Shifted();
-
-					Vector3 seg = hostilePos - shooter;
-					float segLenSq = seg.sqrMagnitude;
-					if (segLenSq < 0.001f) continue;
-
-					float projT = Vector3.Dot(candidate - shooter, seg) / segLenSq;
-					projT = Mathf.Clamp01(projT);
-
-					Vector3 closest = shooter + seg * projT;
-					float distToLine = Vector3.Distance(candidate, closest);
-
-					if (distToLine <= friendlyLineToleranceTiles)
-						return true;
-				}
-			}
-
-			return false;
 		}
 
 		private struct HostileMotionSample
