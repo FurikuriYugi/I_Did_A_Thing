@@ -6025,6 +6025,28 @@ namespace ArgrillianThreat
 
 				if (!medicHasMedicalJobNow)
 				{
+					// HARD CONTRACT (retreat interruption):
+					// If patient is still < 80% HP, medic must stay in the tend pipeline.
+					// This prevents the medic from being returned to combat for a transient CurJob-null/non-medical tick.
+					float heldPatientHpPct = 1f;
+					if (heldPatient?.health?.summaryHealth != null)
+						heldPatientHpPct = heldPatient.health.summaryHealth.SummaryHealthPercent;
+
+					if (heldPatientHpPct < 0.80f && !heldPatient.Dead)
+					{
+						// Keep hold pipeline stable.
+						if (!ArgrillianAlertSystem.IsPawnHeldByMedicStop(heldPatient))
+							ArgrillianAlertSystem.TryLockPatientHeldByMedic(pawn, heldPatient);
+
+						if (!ArgrillianMedicalState.HoldPatient.hasFired)
+							holdPatient.Stop(heldPatient);
+
+						Job tendJob2 = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
+						tendJob2.count = 1;
+						ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn);
+						return tendJob2;
+					}
+
 					if (patientClearedForCombat)
 					{
 						// Correct unlock ordering:
@@ -6049,7 +6071,12 @@ namespace ArgrillianThreat
 
 						return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 					}
-					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
+
+					// Not <80 anymore, but not fully cleared either: continue tending to avoid medic leaving too early.
+					Job tendJob3 = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
+					tendJob3.count = 1;
+					ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn);
+					return tendJob3;
 				}
 				Log.Message(
 					$"[ArgrillianThreat][TendRetreatingAllies] missionDone unlock medic={pawn.LabelShort} patient={heldPatient.LabelShort}"
