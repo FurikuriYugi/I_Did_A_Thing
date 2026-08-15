@@ -9,53 +9,118 @@ namespace ArgrillianThreat
 	{
 		private static readonly Dictionary<int, int> heldBlockLogTickByKey = new Dictionary<int, int>();
 
-		// Keep this low-ish; spam control comes from keying by job+where.
 		private const int HeldBlockLogCooldownTicks = 60;
 
-		private static int MakeLogKey(string where, Pawn pawn, Job jobOrNull)
+		private static int MakeLogKey(string where, Pawn pawn, Job curJob, Job incomingJob)
 		{
 			if (pawn == null) return 0;
 
 			int pid = pawn.thingIDNumber;
 
-			string jobDef = "nullJob";
-			if (jobOrNull != null && jobOrNull.def != null)
-				jobDef = jobOrNull.def.defName;
+			string curJobDef = "nullCur";
+			if (curJob != null && curJob.def != null)
+				curJobDef = curJob.def.defName;
+
+			string incomingJobDef = "nullIn";
+			if (incomingJob != null && incomingJob.def != null)
+				incomingJobDef = incomingJob.def.defName;
 
 			unchecked
 			{
 				int h =
-					(where?.GetHashCode() ?? 0) * 397 ^
+					(where != null ? where.GetHashCode() : 0) * 397 ^
 					pid * 17 ^
-					(jobDef?.GetHashCode() ?? 0);
+					(curJobDef != null ? curJobDef.GetHashCode() : 0) ^
+					(incomingJobDef != null ? incomingJobDef.GetHashCode() : 0);
 
 				return h;
 			}
 		}
 
-		private static void LogHeldBlock(string where, Pawn pawn, Job jobOrNull)
+		private static void LogHeldBlock(string where, Pawn pawn, Job curJob, Job incomingJob)
 		{
 			if (pawn == null) return;
 			if (pawn.Map == null) return;
 
 			int now = Find.TickManager.TicksGame;
-			int logKey = MakeLogKey(where, pawn, jobOrNull);
+			int logKey = MakeLogKey(where, pawn, curJob, incomingJob);
 
 			if (heldBlockLogTickByKey.TryGetValue(logKey, out int last) && (now - last) < HeldBlockLogCooldownTicks)
 				return;
 
 			heldBlockLogTickByKey[logKey] = now;
 
-			string jobLabel = "nullJob";
-			if (jobOrNull != null && jobOrNull.def != null)
-				jobLabel = jobOrNull.def.defName;
+			string curJobLabel = "nullCurJob";
+			if (curJob != null && curJob.def != null)
+				curJobLabel = curJob.def.defName;
+
+			string incomingJobLabel = "nullIncomingJob";
+			if (incomingJob != null && incomingJob.def != null)
+				incomingJobLabel = incomingJob.def.defName;
 
 			Log.Message(
-				$"[ArgrillianThreat][HeldPatient] BLOCK where={where} pawn={pawn.Name} job={jobLabel}"
+				$"[ArgrillianThreat][HeldPatient] BLOCK where={where} patient={pawn.Name} curJob={curJobLabel} incomingJob={incomingJobLabel}"
 			);
 		}
 
-		// (rest of your class stays the same)
+		private static bool IsHeldPatientByAnyMedic(Pawn patient)
+		{
+			if (patient == null) return false;
+			if (!patient.Spawned) return false;
+			if (patient.Dead) return false;
+			if (patient.Map == null) return false;
+
+			int pid = patient.thingIDNumber;
+			if (pid < 0) return false;
+
+			// Authority: consult the alert-system medic->patient cache.
+			// No map scanning.
+			foreach (var kvp in ArgrillianAlertSystem.assignedPatientIdByMedicId)
+			{
+				int heldPatientId = kvp.Value;
+				if (heldPatientId == pid)
+					return true;
+			}
+
+			return false;
+		}
+
+		private static bool IsTendJob(Job job)
+		{
+			if (job == null) return false;
+			if (job.def == null) return false;
+
+			// Allow the patient to continue the actual tending job it might already have.
+			// (We only block new job starts; if the patient is already on a Tend job, we don't stop it here.)
+			if (job.def == JobDefOf.TendPatient)
+				return true;
+
+			return false;
+		}
+
+		// Cancellation point: stop job-start attempts for the held patient.
+		// This prevents Rest/Consume and other job-givers from issuing jobs while held.
+		[HarmonyPatch(typeof(Verse.AI.Pawn_JobTracker), nameof(Verse.AI.Pawn_JobTracker.TryFindAndStartJob))]
+		[HarmonyPrefix]
+		public static bool Prefix_TryFindAndStartJob(Verse.AI.Pawn_JobTracker __instance)
+		{
+			if (__instance == null) return true;
+
+			Pawn pawn = __instance.pawn;
+			if (pawn == null) return true;
+
+			if (!IsHeldPatientByAnyMedic(pawn))
+				return true;
+
+			// If the pawn is already on a Tend job, allow continuing it.
+			Job cur = pawn.CurJob;
+			if (IsTendJob(cur))
+				return true;
+
+			// Block ALL new job starts while held.
+			LogHeldBlock("Pawn_JobTracker.TryFindAndStartJob", pawn, cur, null);
+			return false;
+		}
 	}
 
 	// -----------------------------
