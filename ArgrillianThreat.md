@@ -5086,10 +5086,18 @@ namespace ArgrillianThreat
 			float hpPct = p.health.summaryHealth.SummaryHealthPercent;
 			bool stop = hpPct <= combatMedicInjuredHPPercentThreshold;
 
-			Log.Message(
-				$"[ArgrillianThreat][RetreatGate] stopFightingIfInjured: pawn={p.LabelShort} " +
-				$"hpPct={hpPct:0.00} threshold={combatMedicInjuredHPPercentThreshold:0.00} result={stop}"
-			);
+			// Smart logging: don't spam the same gate output every think tick.
+			// 300 ticks ~= 5 seconds at 60 ticks/sec; tune if you want shorter/longer.
+			if (ArgrillianSmartLogCache.ShouldLogForPawn(
+					"RetreatGate_stopFightingIfInjured",
+					p,
+					300))
+			{
+				Log.Message(
+					$"[ArgrillianThreat][RetreatGate] stopFightingIfInjured: pawn={p.LabelShort} " +
+					$"hpPct={hpPct:0.00} threshold={combatMedicInjuredHPPercentThreshold:0.00} result={stop}"
+				);
+			}
 
 			return stop;
 		}
