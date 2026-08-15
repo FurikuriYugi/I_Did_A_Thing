@@ -6107,6 +6107,15 @@ namespace ArgrillianThreat
 
 					if (patientClearedForCombat)
 					{
+						// Step 4/5: stickiness guard (prevents unlock/release firing during the tend transition window)
+						if (recentlyTookTendTask)
+						{
+							Job tendJobStick = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
+							tendJobStick.count = 1;
+							ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn);
+							return tendJobStick;
+						}
+
 						// Correct unlock ordering:
 						// 1) unlock patient (needs assignment mapping)
 						// 2) then clear assignment mapping
@@ -6119,6 +6128,15 @@ namespace ArgrillianThreat
 
 					if (patientInBedAndFullyTended || ArgrillianAlertSystem.IsPatientTransferedToMedicOrDoctor(heldPatient))
 					{
+						// Step 4/5: stickiness guard (prevents unlock/release firing during the tend transition window)
+						if (recentlyTookTendTask)
+						{
+							Job tendJobStick2 = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
+							tendJobStick2.count = 1;
+							ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn);
+							return tendJobStick2;
+						}
+
 						Log.Message(
 							$"[ArgrillianThreat][TendRetreatingAllies] missionDone unlock medic={pawn.LabelShort} patient={heldPatient.LabelShort}"
 						);
