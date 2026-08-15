@@ -1852,16 +1852,16 @@ namespace ArgrillianThreat
 			if (medic.Map == null) return;
 			if (!medic.Spawned) return;
 
-			// If the medic is still actively in the tend pipeline, keep the held-patient mapping.
-			// This prevents: tend -> transient non-medical job state -> medic gets released -> heldPatient becomes null.
-			const int tendStickinessTicks = 60;
+			// Stronger guard:
+			// In your repro, the medic begins tending, enters a transient non-tend tick (wait/job transition),
+			// and the patient then regains job freedom long enough to start "Consume meal" and break tend.
+			// So we keep the held mapping longer before allowing unlock/release.
+			const int tendStickinessTicks = 180;
 
-			// Primary guard: our tend-stickiness window
 			if (ArgrillianMedicalState.MedicTendTaskStickiness.RecentlyTookTendTask(medic, tendStickinessTicks))
 				return;
 
-			// Secondary guard: if the job system still considers us in TendPatient, don't release.
-			// This covers cases where the tend job begins but the stickiness flag hasn't been observed yet.
+			// Also block release if the job system still currently considers us tending this tick.
 			if (medic.CurJob != null && medic.CurJob.def == JobDefOf.TendPatient)
 				return;
 
@@ -1877,9 +1877,10 @@ namespace ArgrillianThreat
 			if (!isAllowedCaller) return;
 
 			int medicId = medic.thingIDNumber;
+			if (medicId < 0) return;
 
-			// IMPORTANT: patient unlock happens via ReleasePatientHeldByMedic (which depends on this mapping).
-			// So keep this method as "remove assignment mapping only".
+			// IMPORTANT: patient unlock depends on this mapping state in your system.
+			// So only clear the mapping after the extended tend transition window.
 			assignedPatientIdByMedicId.Remove(medicId);
 		}
 
