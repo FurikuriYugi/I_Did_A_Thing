@@ -100,13 +100,14 @@ namespace ArgrillianThreat
 
 		// Cancellation point: stop job-start attempts for the held patient.
 		// This prevents Rest/Consume and other job-givers from issuing jobs while held.
-		[HarmonyPatch(typeof(Verse.AI.Pawn_JobTracker), nameof(Verse.AI.Pawn_JobTracker.TryFindAndStartJob))]
+		[HarmonyPatch(typeof(Verse.AI.Pawn_JobTracker), "TryFindAndStartJob")]
 		[HarmonyPrefix]
 		public static bool Prefix_TryFindAndStartJob(Verse.AI.Pawn_JobTracker __instance)
 		{
 			if (__instance == null) return true;
 
 			Pawn pawn = __instance.pawn;
+
 			if (pawn == null) return true;
 
 			if (!IsHeldPatientByAnyMedic(pawn))
@@ -2500,7 +2501,7 @@ namespace ArgrillianThreat
 		}
 
 		// medicId -> current assigned patientId (patientcall identity mapping)
-		private static readonly Dictionary<int, int> assignedPatientIdByMedicId = new Dictionary<int, int>();
+		public static readonly Dictionary<int, int> assignedPatientIdByMedicId = new Dictionary<int, int>();
 
 		// medicId -> current stage (for debug + contract completeness)
 		private static readonly Dictionary<int, MedicJobStage> stageByMedicId = new Dictionary<int, MedicJobStage>();
