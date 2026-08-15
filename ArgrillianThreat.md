@@ -106,8 +106,8 @@ namespace ArgrillianThreat
 		{
 			if (__instance == null) return true;
 
-			Pawn pawn = __instance.pawn;
-
+			// 'pawn' is protected on Pawn_JobTracker, so read it via reflection.
+			Pawn pawn = Traverse.Create(__instance).Field("pawn").GetValue<Pawn>();
 			if (pawn == null) return true;
 
 			if (!IsHeldPatientByAnyMedic(pawn))
