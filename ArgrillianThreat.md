@@ -1332,23 +1332,38 @@ namespace ArgrillianThreat
 			if (medic.Map == null) return;
 
 			// Prevent the patient from breaking heldPatient during the medic's tend-transition window.
-			// This is the core fix for "patient releases hold -> starts Rest/Consume meal -> breaks tend".
 			const int tendStickinessTicks = 180;
 			if (ArgrillianMedicalState.MedicTendTaskStickiness.RecentlyTookTendTask(medic, tendStickinessTicks))
 				return;
 
+			// If the job system still considers the medic to be actively tending, never release.
 			if (medic.CurJob != null && medic.CurJob.def == JobDefOf.TendPatient)
 				return;
 
-			// If this medic had a mapped assigned patient, unlock that patient by patient id.
+			// HARD tend-danger guard:
+			// If this medic is still assigned to that patient AND patient isn't fully tended,
+			// never remove the held lock (prevents Rest/Consume during tend transition).
 			int mid = medic.thingIDNumber;
 			if (mid < 0) return;
 
-			if (assignedPatientIdByMedicId.TryGetValue(mid, out int pid))
+			if (assignedPatientIdByMedicId.TryGetValue(mid, out int pid) && pid >= 0)
 			{
-				if (pid >= 0)
-					lockedPatientIds.Remove(pid);
+				// We only need "are they fully tended yet" to decide whether we may unlock.
+				Pawn patient = ArgrillianAlertSystem.TryGetPatientFromCachedCall(medic.Map, pid);
+				if (patient != null && !patient.Dead && patient.Spawned && patient.Map == medic.Map)
+				{
+					if (patient.Downed)
+						return;
+
+					float hpPct = patient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
+					if (hpPct < 0.999f)
+						return;
+				}
 			}
+
+			// If this medic had a mapped assigned patient, unlock that patient by patient id.
+			if (assignedPatientIdByMedicId.TryGetValue(mid, out int pid2) && pid2 >= 0)
+				lockedPatientIds.Remove(pid2);
 
 			// Also unlock any patient if caller directly removed assignment elsewhere (safety).
 		}
@@ -1885,6 +1900,28 @@ namespace ArgrillianThreat
 			if (medic.CurJob != null && medic.CurJob.def == JobDefOf.TendPatient)
 				return;
 
+			// HARD tend-danger guard:
+			// If the medic is still assigned to a patient and that patient is not yet fully tended
+			// (or is downed), never release/clear held mapping.
+			int mid = medic.thingIDNumber;
+			if (mid >= 0 && assignedPatientIdByMedicId.TryGetValue(mid, out int pid) && pid >= 0)
+			{
+				Pawn patient = ArgrillianAlertSystem.TryGetPatientFromCachedCall(medic.Map, pid);
+				if (patient != null && !patient.Dead && patient.Spawned && patient.Map == medic.Map)
+				{
+					// "Downed" => keep held until rescue-downed is handled by your tending/rescue logic.
+					if (patient.Downed)
+						return;
+
+					float hpPct = patient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
+
+					// Not fully healed => keep held, preventing patient from starting Rest/Consume mid-tend.
+					// Use a slightly strict threshold to avoid float jitter breaking held too early.
+					if (hpPct < 0.999f)
+						return;
+				}
+			}
+
 			// ROLE GATE: only Doctor / Medic / Combat Medic can mutate held-patient assignment state.
 			var medicComp = medic.GetComp<CompArgrillianMedicSettings>();
 			if (medicComp == null) return;
@@ -1896,12 +1933,9 @@ namespace ArgrillianThreat
 
 			if (!isAllowedCaller) return;
 
-			int medicId = medic.thingIDNumber;
-			if (medicId < 0) return;
+			if (mid < 0) return;
 
-			// IMPORTANT: patient unlock depends on this mapping state in your system.
-			// So only clear the mapping after the extended tend transition window.
-			assignedPatientIdByMedicId.Remove(medicId);
+			assignedPatientIdByMedicId.Remove(mid);
 		}
 
 		// ----------------------------
