@@ -1855,7 +1855,14 @@ namespace ArgrillianThreat
 			// If the medic is still actively in the tend pipeline, keep the held-patient mapping.
 			// This prevents: tend -> transient non-medical job state -> medic gets released -> heldPatient becomes null.
 			const int tendStickinessTicks = 60;
+
+			// Primary guard: our tend-stickiness window
 			if (ArgrillianMedicalState.MedicTendTaskStickiness.RecentlyTookTendTask(medic, tendStickinessTicks))
+				return;
+
+			// Secondary guard: if the job system still considers us in TendPatient, don't release.
+			// This covers cases where the tend job begins but the stickiness flag hasn't been observed yet.
+			if (medic.CurJob != null && medic.CurJob.def == JobDefOf.TendPatient)
 				return;
 
 			// ROLE GATE: only Doctor / Medic / Combat Medic can mutate held-patient assignment state.
