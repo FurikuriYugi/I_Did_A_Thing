@@ -5912,6 +5912,23 @@ namespace ArgrillianThreat
 			var medicComp = pawn.GetComp<CompArgrillianMedicSettings>();
 			if (medicComp == null || !medicComp.isMedic || medicComp.doctor) return null;
 
+			if (pawn.CurJob != null && pawn.CurJob.def == JobDefOf.TendPatient)
+			{
+				Thing t = pawn.CurJob.targetA.Thing;
+				Pawn curTendTarget = t as Pawn;
+				if (curTendTarget != null && !curTendTarget.Dead && curTendTarget.Spawned && curTendTarget.Map == pawn.Map)
+				{
+					Pawn heldPatient2 = curTendTarget;
+
+					int stableTicks = GetPatientStableTicksForTend(heldPatient2);
+					if (stableTicks >= 0)
+					{
+						// Keep the medic in tend mode until this tick determines they're done.
+						// (We reuse the existing heldPatient logic below by not early-returning.)
+					}
+				}
+			}
+
 			int now = Find.TickManager != null ? Find.TickManager.TicksGame : 0;
 			int pid = pawn.thingIDNumber;
 
