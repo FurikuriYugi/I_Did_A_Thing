@@ -7,8 +7,31 @@ namespace ArgrillianThreat
 	[HarmonyPatch]
 	public static class ArgrillianHeldPatientJobBlocker
 	{
-		private static readonly Dictionary<int, int> heldBlockLogTickByPawnId = new Dictionary<int, int>();
-		private const int HeldBlockLogCooldownTicks = 30;
+		private static readonly Dictionary<int, int> heldBlockLogTickByKey = new Dictionary<int, int>();
+
+		// Keep this low-ish; spam control comes from keying by job+where.
+		private const int HeldBlockLogCooldownTicks = 60;
+
+		private static int MakeLogKey(string where, Pawn pawn, Job jobOrNull)
+		{
+			if (pawn == null) return 0;
+
+			int pid = pawn.thingIDNumber;
+
+			string jobDef = "nullJob";
+			if (jobOrNull != null && jobOrNull.def != null)
+				jobDef = jobOrNull.def.defName;
+
+			unchecked
+			{
+				int h =
+					(where?.GetHashCode() ?? 0) * 397 ^
+					pid * 17 ^
+					(jobDef?.GetHashCode() ?? 0);
+
+				return h;
+			}
+		}
 
 		private static void LogHeldBlock(string where, Pawn pawn, Job jobOrNull)
 		{
@@ -16,12 +39,12 @@ namespace ArgrillianThreat
 			if (pawn.Map == null) return;
 
 			int now = Find.TickManager.TicksGame;
-			int id = pawn.thingIDNumber;
+			int logKey = MakeLogKey(where, pawn, jobOrNull);
 
-			if (heldBlockLogTickByPawnId.TryGetValue(id, out int last) && (now - last) < HeldBlockLogCooldownTicks)
+			if (heldBlockLogTickByKey.TryGetValue(logKey, out int last) && (now - last) < HeldBlockLogCooldownTicks)
 				return;
 
-			heldBlockLogTickByPawnId[id] = now;
+			heldBlockLogTickByKey[logKey] = now;
 
 			string jobLabel = "nullJob";
 			if (jobOrNull != null && jobOrNull.def != null)
@@ -32,68 +55,7 @@ namespace ArgrillianThreat
 			);
 		}
 
-		private static Pawn GetPawnFromJobTracker(Pawn_JobTracker jt)
-		{
-			if (jt == null) return null;
-
-			var f = HarmonyLib.AccessTools.Field(typeof(Pawn_JobTracker), "pawn");
-			if (f == null) return null;
-
-			return f.GetValue(jt) as Pawn;
-		}
-
-		private static bool IsPawnLocked(Pawn pawn)
-		{
-			if (pawn == null) return false;
-			if (pawn.Dead || !pawn.Spawned) return false;
-			if (pawn.Map == null) return false;
-
-			return ArgrillianAlertSystem.IsPawnHeldByMedicStop(pawn);
-		}
-
-		[HarmonyPatch(typeof(ThinkNode_JobGiver), nameof(ThinkNode_JobGiver.TryIssueJobPackage))]
-		public static bool Prefix_ThinkNode_JobGiver_TryIssueJobPackage(Pawn pawn, ref Job __result)
-		{
-			if (pawn == null) return true;
-			if (pawn.Dead) return true;
-			if (pawn.Map == null) return true;
-
-			bool locked = IsPawnLocked(pawn);
-			if (locked)
-			{
-				LogHeldBlock("TryIssueJobPackage", pawn, null);
-
-				__result = null;
-				return false;
-			}
-
-			return true;
-		}
-
-		[HarmonyPatch(typeof(Pawn_JobTracker), "TryStartJob")]
-		public static bool Prefix_Pawn_JobTracker_TryStartJob(Pawn_JobTracker __instance, Job job)
-		{
-			Pawn pawn = GetPawnFromJobTracker(__instance);
-			if (pawn == null) return true;
-			if (pawn.Dead) return true;
-
-			if (IsPawnLocked(pawn))
-			{
-				string jobLabel;
-				if (job == null)
-					jobLabel = "nullJob";
-				else if (job.def == null)
-					jobLabel = "nullJobDef";
-				else
-					jobLabel = job.def.defName;
-
-				LogHeldBlock("TryStartJob", pawn, job);
-
-				return false;
-			}
-
-			return true;
-		}
+		// (rest of your class stays the same)
 	}
 
 	// -----------------------------
