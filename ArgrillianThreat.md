@@ -5912,7 +5912,7 @@ namespace ArgrillianThreat
 			var medicComp = pawn.GetComp<CompArgrillianMedicSettings>();
 			if (medicComp == null || !medicComp.isMedic || medicComp.doctor) return null;
 
-			if (pawn.CurJob != null && pawn.CurJob.def == JobDefOf.TendPatient)
+			/*if (pawn.CurJob != null && pawn.CurJob.def == JobDefOf.TendPatient)
 			{
 				Thing t = pawn.CurJob.targetA.Thing;
 				Pawn curTendTarget = t as Pawn;
@@ -5927,13 +5927,35 @@ namespace ArgrillianThreat
 						// (We reuse the existing heldPatient logic below by not early-returning.)
 					}
 				}
-			}
+			}*/
 
 			int now = Find.TickManager != null ? Find.TickManager.TicksGame : 0;
 			int pid = pawn.thingIDNumber;
 
-			// Acquire held patient from alert-system authority.
-			Pawn heldPatient = ArgrillianAlertSystem.GetHeldPatientForMedic(pawn);
+					// Acquire held patient from alert-system authority, but during tend-transition
+			// prefer the *current tend job target* so combat medic tending can't fall-through
+			// with heldPatient=null.
+			Pawn heldPatient = null;
+
+			if (pawn.CurJob != null && pawn.CurJob.def == JobDefOf.TendPatient)
+			{
+				Thing t = pawn.CurJob.targetA.Thing;
+				Pawn curTendTarget = t as Pawn;
+
+				if (curTendTarget != null &&
+					!curTendTarget.Dead &&
+					curTendTarget.Spawned &&
+					curTendTarget.Map == pawn.Map)
+				{
+					heldPatient = curTendTarget;
+				}
+			}
+
+			if (heldPatient == null)
+			{
+				// Acquire held patient from alert-system authority.
+				heldPatient = ArgrillianAlertSystem.GetHeldPatientForMedic(pawn);
+			}
 
 			if (heldPatient == null)
 			{
