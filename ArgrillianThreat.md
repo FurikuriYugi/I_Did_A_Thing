@@ -6003,17 +6003,26 @@ namespace ArgrillianThreat
 			// with heldPatient=null.
 			Pawn heldPatient = null;
 
-			if (pawn.CurJob != null && pawn.CurJob.def == JobDefOf.TendPatient)
+			if (pawn.CurJob != null)
 			{
-				Thing t = pawn.CurJob.targetA.Thing;
-				Pawn curTendTarget = t as Pawn;
+				Job cur = pawn.CurJob;
 
-				if (curTendTarget != null &&
-					!curTendTarget.Dead &&
-					curTendTarget.Spawned &&
-					curTendTarget.Map == pawn.Map)
+				bool looksLikeTend =
+					(cur.def == JobDefOf.TendPatient) ||
+					(cur.def != null && cur.def.defName != null && cur.def.defName.IndexOf("TendPatient", System.StringComparison.OrdinalIgnoreCase) >= 0);
+
+				if (looksLikeTend)
 				{
-					heldPatient = curTendTarget;
+					Thing t = cur.targetA.Thing;
+					Pawn curTendTarget = t as Pawn;
+
+					if (curTendTarget != null &&
+						!curTendTarget.Dead &&
+						curTendTarget.Spawned &&
+						curTendTarget.Map == pawn.Map)
+					{
+						heldPatient = curTendTarget;
+					}
 				}
 			}
 
