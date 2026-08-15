@@ -73,8 +73,6 @@ namespace ArgrillianThreat
 			int pid = patient.thingIDNumber;
 			if (pid < 0) return false;
 
-			// Authority: consult the alert-system medic->patient cache.
-			// No map scanning.
 			foreach (var kvp in ArgrillianAlertSystem.assignedPatientIdByMedicId)
 			{
 				int heldPatientId = kvp.Value;
@@ -90,35 +88,57 @@ namespace ArgrillianThreat
 			if (job == null) return false;
 			if (job.def == null) return false;
 
-			// Allow the patient to continue the actual tending job it might already have.
-			// (We only block new job starts; if the patient is already on a Tend job, we don't stop it here.)
-			if (job.def == JobDefOf.TendPatient)
-				return true;
-
-			return false;
+			return job.def == JobDefOf.TendPatient;
 		}
 
-		// Cancellation point: stop job-start attempts for the held patient.
-		// This prevents Rest/Consume and other job-givers from issuing jobs while held.
-		[HarmonyPatch(typeof(Verse.AI.Pawn_JobTracker), "TryFindAndStartJob")]
-		[HarmonyPrefix]
-		public static bool Prefix_TryFindAndStartJob(Verse.AI.Pawn_JobTracker __instance)
+		// IMPORTANT: explicitly target the non-public method.
+		private static MethodBase TargetMethod()
 		{
-			if (__instance == null) return true;
+			Type t = typeof(Pawn_JobTracker);
+			return t.GetMethod(
+				"TryFindAndStartJob",
+				BindingFlags.Instance | BindingFlags.NonPublic
+			);
+		}
 
-			// 'pawn' is protected on Pawn_JobTracker, so read it via reflection.
-			Pawn pawn = Traverse.Create(__instance).Field("pawn").GetValue<Pawn>();
-			if (pawn == null) return true;
+		[HarmonyTargetMethod]
+		private static MethodBase Target() => TargetMethod();
 
-			if (!IsHeldPatientByAnyMedic(pawn))
+		[HarmonyPrefix]
+		public static bool Prefix_TryFindAndStartJob(object __instance)
+		{
+			// We purposely avoid relying on protected fields in the signature.
+			// Instead, pull pawn via reflection.
+			Pawn pawn = null;
+			try
+			{
+				var tt = __instance != null ? __instance.GetType() : null;
+				if (tt == null) return true;
+
+				FieldInfo f = tt.GetField("pawn", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+				if (f != null)
+					pawn = f.GetValue(__instance) as Pawn;
+			}
+			catch
+			{
+				return true;
+			}
+
+			if (pawn == null)
 				return true;
 
-			// If the pawn is already on a Tend job, allow continuing it.
+			bool held = IsHeldPatientByAnyMedic(pawn);
+
+			// Debug: this should now appear if the patch is firing.
+			Log.Message($"[ArgrillianThreat][HeldPatient][PatchTick] patient={pawn.Name} heldByMedic={held}");
+
+			if (!held)
+				return true;
+
 			Job cur = pawn.CurJob;
 			if (IsTendJob(cur))
 				return true;
 
-			// Block ALL new job starts while held.
 			LogHeldBlock("Pawn_JobTracker.TryFindAndStartJob", pawn, cur, null);
 			return false;
 		}
