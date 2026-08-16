@@ -91,13 +91,14 @@ namespace ArgrillianThreat
 			return job.def == JobDefOf.TendPatient;
 		}
 
-		// IMPORTANT: explicitly target the non-public method.
+		// FIX: RimWorld 1.6.4871 may expose TryFindAndStartJob as public.
+		// So we must search both public and non-public.
 		private static MethodBase TargetMethod()
 		{
 			Type t = typeof(Pawn_JobTracker);
 			return t.GetMethod(
 				"TryFindAndStartJob",
-				BindingFlags.Instance | BindingFlags.NonPublic
+				BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic
 			);
 		}
 
@@ -107,8 +108,6 @@ namespace ArgrillianThreat
 		[HarmonyPrefix]
 		public static bool Prefix_TryFindAndStartJob(object __instance)
 		{
-			// We purposely avoid relying on protected fields in the signature.
-			// Instead, pull pawn via reflection.
 			Pawn pawn = null;
 			try
 			{
@@ -129,7 +128,7 @@ namespace ArgrillianThreat
 
 			bool held = IsHeldPatientByAnyMedic(pawn);
 
-			// Debug: this should now appear if the patch is firing.
+			// Debug: should appear only if the Harmony prefix is applied.
 			Log.Message($"[ArgrillianThreat][HeldPatient][PatchTick] patient={pawn.Name} heldByMedic={held}");
 
 			if (!held)
