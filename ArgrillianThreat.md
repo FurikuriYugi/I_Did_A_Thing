@@ -4,7 +4,6 @@ namespace ArgrillianThreat
 	// HARD BLOCK: prevent RimWorld from assigning ANY new jobs
 	// to the currently held patient (alert-system authority)
 	// -----------------------------
-	// -----------------------------
 	[StaticConstructorOnStartup]
 	[HarmonyPatch(typeof(Pawn_JobTracker), "TryFindAndStartJob")]
 	public static class ArgrillianHeldPatientJobBlocker
@@ -5212,17 +5211,28 @@ namespace ArgrillianThreat
 			float hpPct = p.health.summaryHealth.SummaryHealthPercent;
 			bool stop = hpPct <= combatMedicInjuredHPPercentThreshold;
 
-			// Smart logging: don't spam the same gate output every think tick.
-			// 300 ticks ~= 5 seconds at 60 ticks/sec; tune if you want shorter/longer.
-			if (ArgrillianSmartLogCache.ShouldLogForPawn(
-					"RetreatGate_stopFightingIfInjured",
-					p,
-					300))
+			// Only check/log for actual cached patient calls (avoid medic/other pawns spam).
+			bool isKnownPatientCall = false;
+			if (p.Map != null)
 			{
-				Log.Message(
-					$"[ArgrillianThreat][RetreatGate] stopFightingIfInjured: pawn={p.LabelShort} " +
-					$"hpPct={hpPct:0.00} threshold={combatMedicInjuredHPPercentThreshold:0.00} result={stop}"
-				);
+				if (ArgrillianAlertSystem.TryGetCachedPatientCallSeverity(p.Map, p, out _))
+					isKnownPatientCall = true;
+			}
+
+			// Emit only when this pawn is a known patient call, or when the threshold is actually met.
+			if (isKnownPatientCall || stop)
+			{
+				// Smart logging: still cooldown per pawn, but for patients only (or stop-trigger).
+				if (ArgrillianSmartLogCache.ShouldLogForPawn(
+						"RetreatGate_stopFightingIfInjured",
+						p,
+						300))
+				{
+					Log.Message(
+						$"[ArgrillianThreat][RetreatGate] stopFightingIfInjured: pawn={p.LabelShort} " +
+						$"hpPct={hpPct:0.00} threshold={combatMedicInjuredHPPercentThreshold:0.00} result={stop} knownPatientCall={isKnownPatientCall}"
+					);
+				}
 			}
 
 			return stop;
