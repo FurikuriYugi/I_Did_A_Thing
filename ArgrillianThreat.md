@@ -4,26 +4,23 @@ namespace ArgrillianThreat
 	// HARD BLOCK: prevent RimWorld from assigning ANY new jobs
 	// to the currently held patient (alert-system authority)
 	// -----------------------------
+	// -----------------------------
 	[StaticConstructorOnStartup]
 	[HarmonyPatch(typeof(Pawn_JobTracker), "TryFindAndStartJob")]
 	public static class ArgrillianHeldPatientJobBlocker
 	{
 		private static readonly Dictionary<int, int> heldBlockLogTickByKey = new Dictionary<int, int>();
 		private static readonly HashSet<string> oneShot = new HashSet<string>();
-
 		private const int HeldBlockLogCooldownTicks = 60;
-
 		private static readonly string HarmonyId = "FurikuriYugi.ArgrillianThreat.HeldPatientJobBlocker";
 
-		static ArgrillianHeldPatientJobBlocker()
+		static ArgrillianThreatJobBlocker()
 		{
 			try
 			{
 				Log.Message($"[ArgrillianThreat][HeldPatient][HarmonyInit] static ctor firing -> attempting manual patch id={HarmonyId}");
-
 				var harmony = new HarmonyLib.Harmony(HarmonyId);
 				harmony.PatchAll();
-
 				Log.Message($"[ArgrillianThreat][HeldPatient][HarmonyInit] PatchAll() called");
 			}
 			catch (Exception ex)
@@ -39,10 +36,8 @@ namespace ArgrillianThreat
 				Log.Message(msg);
 				return;
 			}
-
 			if (oneShot.Contains(key))
 				return;
-
 			oneShot.Add(key);
 			Log.Message(msg);
 		}
@@ -50,13 +45,10 @@ namespace ArgrillianThreat
 		private static int MakeLogKey(string where, Pawn pawn, Job curJob, Job incomingJob)
 		{
 			if (pawn == null) return 0;
-
 			int pid = pawn.thingIDNumber;
-
 			string curJobDef = "nullCur";
 			if (curJob != null && curJob.def != null)
 				curJobDef = curJob.def.defName;
-
 			string incomingJobDef = "nullIn";
 			if (incomingJob != null && incomingJob.def != null)
 				incomingJobDef = incomingJob.def.defName;
@@ -68,7 +60,6 @@ namespace ArgrillianThreat
 					pid * 17 ^
 					(curJobDef != null ? curJobDef.GetHashCode() : 0) ^
 					(incomingJobDef != null ? incomingJobDef.GetHashCode() : 0);
-
 				return h;
 			}
 		}
@@ -77,7 +68,6 @@ namespace ArgrillianThreat
 		{
 			if (pawn == null) return;
 			if (pawn.Map == null) return;
-
 			int now = Find.TickManager.TicksGame;
 			int logKey = MakeLogKey(where, pawn, curJob, incomingJob);
 
@@ -103,30 +93,26 @@ namespace ArgrillianThreat
 		{
 			if (job == null) return false;
 			if (job.def == null) return false;
-
 			return job.def == JobDefOf.TendPatient;
 		}
 
 		private static Pawn TryExtractPawn(Pawn_JobTracker __instance)
 		{
 			if (__instance == null) return null;
-
 			try
 			{
 				var tt = __instance.GetType();
-
-				var f = tt.GetField("pawn", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+				var f = tt.GetField("pawn", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
 				if (f != null)
 					return f.GetValue(__instance) as Pawn;
 
-				var p = tt.GetProperty("Pawn", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+				var p = tt.GetProperty("Pawn", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
 				if (p != null)
 					return p.GetValue(__instance, null) as Pawn;
 			}
 			catch
 			{
 			}
-
 			return null;
 		}
 
@@ -147,7 +133,6 @@ namespace ArgrillianThreat
 			// IMPORTANT: combat-medic tend-transition “held” is represented by lockedPatientIds
 			// which is queried via ArgrillianAlertSystem.IsPawnHeldByMedicStop.
 			bool heldNow = ArgrillianAlertSystem.IsPawnHeldByMedicStop(pawn);
-
 			if (!heldNow)
 				return true;
 
@@ -159,6 +144,37 @@ namespace ArgrillianThreat
 
 			LogHeldBlock("Pawn_JobTracker.TryFindAndStartJob", pawn, cur, null);
 			return false;
+		}
+
+		// Hard second gate: even if job selection is blocked/allowed incorrectly upstream,
+		// prevent RimWorld from starting the job while held.
+		[HarmonyPatch(typeof(Pawn_JobTracker), "StartJob")]
+		public static class StartJobPatch
+		{
+			[HarmonyPrefix]
+			public static bool Prefix_StartJob(
+				Pawn_JobTracker __instance,
+				Verse.AI.Job newJob
+			)
+			{
+				if (__instance == null) return true;
+
+				Pawn pawn = ArgrillianHeldPatientJobBlocker.TryExtractPawn(__instance);
+				if (pawn == null) return true;
+				if (pawn.Map == null) return true;
+
+				bool heldNow = ArgrillianAlertSystem.IsPawnHeldByMedicStop(pawn);
+				if (!heldNow)
+					return true;
+
+				// If RimWorld is trying to start TendPatient for the held pawn, allow.
+				if (IsTendJob(newJob))
+					return true;
+
+				// curJob can be null during transitions; we only care about blocking the start.
+				LogHeldBlock("Pawn_JobTracker.StartJob", pawn, pawn.CurJob, newJob);
+				return false;
+			}
 		}
 	}
 
