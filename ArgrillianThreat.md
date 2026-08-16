@@ -12,6 +12,23 @@ namespace ArgrillianThreat
 
 		private const int HeldBlockLogCooldownTicks = 60;
 
+		static ArgrillianHeldPatientJobBlocker()
+		{
+			// Force-registration: if the mod's global PatchAll isn't running for some reason,
+			// this ensures this patch class still applies.
+			try
+			{
+				var h = new Harmony("ArgrillianThreat.HeldPatientJobBlocker");
+				h.PatchAll(typeof(ArgrillianHeldPatientJobBlocker).Assembly);
+
+				Log.Message("[ArgrillianThreat][HeldPatient][PatchInit] PatchAll(self) executed.");
+			}
+			catch (Exception ex)
+			{
+				Log.Message($"[ArgrillianThreat][HeldPatient][PatchInit] PatchAll(self) FAILED ex={ex}");
+			}
+		}
+
 		private static void OneShotLog(string key, string msg)
 		{
 			if (oneShot.Contains(key))
@@ -106,7 +123,6 @@ namespace ArgrillianThreat
 		{
 			Type t = typeof(Pawn_JobTracker);
 
-			// Try exact-name match first (no parameters).
 			MethodBase m = t.GetMethod(
 				"TryFindAndStartJob",
 				BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic
@@ -137,7 +153,7 @@ namespace ArgrillianThreat
 		{
 			OneShotLog(
 				"PrefixInvokedOnce",
-				"[ArgrillianThreat][HeldPatient][PatchTick] Prefix_TryFindAndStartJob invoked (now checking heldPatient gate)"
+				"[ArgrillianThreat][HeldPatient][PatchTick] Prefix_TryFindAndStartJob invoked (checking heldPatient gate)"
 			);
 
 			Pawn pawn = null;
