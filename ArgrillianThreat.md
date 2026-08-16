@@ -6371,6 +6371,17 @@ namespace ArgrillianThreat
 						return tendJob2;
 					}
 
+					// Stabilization: if the patient is NOT yet fully tended, do not allow
+					// the medic to flip to escort/combat early due to reach flicker.
+					// This prevents the “stop tending and leave patient standing” transition.
+					if (!patientIsFullyTended)
+					{
+						Job tendJob2 = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
+						tendJob2.count = 1;
+						ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn);
+						return tendJob2;
+					}
+
 					// Hard transition guard:
 					// If the patient is still on the held-transition "Wait" job, do NOT allow
 					// the combat medic to leave the tend pipeline into escort/fighting behavior.
