@@ -162,6 +162,10 @@ namespace ArgrillianThreat
 			if (IsTendJob(cur))
 				return true;
 
+			// REQUIRED: allow the patient's held Wait job to remain in control while held.
+			if (cur != null && cur.def == JobDefOf.Wait)
+				return true;
+
 			LogHeldBlock("Pawn_JobTracker.TryFindAndStartJob", pawn, cur, null);
 			return false;
 		}
