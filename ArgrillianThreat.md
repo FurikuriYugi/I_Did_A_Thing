@@ -137,17 +137,26 @@ namespace ArgrillianThreat
 				"[ArgrillianThreat][HeldPatient][PatchTick] Prefix_TryFindAndStartJob ENTERED"
 			);
 
-			if (__instance == null) return true;
+			if (__instance == null)
+				return true;
 
 			Pawn pawn = TryExtractPawn(__instance);
-			if (pawn == null) return true;
-			if (pawn.Map == null) return true;
+			if (pawn == null)
+				return true;
+
+			if (pawn.Map == null)
+				return true;
 
 			bool heldNow = ArgrillianAlertSystem.IsPawnHeldByMedicStop(pawn);
 			if (!heldNow)
 				return true;
 
 			Verse.AI.Job cur = pawn.CurJob;
+
+			OneShotLog(
+				"PrefixHeldNowEntered",
+				$"[ArgrillianThreat][HeldPatient][PatchTick] Prefix_TryFindAndStartJob heldNow=TRUE patient={pawn.LabelShort} curJob={(cur?.def?.defName ?? "null")}"
+			);
 
 			// Let tending continue.
 			if (IsTendJob(cur))
@@ -175,6 +184,11 @@ namespace ArgrillianThreat
 			)
 			{
 				if (__instance == null) return true;
+
+				OneShotLog(
+					"StartJobPrefixEntered",
+					"[ArgrillianThreat][HeldPatient][PatchTick] Prefix_StartJob ENTERED"
+				);
 
 				Pawn pawn = ArgrillianHeldPatientJobBlocker.TryExtractPawn(__instance);
 				if (pawn == null) return true;
