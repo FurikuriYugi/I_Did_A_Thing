@@ -99,26 +99,6 @@ namespace ArgrillianThreat
 			);
 		}
 
-		private static bool IsHeldPatientByAnyMedic(Pawn patient)
-		{
-			if (patient == null) return false;
-			if (!patient.Spawned) return false;
-			if (patient.Dead) return false;
-			if (patient.Map == null) return false;
-
-			int pid = patient.thingIDNumber;
-			if (pid < 0) return false;
-
-			foreach (var kvp in ArgrillianAlertSystem.assignedPatientIdByMedicId)
-			{
-				int heldPatientId = kvp.Value;
-				if (heldPatientId == pid)
-					return true;
-			}
-
-			return false;
-		}
-
 		private static bool IsTendJob(Job job)
 		{
 			if (job == null) return false;
@@ -127,10 +107,35 @@ namespace ArgrillianThreat
 			return job.def == JobDefOf.TendPatient;
 		}
 
+		private static Pawn TryExtractPawn(Pawn_JobTracker __instance)
+		{
+			if (__instance == null) return null;
+
+			// RimWorld internals vary across versions; keep your reflection extraction but don’t assume field name exists.
+			try
+			{
+				var tt = __instance.GetType();
+
+				// Most common internal field name in RimWorld: "pawn"
+				var f = tt.GetField("pawn", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+				if (f != null)
+					return f.GetValue(__instance) as Pawn;
+
+				// Fallback: try "Pawn" property if field was renamed/changed.
+				var p = tt.GetProperty("Pawn", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+				if (p != null)
+					return p.GetValue(__instance, null) as Pawn;
+			}
+			catch
+			{
+			}
+
+			return null;
+		}
+
 		[HarmonyPrefix]
 		public static bool Prefix_TryFindAndStartJob(Pawn_JobTracker __instance)
 		{
-			// If Harmony is working, you'll see this log at least once per pawn-tracker lifetime (or at least repeatedly).
 			OneShotLog(
 				"PrefixEntered",
 				"[ArgrillianThreat][HeldPatient][PatchTick] Prefix_TryFindAndStartJob ENTERED"
@@ -138,29 +143,21 @@ namespace ArgrillianThreat
 
 			if (__instance == null) return true;
 
-			Pawn pawn = null;
-			try
-			{
-				var tt = __instance.GetType();
-				var f = tt.GetField("pawn", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-				if (f != null)
-					pawn = f.GetValue(__instance) as Pawn;
-			}
-			catch
-			{
-				return true;
-			}
-
+			Pawn pawn = TryExtractPawn(__instance);
 			if (pawn == null) return true;
+			if (pawn.Map == null) return true;
 
-			bool held = IsHeldPatientByAnyMedic(pawn);
+			// CRITICAL CHANGE:
+			// Use the authoritative helper that checks the same held-patient cache your medic logic uses.
+			bool held = ArgrillianAlertSystem.IsPawnAssignedPatient(pawn);
 
-			Log.Message($"[ArgrillianThreat][HeldPatient][PatchTick] patient={pawn.Name} heldByMedic={held}");
-
+			// Only log when we actually care.
 			if (!held)
 				return true;
 
 			Job cur = pawn.CurJob;
+
+			// Keep tending pipeline intact.
 			if (IsTendJob(cur))
 				return true;
 
