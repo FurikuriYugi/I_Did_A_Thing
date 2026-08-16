@@ -6133,27 +6133,10 @@ namespace ArgrillianThreat
 			var medicComp = pawn.GetComp<CompArgrillianMedicSettings>();
 			if (medicComp == null || !medicComp.isMedic || medicComp.doctor) return null;
 
-			/*if (pawn.CurJob != null && pawn.CurJob.def == JobDefOf.TendPatient)
-			{
-				Thing t = pawn.CurJob.targetA.Thing;
-				Pawn curTendTarget = t as Pawn;
-				if (curTendTarget != null && !curTendTarget.Dead && curTendTarget.Spawned && curTendTarget.Map == pawn.Map)
-				{
-					Pawn heldPatient2 = curTendTarget;
-
-					int stableTicks = GetPatientStableTicksForTend(heldPatient2);
-					if (stableTicks >= 0)
-					{
-						// Keep the medic in tend mode until this tick determines they're done.
-						// (We reuse the existing heldPatient logic below by not early-returning.)
-					}
-				}
-			}*/
-
 			int now = Find.TickManager != null ? Find.TickManager.TicksGame : 0;
 			int pid = pawn.thingIDNumber;
 
-					// Acquire held patient from alert-system authority, but during tend-transition
+			// Acquire held patient from alert-system authority, but during tend-transition
 			// prefer the *current tend job target* so combat medic tending can't fall-through
 			// with heldPatient=null.
 			Pawn heldPatient = null;
@@ -6211,13 +6194,18 @@ namespace ArgrillianThreat
 			{
 				// Stabilization: during retreat/held-for-tend transition, recover the last tend target
 				// so we don't fall out to escort/threat logic with a null heldPatient.
-				if (retreatingHeldPatient)
+				int tendStickinessTicksFallback = 90;
+
+				bool recentlyTookTendTask =
+					ArgrillianMedicalState.MedicTendTaskStickiness.RecentlyTookTendTask(pawn, tendStickinessTicksFallback);
+
+				if (recentlyTookTendTask)
 				{
-					int tendStickinessTicksFallback = 90;
-					if (ArgrillianMedicalState.MedicTendTaskStickiness.TryGetRecentlyTendedPatient(pawn, tendStickinessTicksFallback, out Pawn cachedPatient) && cachedPatient != null)
-					{
-						heldPatient = cachedPatient;
-					}
+					// When heldPatient flickers to null, re-resolve it from the alert-system held assignment cache.
+					Pawn cachedHeld = ArgrillianAlertSystem.GetHeldPatientForMedic(pawn);
+
+					if (cachedHeld != null)
+						heldPatient = cachedHeld;
 				}
 
 				if (heldPatient == null)
