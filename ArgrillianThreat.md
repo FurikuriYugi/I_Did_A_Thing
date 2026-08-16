@@ -8,8 +8,18 @@ namespace ArgrillianThreat
 	public static class ArgrillianHeldPatientJobBlocker
 	{
 		private static readonly Dictionary<int, int> heldBlockLogTickByKey = new Dictionary<int, int>();
+		private static readonly HashSet<string> oneShot = new HashSet<string>();
 
 		private const int HeldBlockLogCooldownTicks = 60;
+
+		private static void OneShotLog(string key, string msg)
+		{
+			if (oneShot.Contains(key))
+				return;
+
+			oneShot.Add(key);
+			Log.Message(msg);
+		}
 
 		private static int MakeLogKey(string where, Pawn pawn, Job curJob, Job incomingJob)
 		{
@@ -91,15 +101,32 @@ namespace ArgrillianThreat
 			return job.def == JobDefOf.TendPatient;
 		}
 
-		// FIX: RimWorld 1.6.4871 may expose TryFindAndStartJob as public.
-		// So we must search both public and non-public.
+		// FIX/DIAG: log whether Harmony can actually find the method.
 		private static MethodBase TargetMethod()
 		{
 			Type t = typeof(Pawn_JobTracker);
-			return t.GetMethod(
+
+			// Try exact-name match first (no parameters).
+			MethodBase m = t.GetMethod(
 				"TryFindAndStartJob",
 				BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic
 			);
+
+			if (m == null)
+			{
+				OneShotLog(
+					"TargetMethodNull",
+					"[ArgrillianThreat][HeldPatient][PatchBind] FAILED to resolve Pawn_JobTracker.TryFindAndStartJob (method not found)"
+				);
+				return null;
+			}
+
+			OneShotLog(
+				"TargetMethodOk",
+				$"[ArgrillianThreat][HeldPatient][PatchBind] resolved target method: {t.FullName}.{m.Name} (IsPublic={(m as System.Reflection.MethodInfo)?.IsPublic})"
+			);
+
+			return m;
 		}
 
 		[HarmonyTargetMethod]
@@ -108,6 +135,11 @@ namespace ArgrillianThreat
 		[HarmonyPrefix]
 		public static bool Prefix_TryFindAndStartJob(object __instance)
 		{
+			OneShotLog(
+				"PrefixInvokedOnce",
+				"[ArgrillianThreat][HeldPatient][PatchTick] Prefix_TryFindAndStartJob invoked (now checking heldPatient gate)"
+			);
+
 			Pawn pawn = null;
 			try
 			{
@@ -128,7 +160,6 @@ namespace ArgrillianThreat
 
 			bool held = IsHeldPatientByAnyMedic(pawn);
 
-			// Debug: should appear only if the Harmony prefix is applied.
 			Log.Message($"[ArgrillianThreat][HeldPatient][PatchTick] patient={pawn.Name} heldByMedic={held}");
 
 			if (!held)
