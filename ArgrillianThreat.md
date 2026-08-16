@@ -5220,28 +5220,43 @@ namespace ArgrillianThreat
 				return false;
 
 			float hpPct = p.health.summaryHealth.SummaryHealthPercent;
-			bool stop = hpPct <= combatMedicInjuredHPPercentThreshold;
 
-			// Only check/log for actual cached patient calls (avoid medic/other pawns spam).
-			bool isKnownPatientCall = false;
-			if (p.Map != null)
+			// Medic self-injury always forces stop.
+			bool stopFromMedicHP = hpPct <= combatMedicInjuredHPPercentThreshold;
+
+			// Core flow: if a combat medic has a cached patient call to tend, they must stop fighting
+			// so they can retreat/tend (no scanning; consume alert-system cache).
+			bool stopFromPatientCalls = false;
 			{
-				if (ArgrillianAlertSystem.TryGetCachedPatientCallSeverity(p.Map, p, out _))
-					isKnownPatientCall = true;
+				// Only apply this cache-based stop rule to actual combat medics.
+				var medicComp = p.GetComp<CompArgrillianMedicSettings>();
+				bool isCombatMedic =
+					(medicComp != null && medicComp.isMedic && medicComp.combatMedic);
+
+				if (isCombatMedic && p.Map != null)
+				{
+					// Consumer of cached patient calls (event-driven source-of-truth),
+					// with an upper bound so we don't over-retreat.
+					Pawn best = ArgrillianAlertSystem.GetBestPatientFromCalls(p, combatMedicAidMinRange);
+					if (best != null && !best.Dead && best.Spawned && best.Map == p.Map)
+					{
+						// Bleed/downed are the “urgent” states that should trigger tend pipeline.
+						stopFromPatientCalls = (best.Downed || best.health.summaryHealth.SummaryHealthPercent <= combatMedicInjuredHPPercentThreshold);
+					}
+				}
 			}
 
-			// Emit only when this pawn is a known patient call, or when the threshold is actually met.
-			if (isKnownPatientCall || stop)
+			bool stop = stopFromMedicHP || stopFromPatientCalls;
+
+			// Keep the “only meaningful logging” behavior, but log based on the new decision inputs.
+			if (stop || stopFromPatientCalls)
 			{
-				// Smart logging: still cooldown per pawn, but for patients only (or stop-trigger).
-				if (ArgrillianSmartLogCache.ShouldLogForPawn(
-						"RetreatGate_stopFightingIfInjured",
-						p,
-						300))
+				if (ArgrillianSmartLogCache.ShouldLogForPawn("RetreatGate_stopFightingIfInjured", p, 300))
 				{
 					Log.Message(
 						$"[ArgrillianThreat][RetreatGate] stopFightingIfInjured: pawn={p.LabelShort} " +
-						$"hpPct={hpPct:0.00} threshold={combatMedicInjuredHPPercentThreshold:0.00} result={stop} knownPatientCall={isKnownPatientCall}"
+						$"hpPct={hpPct:0.00} threshold={combatMedicInjuredHPPercentThreshold:0.00} " +
+						$"stopFromMedicHP={stopFromMedicHP} stopFromPatientCalls={stopFromPatientCalls} result={stop}"
 					);
 				}
 			}
