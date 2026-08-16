@@ -5100,7 +5100,7 @@ namespace ArgrillianThreat
 		public float patientRetreatPreferMedicRadius = 70f;
 
 		// Patient-like threshold
-		public static float patientRetreatMinHPPercentToTreatAsPatient = 0.9f;
+		public static float patientRetreatMinHPPercentToTreatAsPatient = 0.85f;
 
 		public int patientRetreatModeHysteresisTicks = 180;
 		private float patientRetreatMinHPPercentToLockIn = 0.9f;
