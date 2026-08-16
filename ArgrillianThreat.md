@@ -4,7 +4,8 @@ namespace ArgrillianThreat
 	// HARD BLOCK: prevent RimWorld from assigning ANY new jobs
 	// to the currently held patient (alert-system authority)
 	// -----------------------------
-	[HarmonyPatch]
+	[StaticConstructorOnStartup]
+	[HarmonyPatch(typeof(Pawn_JobTracker), "TryFindAndStartJob")]
 	public static class ArgrillianHeldPatientJobBlocker
 	{
 		private static readonly Dictionary<int, int> heldBlockLogTickByKey = new Dictionary<int, int>();
@@ -12,25 +13,33 @@ namespace ArgrillianThreat
 
 		private const int HeldBlockLogCooldownTicks = 60;
 
+		private static readonly string HarmonyId = "FurikuriYugi.ArgrillianThreat.HeldPatientJobBlocker";
+
 		static ArgrillianHeldPatientJobBlocker()
 		{
-			// Force-registration: if the mod's global PatchAll isn't running for some reason,
-			// this ensures this patch class still applies.
 			try
 			{
-				var h = new Harmony("ArgrillianThreat.HeldPatientJobBlocker");
-				h.PatchAll(typeof(ArgrillianHeldPatientJobBlocker).Assembly);
+				Log.Message($"[ArgrillianThreat][HeldPatient][HarmonyInit] static ctor firing -> attempting manual patch id={HarmonyId}");
 
-				Log.Message("[ArgrillianThreat][HeldPatient][PatchInit] PatchAll(self) executed.");
+				var harmony = new HarmonyLib.Harmony(HarmonyId);
+				harmony.PatchAll();
+
+				Log.Message($"[ArgrillianThreat][HeldPatient][HarmonyInit] PatchAll() called");
 			}
 			catch (Exception ex)
 			{
-				Log.Message($"[ArgrillianThreat][HeldPatient][PatchInit] PatchAll(self) FAILED ex={ex}");
+				Log.Message($"[ArgrillianThreat][HeldPatient][HarmonyInit] FAILED ex={ex}");
 			}
 		}
 
 		private static void OneShotLog(string key, string msg)
 		{
+			if (string.IsNullOrEmpty(key))
+			{
+				Log.Message(msg);
+				return;
+			}
+
 			if (oneShot.Contains(key))
 				return;
 
@@ -118,51 +127,22 @@ namespace ArgrillianThreat
 			return job.def == JobDefOf.TendPatient;
 		}
 
-		// FIX/DIAG: log whether Harmony can actually find the method.
-		private static MethodBase TargetMethod()
-		{
-			Type t = typeof(Pawn_JobTracker);
-
-			MethodBase m = t.GetMethod(
-				"TryFindAndStartJob",
-				BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic
-			);
-
-			if (m == null)
-			{
-				OneShotLog(
-					"TargetMethodNull",
-					"[ArgrillianThreat][HeldPatient][PatchBind] FAILED to resolve Pawn_JobTracker.TryFindAndStartJob (method not found)"
-				);
-				return null;
-			}
-
-			OneShotLog(
-				"TargetMethodOk",
-				$"[ArgrillianThreat][HeldPatient][PatchBind] resolved target method: {t.FullName}.{m.Name} (IsPublic={(m as System.Reflection.MethodInfo)?.IsPublic})"
-			);
-
-			return m;
-		}
-
-		[HarmonyTargetMethod]
-		private static MethodBase Target() => TargetMethod();
-
 		[HarmonyPrefix]
-		public static bool Prefix_TryFindAndStartJob(object __instance)
+		public static bool Prefix_TryFindAndStartJob(Pawn_JobTracker __instance)
 		{
+			// If Harmony is working, you'll see this log at least once per pawn-tracker lifetime (or at least repeatedly).
 			OneShotLog(
-				"PrefixInvokedOnce",
-				"[ArgrillianThreat][HeldPatient][PatchTick] Prefix_TryFindAndStartJob invoked (checking heldPatient gate)"
+				"PrefixEntered",
+				"[ArgrillianThreat][HeldPatient][PatchTick] Prefix_TryFindAndStartJob ENTERED"
 			);
+
+			if (__instance == null) return true;
 
 			Pawn pawn = null;
 			try
 			{
-				var tt = __instance != null ? __instance.GetType() : null;
-				if (tt == null) return true;
-
-				FieldInfo f = tt.GetField("pawn", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+				var tt = __instance.GetType();
+				var f = tt.GetField("pawn", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
 				if (f != null)
 					pawn = f.GetValue(__instance) as Pawn;
 			}
@@ -171,8 +151,7 @@ namespace ArgrillianThreat
 				return true;
 			}
 
-			if (pawn == null)
-				return true;
+			if (pawn == null) return true;
 
 			bool held = IsHeldPatientByAnyMedic(pawn);
 
