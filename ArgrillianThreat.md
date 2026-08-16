@@ -1059,19 +1059,27 @@ namespace ArgrillianThreat
 		public static class MedicTendTaskStickiness
 		{
 			private static readonly Dictionary<int, int> lastTendTaskTick = new Dictionary<int, int>();
+			private static readonly Dictionary<int, int> lastTendTaskPatientId = new Dictionary<int, int>();
 			private static int lastNow = -1;
 			private static int Now => Find.TickManager.TicksGame;
 
-			public static void MarkTask(Pawn medic)
+			public static void MarkTask(Pawn medic, Pawn patient)
 			{
 				if (medic == null) return;
 
 				int now = Now;
 				if (lastNow != -1 && now < lastNow)
+				{
 					lastTendTaskTick.Clear();
+					lastTendTaskPatientId.Clear();
+				}
+
 				lastNow = now;
 
 				lastTendTaskTick[medic.thingIDNumber] = now;
+
+				if (patient != null && !patient.Dead && patient.Spawned)
+					lastTendTaskPatientId[medic.thingIDNumber] = patient.thingIDNumber;
 			}
 
 			public static bool RecentlyTookTendTask(Pawn medic, int stickinessTicks)
@@ -1080,13 +1088,42 @@ namespace ArgrillianThreat
 
 				int now = Now;
 				if (lastNow != -1 && now < lastNow)
+				{
 					lastTendTaskTick.Clear();
+					lastTendTaskPatientId.Clear();
+				}
 				lastNow = now;
 
 				if (!lastTendTaskTick.TryGetValue(medic.thingIDNumber, out int t))
 					return false;
 
 				return (now - t) <= stickinessTicks;
+			}
+
+			public static bool TryGetRecentlyTendedPatientId(Pawn medic, int stickinessTicks, out int patientId)
+			{
+				patientId = -1;
+				if (medic == null) return false;
+
+				int now = Now;
+				if (lastNow != -1 && now < lastNow)
+				{
+					lastTendTaskTick.Clear();
+					lastTendTaskPatientId.Clear();
+				}
+				lastNow = now;
+
+				if (!lastTendTaskTick.TryGetValue(medic.thingIDNumber, out int t))
+					return false;
+
+				if ((now - t) > stickinessTicks)
+					return false;
+
+				if (!lastTendTaskPatientId.TryGetValue(medic.thingIDNumber, out int pid) || pid < 0)
+					return false;
+
+				patientId = pid;
+				return true;
 			}
 		}
 
@@ -6172,21 +6209,35 @@ namespace ArgrillianThreat
 			// HARD GUARD: don't touch heldPatient.health / heldPatient.InBed() etc if no patient is held.
 			if (heldPatient == null)
 			{
-				// For combat medics: let them fall back to threat job generation only when there is no held patient.
-				if (medicComp.combatMedic)
+				// Stabilization: during retreat/held-for-tend transition, recover the last tend target
+				// so we don't fall out to escort/threat logic with a null heldPatient.
+				if (retreatingHeldPatient)
 				{
-					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
-				}
-				if (ArgrillianSmartLogCache.ShouldLogForPawn("TendRetreatingAllies_TryGiveJobNullGate_DoctorOrMedic", pawn, 180))
-				{
-					Log.Message(
-						$"[ArgrillianThreat][TendRetreatingAllies] TryGiveJob null (gate) pawn={(pawn != null ? pawn.LabelShort : "null")} heldPatient={(heldPatient != null ? heldPatient.LabelShort : "null")} " +
-							$"tendEligible=false retreatingHeldPatient=true"
-					);
+					int tendStickinessTicksFallback = 90;
+					if (ArgrillianMedicalState.MedicTendTaskStickiness.TryGetRecentlyTendedPatient(pawn, tendStickinessTicksFallback, out Pawn cachedPatient) && cachedPatient != null)
+					{
+						heldPatient = cachedPatient;
+					}
 				}
 
-				// For non-combat medics/doctors: this job-giver shouldn't do anything if no held patient exists.
-				return null;
+				if (heldPatient == null)
+				{
+					// For combat medics: let them fall back to threat job generation only when there is no held patient.
+					if (medicComp.combatMedic)
+					{
+						return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
+					}
+					if (ArgrillianSmartLogCache.ShouldLogForPawn("TendRetreatingAllies_TryGiveJobNullGate_DoctorOrMedic", pawn, 180))
+					{
+						Log.Message(
+							$"[ArgrillianThreat][TendRetreatingAllies] TryGiveJob null (gate) pawn={(pawn != null ? pawn.LabelShort : "null")} heldPatient={(heldPatient != null ? heldPatient.LabelShort : "null")} " +
+							$"tendEligible=false retreatingHeldPatient=true"
+						);
+					}
+
+					// For non-combat medics/doctors: this job-giver shouldn't do anything if no held patient exists.
+					return null;
+				}
 			}
 
 			// Combat capable check.
@@ -6305,13 +6356,20 @@ namespace ArgrillianThreat
 			// ----------------------------
 			if (medicComp.isMedic && medicComp.combatMedic)
 			{
+				// Recover heldPatient from the alert-system assignment cache if it flickers null.
+				if (heldPatient == null)
+				{
+					heldPatient = ArgrillianAlertSystem.GetHeldPatientForMedic(pawn);
+				}
+
 				if (heldPatient == null || heldPatient.Dead || heldPatient.Spawned == false)
 				{
 					// Give back control to the threat response / other jobgivers.
 					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 				}
 
-				if (pawn == null || pawn.Map == null || heldPatient.Map == null || pawn.Map != heldPatient.Map) return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
+				if (pawn == null || pawn.Map == null || heldPatient.Map == null || pawn.Map != heldPatient.Map)
+					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
 
 				// While held-for-tend, we keep patient “locked” until the medic pipeline ends
 				// (or the medic stops being in reach and we fall through to escort/combat logic).
@@ -6345,13 +6403,13 @@ namespace ArgrillianThreat
 
 						Job rescueJob = JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
 						rescueJob.count = 1;
-						ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn);
+						ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn, heldPatient);
 						return rescueJob;
 					}
 
 					Job tendJob2 = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
 					tendJob2.count = 1;
-					ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn);
+					ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn, heldPatient);
 					return tendJob2;
 				}
 
@@ -6367,7 +6425,7 @@ namespace ArgrillianThreat
 					{
 						Job tendJob2 = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
 						tendJob2.count = 1;
-						ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn);
+						ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn, heldPatient);
 						return tendJob2;
 					}
 
@@ -6378,7 +6436,7 @@ namespace ArgrillianThreat
 					{
 						Job tendJob2 = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
 						tendJob2.count = 1;
-						ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn);
+						ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn, heldPatient);
 						return tendJob2;
 					}
 
@@ -6391,7 +6449,7 @@ namespace ArgrillianThreat
 					{
 						Job tendJob2 = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
 						tendJob2.count = 1;
-						ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn);
+						ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn, heldPatient);
 						return tendJob2;
 					}
 
@@ -6448,7 +6506,7 @@ namespace ArgrillianThreat
 
 						Job tendJob2 = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
 						tendJob2.count = 1;
-						ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn);
+						ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn, heldPatient);
 						return tendJob2;
 					}
 
@@ -6459,7 +6517,7 @@ namespace ArgrillianThreat
 					{
 						Job tendJob3 = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
 						tendJob3.count = 1;
-						ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn);
+						ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn, heldPatient);
 						return tendJob3;
 					}
 
@@ -6470,7 +6528,7 @@ namespace ArgrillianThreat
 						{
 							Job tendJobStick = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
 							tendJobStick.count = 1;
-							ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn);
+							ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn, heldPatient);
 							return tendJobStick;
 						}
 
@@ -6491,7 +6549,7 @@ namespace ArgrillianThreat
 						{
 							Job tendJobStick2 = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
 							tendJobStick2.count = 1;
-							ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn);
+							ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn, heldPatient);
 							return tendJobStick2;
 						}
 
@@ -6509,7 +6567,7 @@ namespace ArgrillianThreat
 					// Not <80 anymore, but not fully cleared either: continue tending to avoid medic leaving too early.
 					Job tendJob4 = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
 					tendJob4.count = 1;
-					ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn);
+					ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn, heldPatient);
 					return tendJob4;
 				}
 				Log.Message(
