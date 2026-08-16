@@ -9,12 +9,14 @@ namespace ArgrillianThreat
 	[HarmonyPatch(typeof(Pawn_JobTracker), "TryFindAndStartJob")]
 	public static class ArgrillianHeldPatientJobBlocker
 	{
-		private static readonly Dictionary<int, int> heldBlockLogTickByKey = new Dictionary<int, int>();
-		private static readonly HashSet<string> oneShot = new HashSet<string>();
+		private static readonly System.Collections.Generic.Dictionary<int, int> heldBlockLogTickByKey =
+			new System.Collections.Generic.Dictionary<int, int>();
+		private static readonly System.Collections.Generic.HashSet<string> oneShot =
+			new System.Collections.Generic.HashSet<string>();
 		private const int HeldBlockLogCooldownTicks = 60;
 		private static readonly string HarmonyId = "FurikuriYugi.ArgrillianThreat.HeldPatientJobBlocker";
 
-		static ArgrillianThreatJobBlocker()
+		static ArgrillianHeldPatientJobBlocker()
 		{
 			try
 			{
@@ -23,7 +25,7 @@ namespace ArgrillianThreat
 				harmony.PatchAll();
 				Log.Message($"[ArgrillianThreat][HeldPatient][HarmonyInit] PatchAll() called");
 			}
-			catch (Exception ex)
+			catch (System.Exception ex)
 			{
 				Log.Message($"[ArgrillianThreat][HeldPatient][HarmonyInit] FAILED ex={ex}");
 			}
@@ -42,13 +44,15 @@ namespace ArgrillianThreat
 			Log.Message(msg);
 		}
 
-		private static int MakeLogKey(string where, Pawn pawn, Job curJob, Job incomingJob)
+		private static int MakeLogKey(string where, Pawn pawn, Verse.AI.Job curJob, Verse.AI.Job incomingJob)
 		{
 			if (pawn == null) return 0;
+
 			int pid = pawn.thingIDNumber;
 			string curJobDef = "nullCur";
 			if (curJob != null && curJob.def != null)
 				curJobDef = curJob.def.defName;
+
 			string incomingJobDef = "nullIn";
 			if (incomingJob != null && incomingJob.def != null)
 				incomingJobDef = incomingJob.def.defName;
@@ -64,11 +68,12 @@ namespace ArgrillianThreat
 			}
 		}
 
-		private static void LogHeldBlock(string where, Pawn pawn, Job curJob, Job incomingJob)
+		private static void LogHeldBlock(string where, Pawn pawn, Verse.AI.Job curJob, Verse.AI.Job incomingJob)
 		{
 			if (pawn == null) return;
 			if (pawn.Map == null) return;
-			int now = Find.TickManager.TicksGame;
+
+			int now = Verse.Find.TickManager.TicksGame;
 			int logKey = MakeLogKey(where, pawn, curJob, incomingJob);
 
 			if (heldBlockLogTickByKey.TryGetValue(logKey, out int last) && (now - last) < HeldBlockLogCooldownTicks)
@@ -89,11 +94,11 @@ namespace ArgrillianThreat
 			);
 		}
 
-		private static bool IsTendJob(Job job)
+		private static bool IsTendJob(Verse.AI.Job job)
 		{
 			if (job == null) return false;
 			if (job.def == null) return false;
-			return job.def == JobDefOf.TendPatient;
+			return job.def == RimWorld.JobDefOf.TendPatient;
 		}
 
 		private static Pawn TryExtractPawn(Pawn_JobTracker __instance)
@@ -102,11 +107,20 @@ namespace ArgrillianThreat
 			try
 			{
 				var tt = __instance.GetType();
-				var f = tt.GetField("pawn", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
+
+				var f = tt.GetField("pawn",
+					System.Reflection.BindingFlags.Instance |
+					System.Reflection.BindingFlags.NonPublic |
+					System.Reflection.BindingFlags.Public);
+
 				if (f != null)
 					return f.GetValue(__instance) as Pawn;
 
-				var p = tt.GetProperty("Pawn", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
+				var p = tt.GetProperty("Pawn",
+					System.Reflection.BindingFlags.Instance |
+					System.Reflection.BindingFlags.Public |
+					System.Reflection.BindingFlags.NonPublic);
+
 				if (p != null)
 					return p.GetValue(__instance, null) as Pawn;
 			}
@@ -130,13 +144,11 @@ namespace ArgrillianThreat
 			if (pawn == null) return true;
 			if (pawn.Map == null) return true;
 
-			// IMPORTANT: combat-medic tend-transition “held” is represented by lockedPatientIds
-			// which is queried via ArgrillianAlertSystem.IsPawnHeldByMedicStop.
 			bool heldNow = ArgrillianAlertSystem.IsPawnHeldByMedicStop(pawn);
 			if (!heldNow)
 				return true;
 
-			Job cur = pawn.CurJob;
+			Verse.AI.Job cur = pawn.CurJob;
 
 			// Let tending continue.
 			if (IsTendJob(cur))
@@ -146,8 +158,7 @@ namespace ArgrillianThreat
 			return false;
 		}
 
-		// Hard second gate: even if job selection is blocked/allowed incorrectly upstream,
-		// prevent RimWorld from starting the job while held.
+		// Hard second gate: prevent RimWorld from starting the job while held.
 		[HarmonyPatch(typeof(Pawn_JobTracker), "StartJob")]
 		public static class StartJobPatch
 		{
@@ -171,7 +182,6 @@ namespace ArgrillianThreat
 				if (IsTendJob(newJob))
 					return true;
 
-				// curJob can be null during transitions; we only care about blocking the start.
 				LogHeldBlock("Pawn_JobTracker.StartJob", pawn, pawn.CurJob, newJob);
 				return false;
 			}
