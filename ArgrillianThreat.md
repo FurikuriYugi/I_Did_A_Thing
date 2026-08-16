@@ -161,6 +161,13 @@ namespace ArgrillianThreat
 		[HarmonyPatch(typeof(Pawn_JobTracker), "StartJob")]
 		public static class StartJobPatch
 		{
+			private static bool IsWaitJob(Verse.AI.Job job)
+			{
+				if (job == null) return false;
+				if (job.def == null) return false;
+				return job.def == JobDefOf.Wait;
+			}
+
 			[HarmonyPrefix]
 			public static bool Prefix_StartJob(
 				Pawn_JobTracker __instance,
@@ -178,7 +185,11 @@ namespace ArgrillianThreat
 					return true;
 
 				// If RimWorld is trying to start TendPatient for the held pawn, allow.
-				if (IsTendJob(newJob))
+				if (ArgrillianHeldPatientJobBlocker.IsTendJob(newJob))
+					return true;
+
+				// Allow the patient's held long-duration wait state so it can actually enter/maintain the held flow.
+				if (IsWaitJob(newJob))
 					return true;
 
 				LogHeldBlock("Pawn_JobTracker.StartJob", pawn, pawn.CurJob, newJob);
