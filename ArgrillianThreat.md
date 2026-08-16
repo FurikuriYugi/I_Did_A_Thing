@@ -6371,6 +6371,19 @@ namespace ArgrillianThreat
 						return tendJob2;
 					}
 
+					// Hard transition guard:
+					// If the patient is still on the held-transition "Wait" job, do NOT allow
+					// the combat medic to leave the tend pipeline into escort/fighting behavior.
+					// TendPatient will still path/approach, so the medic will "go to" the patient
+					// while respecting held+tending lifecycle.
+					if (heldPatient.CurJob != null && heldPatient.CurJob.def == JobDefOf.Wait)
+					{
+						Job tendJob2 = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
+						tendJob2.count = 1;
+						ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn);
+						return tendJob2;
+					}
+
 					if (ArgrillianSmartLogCache.ShouldLogForPawn("TendRetreatingAllies_combatMedicOutOfReach", pawn, 120))
 					{
 						Log.Message(
