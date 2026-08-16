@@ -111,17 +111,13 @@ namespace ArgrillianThreat
 		{
 			if (__instance == null) return null;
 
-			// RimWorld internals vary across versions; keep your reflection extraction but don’t assume field name exists.
 			try
 			{
 				var tt = __instance.GetType();
-
-				// Most common internal field name in RimWorld: "pawn"
 				var f = tt.GetField("pawn", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
 				if (f != null)
 					return f.GetValue(__instance) as Pawn;
 
-				// Fallback: try "Pawn" property if field was renamed/changed.
 				var p = tt.GetProperty("Pawn", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
 				if (p != null)
 					return p.GetValue(__instance, null) as Pawn;
@@ -136,6 +132,7 @@ namespace ArgrillianThreat
 		[HarmonyPrefix]
 		public static bool Prefix_TryFindAndStartJob(Pawn_JobTracker __instance)
 		{
+			// One-shot “we are alive” marker (prevents spam).
 			OneShotLog(
 				"PrefixEntered",
 				"[ArgrillianThreat][HeldPatient][PatchTick] Prefix_TryFindAndStartJob ENTERED"
@@ -147,17 +144,17 @@ namespace ArgrillianThreat
 			if (pawn == null) return true;
 			if (pawn.Map == null) return true;
 
-			// CRITICAL CHANGE:
-			// Use the authoritative helper that checks the same held-patient cache your medic logic uses.
-			bool held = ArgrillianAlertSystem.IsPawnAssignedPatient(pawn);
+			// CRITICAL FIX:
+			// combat medic tend-transition “held” is represented by lockedPatientIds.
+			bool heldNow = ArgrillianMedicalState.IsPawnHeldByMedicStop(pawn);
 
-			// Only log when we actually care.
-			if (!held)
+			// Only block if the held-guard is active.
+			if (!heldNow)
 				return true;
 
 			Job cur = pawn.CurJob;
 
-			// Keep tending pipeline intact.
+			// Let tending continue if RimWorld decides the pawn is already on TendPatient.
 			if (IsTendJob(cur))
 				return true;
 
