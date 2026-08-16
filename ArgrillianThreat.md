@@ -114,6 +114,7 @@ namespace ArgrillianThreat
 			try
 			{
 				var tt = __instance.GetType();
+
 				var f = tt.GetField("pawn", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
 				if (f != null)
 					return f.GetValue(__instance) as Pawn;
@@ -132,7 +133,6 @@ namespace ArgrillianThreat
 		[HarmonyPrefix]
 		public static bool Prefix_TryFindAndStartJob(Pawn_JobTracker __instance)
 		{
-			// One-shot “we are alive” marker (prevents spam).
 			OneShotLog(
 				"PrefixEntered",
 				"[ArgrillianThreat][HeldPatient][PatchTick] Prefix_TryFindAndStartJob ENTERED"
@@ -144,17 +144,16 @@ namespace ArgrillianThreat
 			if (pawn == null) return true;
 			if (pawn.Map == null) return true;
 
-			// CRITICAL FIX:
-			// combat medic tend-transition “held” is represented by lockedPatientIds.
-			bool heldNow = ArgrillianMedicalState.IsPawnHeldByMedicStop(pawn);
+			// IMPORTANT: combat-medic tend-transition “held” is represented by lockedPatientIds
+			// which is queried via ArgrillianAlertSystem.IsPawnHeldByMedicStop.
+			bool heldNow = ArgrillianAlertSystem.IsPawnHeldByMedicStop(pawn);
 
-			// Only block if the held-guard is active.
 			if (!heldNow)
 				return true;
 
 			Job cur = pawn.CurJob;
 
-			// Let tending continue if RimWorld decides the pawn is already on TendPatient.
+			// Let tending continue.
 			if (IsTendJob(cur))
 				return true;
 
