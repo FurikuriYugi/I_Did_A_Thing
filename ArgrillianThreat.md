@@ -6357,6 +6357,20 @@ namespace ArgrillianThreat
 
 				if(!medicInReach)
 				{
+					// If we just started tending, keep the medic locked into the tend pipeline
+					// for this transition tick even if distance is temporarily out of range.
+					int tendStickinessTicks2 = 60;
+					bool recentlyTookTendTask2 =
+						ArgrillianMedicalState.MedicTendTaskStickiness.RecentlyTookTendTask(pawn, tendStickinessTicks2);
+
+					if (recentlyTookTendTask2)
+					{
+						Job tendJob2 = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
+						tendJob2.count = 1;
+						ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn);
+						return tendJob2;
+					}
+
 					if (ArgrillianSmartLogCache.ShouldLogForPawn("TendRetreatingAllies_combatMedicOutOfReach", pawn, 120))
 					{
 						Log.Message(
