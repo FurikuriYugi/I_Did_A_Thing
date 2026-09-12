@@ -6723,6 +6723,23 @@ namespace ArgrillianThreat
 
 				if (medicInReach)
 				{
+					if (patientMedicallyFinished ||
+					ArgrillianAlertSystem.IsPatientTransferedToMedicOrDoctor(
+						heldPatient))
+					{
+						Log.Message(
+							$"[ArgrillianThreat][TendRetreatingAllies] " +
+							$"medical completion unlock medic={pawn.LabelShort} " +
+							$"patient={heldPatient.LabelShort} " +
+							$"inBed={patientInBed} " +
+							$"combatCapable={IsPawnCombatCapable(heldPatient)}");
+
+						ArgrillianAlertSystem.CompletePatientHeldByMedic(pawn);
+						holdPatient.Reset();
+
+						return null;
+					}
+
 					if (ArgrillianSmartLogCache.ShouldLogForPawn(
 						"TendRetreatingAllies_combatMedicInReach",
 						pawn,
@@ -6934,23 +6951,6 @@ namespace ArgrillianThreat
 
 					return new JobGiver_ArgrillianThreatResponse()
 						.GiveCombatThreatJob(heldPatient);
-				}
-
-				if (patientMedicallyFinished ||
-				ArgrillianAlertSystem.IsPatientTransferedToMedicOrDoctor(
-					heldPatient))
-				{
-					Log.Message(
-						$"[ArgrillianThreat][TendRetreatingAllies] " +
-						$"medical completion unlock medic={pawn.LabelShort} " +
-						$"patient={heldPatient.LabelShort} " +
-						$"inBed={patientInBed} " +
-						$"combatCapable={IsPawnCombatCapable(heldPatient)}");
-
-					ArgrillianAlertSystem.CompletePatientHeldByMedic(pawn);
-					holdPatient.Reset();
-
-					return null;
 				}
 
 				/*if (patientInBedAndFullyTended ||
