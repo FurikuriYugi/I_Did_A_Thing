@@ -6649,6 +6649,12 @@ namespace ArgrillianThreat
 				patientStabilityOkForTerminal &&
 				patientIsFullyTended;
 
+			bool patientMedicallyFinished =
+				!heldPatient.Downed &&
+				!patientIsBleedingNow &&
+				patientStabilityOkForTerminal &&
+				patientIsFullyTended;
+
 			bool patientClearedForCombat =
 				patientHP >= 0.8f &&
 				!heldPatient.Downed &&
@@ -6930,7 +6936,24 @@ namespace ArgrillianThreat
 						.GiveCombatThreatJob(heldPatient);
 				}
 
-				if (patientInBedAndFullyTended ||
+				if (patientMedicallyFinished ||
+				ArgrillianAlertSystem.IsPatientTransferedToMedicOrDoctor(
+					heldPatient))
+				{
+					Log.Message(
+						$"[ArgrillianThreat][TendRetreatingAllies] " +
+						$"medical completion unlock medic={pawn.LabelShort} " +
+						$"patient={heldPatient.LabelShort} " +
+						$"inBed={patientInBed} " +
+						$"combatCapable={IsPawnCombatCapable(heldPatient)}");
+
+					ArgrillianAlertSystem.CompletePatientHeldByMedic(pawn);
+					holdPatient.Reset();
+
+					return null;
+				}
+
+				/*if (patientInBedAndFullyTended ||
 					ArgrillianAlertSystem.IsPatientTransferedToMedicOrDoctor(
 						heldPatient))
 				{
@@ -6944,7 +6967,7 @@ namespace ArgrillianThreat
 
 					return new JobGiver_ArgrillianThreatResponse()
 						.GiveCombatThreatJob(heldPatient);
-				}
+				}*/
 
 				Job fallbackTendJob =
 					JobMaker.MakeJob(
