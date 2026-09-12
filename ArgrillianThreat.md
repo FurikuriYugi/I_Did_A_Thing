@@ -6129,6 +6129,537 @@ namespace ArgrillianThreat
 		{
 			ArgrillianAlertSystem.NotifyPawnSelfState(pawn);
 
+			if (pawn == null || pawn.Dead || pawn.Map == null)
+				return null;
+
+			var medicComp = pawn.GetComp<CompArgrillianMedicSettings>();
+			if (medicComp == null || !medicComp.isMedic || medicComp.doctor)
+				return null;
+
+			int now = Find.TickManager != null ? Find.TickManager.TicksGame : 0;
+			int pid = pawn.thingIDNumber;
+
+			// Acquire the held patient from the current medical job first.
+			// This prevents the held assignment from appearing to flicker null
+			// during a TendPatient transition.
+			Pawn heldPatient = null;
+
+			if (pawn.CurJob != null)
+			{
+				Job cur = pawn.CurJob;
+
+				bool looksLikeTend =
+					cur.def == JobDefOf.TendPatient ||
+					(cur.def != null &&
+						cur.def.defName != null &&
+						cur.def.defName.IndexOf(
+							"TendPatient",
+							System.StringComparison.OrdinalIgnoreCase) >= 0);
+
+				if (looksLikeTend)
+				{
+					Thing targetThing = cur.targetA.Thing;
+					Pawn curTendTarget = targetThing as Pawn;
+
+					if (curTendTarget != null &&
+						!curTendTarget.Dead &&
+						curTendTarget.Spawned &&
+						curTendTarget.Map == pawn.Map)
+					{
+						heldPatient = curTendTarget;
+					}
+				}
+			}
+
+			if (heldPatient == null)
+			{
+				heldPatient = ArgrillianAlertSystem.GetHeldPatientForMedic(pawn);
+			}
+
+			if (heldPatient == null)
+			{
+				Pawn bestCandidate =
+					ArgrillianAlertSystem.GetBestPatientFromCalls(pawn, searchRadius);
+
+				if (bestCandidate != null)
+				{
+					bool accepted =
+						ArgrillianAlertSystem.TryReserveMedicForPatient(
+							pawn,
+							bestCandidate);
+
+					if (accepted)
+					{
+						heldPatient =
+							ArgrillianAlertSystem.GetHeldPatientForMedic(pawn);
+					}
+				}
+			}
+
+			// Do not inspect patient state until a patient is actually available.
+			if (heldPatient == null)
+			{
+				int tendStickinessTicksFallback = 90;
+
+				bool recentlyTookTendTask2 =
+					ArgrillianMedicalState.MedicTendTaskStickiness
+						.RecentlyTookTendTask(
+							pawn,
+							tendStickinessTicksFallback);
+
+				if (recentlyTookTendTask2)
+				{
+					Pawn cachedHeld =
+						ArgrillianAlertSystem.GetHeldPatientForMedic(pawn);
+
+					if (cachedHeld != null)
+						heldPatient = cachedHeld;
+				}
+
+				if (heldPatient == null)
+				{
+					if (medicComp.combatMedic)
+						return new JobGiver_ArgrillianThreatResponse()
+							.GiveCombatThreatJob(pawn);
+
+					if (ArgrillianSmartLogCache.ShouldLogForPawn(
+						"TendRetreatingAllies_TryGiveJobNullGate_DoctorOrMedic",
+						pawn,
+						180))
+					{
+						Log.Message(
+							$"[ArgrillianThreat][TendRetreatingAllies] " +
+							$"TryGiveJob null (gate) pawn={pawn.LabelShort} " +
+							$"heldPatient=null tendEligible=false " +
+							$"retreatingHeldPatient=true");
+					}
+
+					return null;
+				}
+			}
+
+			bool IsPawnCombatCapable(Pawn patient)
+			{
+				if (patient == null ||
+					patient.Dead ||
+					patient.Downed ||
+					patient.health == null)
+				{
+					return false;
+				}
+
+				var verbTracker = patient.verbTracker;
+				if (verbTracker == null)
+					return false;
+
+				foreach (var verb in verbTracker.AllVerbs)
+				{
+					if (verb == null)
+						continue;
+
+					if (verb is Verb_MeleeAttack melee)
+					{
+						float range =
+							melee.verbProps != null
+								? melee.verbProps.range
+								: 0f;
+
+						if (range > 0.01f)
+							return true;
+					}
+					else if (verb is Verb_Shoot shoot)
+					{
+						if (shoot.verbProps == null)
+							continue;
+
+						if (shoot.verbProps.range > 0.01f)
+							return true;
+					}
+				}
+
+				return false;
+			}
+
+			var heldHealth = heldPatient.health;
+			var heldHediffSet = heldHealth?.hediffSet;
+
+			float patientHP =
+				heldHealth?.summaryHealth?.SummaryHealthPercent ?? 1f;
+
+			bool patientInBed = heldPatient.InBed();
+
+			bool patientIsBleedingNow =
+				heldHediffSet != null &&
+				heldHediffSet.HasHediff(HediffDefOf.BloodLoss);
+
+			int stableTicksNow =
+				GetPatientStableTicksForTend(heldPatient);
+
+			int requiredStableTicksForTerminal =
+				heldPatient.Downed
+					? 0
+					: patientStableTicksRequired;
+
+			bool patientStabilityOkForTerminal =
+				stableTicksNow >= requiredStableTicksForTerminal;
+
+			bool patientIsFullyTended = true;
+
+			if (heldHealth != null &&
+				heldHediffSet != null &&
+				heldHediffSet.hediffs != null)
+			{
+				var hediffs = heldHediffSet.hediffs;
+
+				for (int i = 0; i < hediffs.Count; i++)
+				{
+					Hediff hediff = hediffs[i];
+
+					if (hediff == null || hediff.def == null)
+						continue;
+
+					if (hediff.def.tendable && hediff.Severity > 0f)
+					{
+						patientIsFullyTended = false;
+						break;
+					}
+				}
+			}
+
+			bool patientInBedAndFullyTended =
+				patientInBed &&
+				!heldPatient.Downed &&
+				!patientIsBleedingNow &&
+				patientStabilityOkForTerminal &&
+				patientIsFullyTended;
+
+			bool patientClearedForCombat =
+				patientHP >= 0.8f &&
+				!heldPatient.Downed &&
+				!patientIsBleedingNow &&
+				patientIsFullyTended &&
+				IsPawnCombatCapable(heldPatient);
+
+			if (medicComp.doctor)
+			{
+				if (ArgrillianSmartLogCache.ShouldLogForPawn(
+					"TendRetreatingAllies_TryGiveJobNullGate_DoctorOrMedic",
+					pawn,
+					180))
+				{
+					Log.Message(
+						$"[ArgrillianThreat][TendRetreatingAllies] " +
+						$"TryGiveJob null (doctor) pawn={pawn.LabelShort} " +
+						$"heldPatient={heldPatient.LabelShort}");
+				}
+
+				return null;
+			}
+
+			if (!medicComp.combatMedic && medicComp.isMedic)
+			{
+				if (ArgrillianSmartLogCache.ShouldLogForPawn(
+					"TendRetreatingAllies_TryGiveJobNullGate_DoctorOrMedic",
+					pawn,
+					180))
+				{
+					Log.Message(
+						$"[ArgrillianThreat][TendRetreatingAllies] " +
+						$"TryGiveJob null (medic) pawn={pawn.LabelShort} " +
+						$"heldPatient={heldPatient.LabelShort}");
+				}
+
+				return null;
+			}
+
+			if (medicComp.isMedic && medicComp.combatMedic)
+			{
+				if (heldPatient == null)
+				{
+					heldPatient =
+						ArgrillianAlertSystem.GetHeldPatientForMedic(pawn);
+				}
+
+				if (heldPatient == null ||
+					heldPatient.Dead ||
+					!heldPatient.Spawned)
+				{
+					return new JobGiver_ArgrillianThreatResponse()
+						.GiveCombatThreatJob(pawn);
+				}
+
+				if (heldPatient.Map == null ||
+					pawn.Map != heldPatient.Map)
+				{
+					return new JobGiver_ArgrillianThreatResponse()
+						.GiveCombatThreatJob(pawn);
+				}
+
+				bool medicInReach =
+					pawn.Position.DistanceTo(heldPatient.Position) <=
+					combatTendMaxDistance;
+
+				if (medicInReach)
+				{
+					if (ArgrillianSmartLogCache.ShouldLogForPawn(
+						"TendRetreatingAllies_combatMedicInReach",
+						pawn,
+						120))
+					{
+						Log.Message(
+							$"[ArgrillianThreat][TendRetreatingAllies] " +
+							$"combatMedicInReach medic={pawn.LabelShort} " +
+							$"patient={heldPatient.LabelShort} " +
+							$"patientDowned={heldPatient.Downed} " +
+							$"tendEligible=true");
+					}
+
+					if (!ArgrillianAlertSystem.IsPawnHeldByMedicStop(
+						heldPatient))
+					{
+						ArgrillianAlertSystem.TryLockPatientHeldByMedic(
+							pawn,
+							heldPatient);
+					}
+
+					if (!ArgrillianMedicalState.HoldPatient.hasFired)
+						holdPatient.Stop(heldPatient);
+
+					if (heldPatient.Downed)
+					{
+						Building_Bed bed = null;
+
+						if (!TryGetRescueBedForPatient(
+							pawn,
+							heldPatient,
+							out bed) ||
+							bed == null)
+						{
+							return ArgrillianGotoHelper.MakeGotoWithNoChurn(
+								pawn,
+								heldPatient.Position);
+						}
+
+						Job rescueJob =
+							JobMaker.MakeJob(
+								JobDefOf.Rescue,
+								heldPatient);
+
+						rescueJob.count = 1;
+
+						ArgrillianMedicalState.MedicTendTaskStickiness
+							.MarkTask(
+								pawn,
+								heldPatient);
+
+						return rescueJob;
+					}
+
+					Job tendJob =
+						JobMaker.MakeJob(
+							JobDefOf.TendPatient,
+							heldPatient);
+
+					tendJob.count = 1;
+
+					ArgrillianMedicalState.MedicTendTaskStickiness
+						.MarkTask(
+							pawn,
+							heldPatient);
+
+					return tendJob;
+				}
+
+				// The patient remains owned by this medic while the medic is
+				// outside tending range. Do not return a generic Goto, escort,
+				// combat, or threat-response job here. TendPatient itself supplies
+				// the required movement toward the patient and preserves the
+				// medical job lifecycle.
+				//
+				// This is intentionally unconditional while held. The finalization
+				// and release gates below are only evaluated after the medic is
+				// back in the medical interaction range.
+				if (ArgrillianSmartLogCache.ShouldLogForPawn(
+					"TendRetreatingAllies_combatMedicOutOfReachMedical",
+					pawn,
+					120))
+				{
+					Log.Message(
+						$"[ArgrillianThreat][TendRetreatingAllies] " +
+						$"combatMedicOutOfReach medical medic={pawn.LabelShort} " +
+						$"patient={heldPatient.LabelShort} " +
+						$"patientDowned={heldPatient.Downed} " +
+						$"patientFullyTended={patientIsFullyTended}");
+				}
+
+				if (heldPatient.Downed)
+				{
+					Building_Bed rescueBed = null;
+
+					if (TryGetRescueBedForPatient(
+						pawn,
+						heldPatient,
+						out rescueBed) &&
+						rescueBed != null)
+					{
+						Job rescueJob =
+							JobMaker.MakeJob(
+								JobDefOf.Rescue,
+								heldPatient);
+
+						rescueJob.count = 1;
+
+						ArgrillianMedicalState.MedicTendTaskStickiness
+							.MarkTask(
+								pawn,
+								heldPatient);
+
+						return rescueJob;
+					}
+				}
+
+				Job outOfReachTendJob =
+					JobMaker.MakeJob(
+						JobDefOf.TendPatient,
+						heldPatient);
+
+				outOfReachTendJob.count = 1;
+
+				ArgrillianMedicalState.MedicTendTaskStickiness
+					.MarkTask(
+						pawn,
+						heldPatient);
+
+				return outOfReachTendJob;
+			}
+
+			int tendStickinessTicks = 60;
+
+			bool recentlyTookTendTask =
+				ArgrillianMedicalState.MedicTendTaskStickiness
+					.RecentlyTookTendTask(
+						pawn,
+						tendStickinessTicks);
+
+			bool medicHasMedicalJobNow =
+				(pawn.CurJob != null &&
+					ArgillianThreatPatientTuning.JobIsMedicalForPatient(
+						pawn.CurJob,
+						heldPatient)) ||
+				recentlyTookTendTask;
+
+			if (!medicHasMedicalJobNow)
+			{
+				float heldPatientHpPct = 1f;
+
+				if (heldPatient.health?.summaryHealth != null)
+				{
+					heldPatientHpPct =
+						heldPatient.health.summaryHealth
+							.SummaryHealthPercent;
+				}
+
+				if (heldPatientHpPct < 0.80f &&
+					!heldPatient.Dead)
+				{
+					if (!ArgrillianAlertSystem.IsPawnHeldByMedicStop(
+						heldPatient))
+					{
+						ArgrillianAlertSystem.TryLockPatientHeldByMedic(
+							pawn,
+							heldPatient);
+					}
+
+					if (!ArgrillianMedicalState.HoldPatient.hasFired)
+						holdPatient.Stop(heldPatient);
+
+					Job tendJob =
+						JobMaker.MakeJob(
+							JobDefOf.TendPatient,
+							heldPatient);
+
+					tendJob.count = 1;
+
+					ArgrillianMedicalState.MedicTendTaskStickiness
+						.MarkTask(
+							pawn,
+							heldPatient);
+
+					return tendJob;
+				}
+
+				if (recentlyTookTendTask)
+				{
+					Job tendJob =
+						JobMaker.MakeJob(
+							JobDefOf.TendPatient,
+							heldPatient);
+
+					tendJob.count = 1;
+
+					ArgrillianMedicalState.MedicTendTaskStickiness
+						.MarkTask(
+							pawn,
+							heldPatient);
+
+					return tendJob;
+				}
+
+				if (patientClearedForCombat)
+				{
+					ArgrillianAlertSystem.ReleasePatientHeldByMedic(pawn);
+					ArgrillianAlertSystem.ReleaseMedicHold(pawn);
+					holdPatient.Reset();
+
+					return new JobGiver_ArgrillianThreatResponse()
+						.GiveCombatThreatJob(heldPatient);
+				}
+
+				if (patientInBedAndFullyTended ||
+					ArgrillianAlertSystem.IsPatientTransferedToMedicOrDoctor(
+						heldPatient))
+				{
+					Log.Message(
+						$"[ArgrillianThreat][TendRetreatingAllies] " +
+						$"missionDone unlock medic={pawn.LabelShort} " +
+						$"patient={heldPatient.LabelShort}");
+
+					ArgrillianAlertSystem.ReleasePatientHeldByMedic(pawn);
+					ArgrillianAlertSystem.ReleaseMedicHold(pawn);
+					holdPatient.Reset();
+
+					return new JobGiver_ArgrillianThreatResponse()
+						.GiveCombatThreatJob(heldPatient);
+				}
+
+				Job fallbackTendJob =
+					JobMaker.MakeJob(
+						JobDefOf.TendPatient,
+						heldPatient);
+
+				fallbackTendJob.count = 1;
+
+				ArgrillianMedicalState.MedicTendTaskStickiness
+					.MarkTask(
+						pawn,
+						heldPatient);
+
+				return fallbackTendJob;
+			}
+
+			Log.Message(
+				$"[ArgrillianThreat][TendRetreatingAllies] " +
+				$"missionDone unlock medic={pawn.LabelShort} " +
+				$"patient={heldPatient.LabelShort}");
+
+			return new JobGiver_ArgrillianThreatResponse()
+				.GiveCombatThreatJob(pawn);
+		}
+
+		/*protected override Job TryGiveJob(Pawn pawn)
+		{
+			ArgrillianAlertSystem.NotifyPawnSelfState(pawn);
+
 			if (pawn == null || pawn.Dead || pawn.Map == null) return null;
 			var medicComp = pawn.GetComp<CompArgrillianMedicSettings>();
 			if (medicComp == null || !medicComp.isMedic || medicComp.doctor) return null;
@@ -6572,7 +7103,7 @@ namespace ArgrillianThreat
 				);
 			}
 			return null;
-		}
+		}*/
 
 		private bool TryGetRescueBedForPatient(Pawn medic, Pawn patient, out Building_Bed bed)
 		{
