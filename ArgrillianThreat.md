@@ -2422,6 +2422,33 @@ namespace ArgrillianThreat
 			assignedPatientIdByMedicId.Remove(mid);
 		}
 
+		public static void CompletePatientHeldByMedic(Pawn medic)
+		{
+			if (medic == null)
+				return;
+
+			int medicId = medic.thingIDNumber;
+			if (medicId < 0)
+				return;
+
+			if (!assignedPatientIdByMedicId.TryGetValue(
+				medicId,
+				out int patientId))
+			{
+				return;
+			}
+
+			assignedPatientIdByMedicId.Remove(medicId);
+
+			if (patientId >= 0)
+				lockedPatientIds.Remove(patientId);
+
+			Log.Message(
+				$"[ArgrillianThreat] CompletePatientHeldByMedic RELEASE " +
+				$"medic={medic.LabelShort} patientId={patientId}"
+			);
+		}
+
 		// ----------------------------
 		// PatientCall transition triggers (event publisher glue)
 		// ----------------------------
@@ -6896,8 +6923,7 @@ namespace ArgrillianThreat
 
 				if (patientClearedForCombat)
 				{
-					ArgrillianAlertSystem.ReleasePatientHeldByMedic(pawn);
-					ArgrillianAlertSystem.ReleaseMedicHold(pawn);
+					ArgrillianAlertSystem.CompletePatientHeldByMedic(pawn);
 					holdPatient.Reset();
 
 					return new JobGiver_ArgrillianThreatResponse()
@@ -6913,8 +6939,7 @@ namespace ArgrillianThreat
 						$"missionDone unlock medic={pawn.LabelShort} " +
 						$"patient={heldPatient.LabelShort}");
 
-					ArgrillianAlertSystem.ReleasePatientHeldByMedic(pawn);
-					ArgrillianAlertSystem.ReleaseMedicHold(pawn);
+					ArgrillianAlertSystem.CompletePatientHeldByMedic(pawn);
 					holdPatient.Reset();
 
 					return new JobGiver_ArgrillianThreatResponse()
@@ -6944,455 +6969,6 @@ namespace ArgrillianThreat
 			return new JobGiver_ArgrillianThreatResponse()
 				.GiveCombatThreatJob(pawn);
 		}
-
-		/*protected override Job TryGiveJob(Pawn pawn)
-		{
-			ArgrillianAlertSystem.NotifyPawnSelfState(pawn);
-
-			if (pawn == null || pawn.Dead || pawn.Map == null) return null;
-			var medicComp = pawn.GetComp<CompArgrillianMedicSettings>();
-			if (medicComp == null || !medicComp.isMedic || medicComp.doctor) return null;
-
-			int now = Find.TickManager != null ? Find.TickManager.TicksGame : 0;
-			int pid = pawn.thingIDNumber;
-
-			// Acquire held patient from alert-system authority, but during tend-transition
-			// prefer the *current tend job target* so combat medic tending can't fall-through
-			// with heldPatient=null.
-			Pawn heldPatient = null;
-
-			if (pawn.CurJob != null)
-			{
-				Job cur = pawn.CurJob;
-
-				bool looksLikeTend =
-					(cur.def == JobDefOf.TendPatient) ||
-					(cur.def != null && cur.def.defName != null && cur.def.defName.IndexOf("TendPatient", System.StringComparison.OrdinalIgnoreCase) >= 0);
-
-				if (looksLikeTend)
-				{
-					Thing t = cur.targetA.Thing;
-					Pawn curTendTarget = t as Pawn;
-
-					if (curTendTarget != null &&
-						!curTendTarget.Dead &&
-						curTendTarget.Spawned &&
-						curTendTarget.Map == pawn.Map)
-					{
-						heldPatient = curTendTarget;
-					}
-				}
-			}
-
-			if (heldPatient == null)
-			{
-				// Acquire held patient from alert-system authority.
-				heldPatient = ArgrillianAlertSystem.GetHeldPatientForMedic(pawn);
-			}
-
-			if (heldPatient == null)
-			{
-				if (ArgrillianSmartLogCache.ShouldLogForPawn("TendRetreatingAllies_TryGiveJobNullGate_DoctorOrMedic", pawn, 180))
-				{
-					Log.Message(
-						$"[ArgrillianThreat][TendRetreatingAllies] TryGiveJob null (gate) pawn={(pawn != null ? pawn.LabelShort : "null")} heldPatient={(heldPatient != null ? heldPatient.LabelShort : "null")} " +
-							$"tendEligible=false retreatingHeldPatient=true"
-					);
-				}
-				Pawn bestCandidate = ArgrillianAlertSystem.GetBestPatientFromCalls(pawn, searchRadius);
-
-				if (bestCandidate != null)
-				{
-					bool accepted = ArgrillianAlertSystem.TryReserveMedicForPatient(pawn, bestCandidate);
-					if (accepted)
-						heldPatient = ArgrillianAlertSystem.GetHeldPatientForMedic(pawn);
-				}
-			}
-
-			// HARD GUARD: don't touch heldPatient.health / heldPatient.InBed() etc if no patient is held.
-			if (heldPatient == null)
-			{
-				// Stabilization: during retreat/held-for-tend transition, recover the last tend target
-				// so we don't fall out to escort/threat logic with a null heldPatient.
-				int tendStickinessTicksFallback = 90;
-
-				bool recentlyTookTendTask =
-					ArgrillianMedicalState.MedicTendTaskStickiness.RecentlyTookTendTask(pawn, tendStickinessTicksFallback);
-
-				if (recentlyTookTendTask)
-				{
-					// When heldPatient flickers to null, re-resolve it from the alert-system held assignment cache.
-					Pawn cachedHeld = ArgrillianAlertSystem.GetHeldPatientForMedic(pawn);
-
-					if (cachedHeld != null)
-						heldPatient = cachedHeld;
-				}
-
-				if (heldPatient == null)
-				{
-					// For combat medics: let them fall back to threat job generation only when there is no held patient.
-					if (medicComp.combatMedic)
-					{
-						return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
-					}
-					if (ArgrillianSmartLogCache.ShouldLogForPawn("TendRetreatingAllies_TryGiveJobNullGate_DoctorOrMedic", pawn, 180))
-					{
-						Log.Message(
-							$"[ArgrillianThreat][TendRetreatingAllies] TryGiveJob null (gate) pawn={(pawn != null ? pawn.LabelShort : "null")} heldPatient={(heldPatient != null ? heldPatient.LabelShort : "null")} " +
-							$"tendEligible=false retreatingHeldPatient=true"
-						);
-					}
-
-					// For non-combat medics/doctors: this job-giver shouldn't do anything if no held patient exists.
-					return null;
-				}
-			}
-
-			// Combat capable check.
-			bool IsPawnCombatCapable(Pawn heldPatient)
-			{
-				if (heldPatient == null || heldPatient.Dead || heldPatient.Downed || heldPatient.health == null) return false;
-
-				var vt = heldPatient.verbTracker;
-				if (vt == null) return false;
-
-				foreach (var verb in vt.AllVerbs)
-				{
-					if (verb == null) continue;
-
-					if (verb is Verb_MeleeAttack melee)
-					{
-						float r = melee.verbProps != null ? melee.verbProps.range : 0f;
-						if (r > 0.01f) return true;
-					}
-					else if (verb is Verb_Shoot shoot)
-					{
-						if (shoot.verbProps == null) continue;
-						if (shoot.verbProps.range > 0.01f) return true;
-					}
-				}
-
-				return false;
-			}
-
-			// Cache health/hediff state once.
-			var heldHealth = heldPatient.health;
-			var heldHediffSet = heldHealth?.hediffSet;
-
-			float patientHP = heldHealth?.summaryHealth?.SummaryHealthPercent ?? 1f;
-			bool patientInBed = heldPatient.InBed();
-
-			bool patientIsBleedingNow =
-				heldHediffSet != null &&
-				heldHediffSet.HasHediff(HediffDefOf.BloodLoss);
-
-			int stableTicksNow = GetPatientStableTicksForTend(heldPatient);
-			int requiredStableTicksForTerminal = heldPatient.Downed ? 0 : patientStableTicksRequired;
-			bool patientStabilityOkForTerminal = stableTicksNow >= requiredStableTicksForTerminal;
-
-			// "Fully tended" = there are no remaining tendable hediffs that still have Severity > 0.
-			bool patientIsFullyTended = true;
-			if (heldHealth != null && heldHediffSet != null && heldHediffSet.hediffs != null)
-			{
-				var hediffs = heldHediffSet.hediffs;
-				if (hediffs != null)
-				{
-					for (int i = 0; i < hediffs.Count; i++)
-					{
-						Hediff h = hediffs[i];
-						if (h == null || h.def == null) continue;
-
-						if (h.def.tendable && h.Severity > 0f)
-						{
-							patientIsFullyTended = false;
-							break;
-						}
-					}
-				}
-			}
-
-			// "In bed + fully tended" for the medic terminal completion gate
-			bool patientInBedAndFullyTended =
-				patientInBed &&
-				!heldPatient.Downed &&
-				!patientIsBleedingNow &&
-				patientStabilityOkForTerminal &&
-				patientIsFullyTended;
-
-			// "Fully tended" can be used for combat-clearance even if not in bed
-			bool patientClearedForCombat =
-				(patientHP >= 0.8f &&
-				 !heldPatient.Downed &&
-				 !patientIsBleedingNow &&
-				 patientIsFullyTended &&
-				 IsPawnCombatCapable(heldPatient));
-
-			bool escortToMedicalRequired = !patientClearedForCombat;
-
-			// ----------------------------
-			// 1) DOCTORS (non-combat) branch
-			// ----------------------------
-			if (medicComp.doctor)
-			{
-				if (ArgrillianSmartLogCache.ShouldLogForPawn("TendRetreatingAllies_TryGiveJobNullGate_DoctorOrMedic", pawn, 180))
-				{
-					Log.Message(
-						$"[ArgrillianThreat][TendRetreatingAllies] TryGiveJob null (gate) pawn={(pawn != null ? pawn.LabelShort : "null")} heldPatient={(heldPatient != null ? heldPatient.LabelShort : "null")} " +
-							$"tendEligible=false retreatingHeldPatient=true"
-					);
-				}
-				return null;
-			}
-
-			// ----------------------------
-			// 2) MEDICS (non-combat) branch
-			// ----------------------------
-			if (!medicComp.combatMedic && medicComp.isMedic)
-			{
-				if (ArgrillianSmartLogCache.ShouldLogForPawn("TendRetreatingAllies_TryGiveJobNullGate_DoctorOrMedic", pawn, 180))
-				{
-					Log.Message(
-						$"[ArgrillianThreat][TendRetreatingAllies] TryGiveJob null (gate) pawn={(pawn != null ? pawn.LabelShort : "null")} heldPatient={(heldPatient != null ? heldPatient.LabelShort : "null")} " +
-							$"tendEligible=false retreatingHeldPatient=true"
-					);
-				}
-				return null;
-			}
-
-			// ----------------------------
-			// 3) COMBAT MEDIC branch
-			// ----------------------------
-			if (medicComp.isMedic && medicComp.combatMedic)
-			{
-				// Recover heldPatient from the alert-system assignment cache if it flickers null.
-				if (heldPatient == null)
-				{
-					heldPatient = ArgrillianAlertSystem.GetHeldPatientForMedic(pawn);
-				}
-
-				if (heldPatient == null || heldPatient.Dead || heldPatient.Spawned == false)
-				{
-					// Give back control to the threat response / other jobgivers.
-					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
-				}
-
-				if (pawn == null || pawn.Map == null || heldPatient.Map == null || pawn.Map != heldPatient.Map)
-					return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
-
-				// While held-for-tend, we keep patient “locked” until the medic pipeline ends
-				// (or the medic stops being in reach and we fall through to escort/combat logic).
-				bool medicInReach = pawn.Position.DistanceTo(heldPatient.Position) <= combatTendMaxDistance;
-
-				if (medicInReach)
-				{
-					if (ArgrillianSmartLogCache.ShouldLogForPawn("TendRetreatingAllies_combatMedicInReach", pawn, 120))
-					{
-						Log.Message(
-							$"[ArgrillianThreat][TendRetreatingAllies] combatMedicInReach medic={pawn.LabelShort} patient={heldPatient.LabelShort} " +
-								$"patientDowned={heldPatient.Downed} tendEligible=true"
-						);
-					}
-
-					if (!ArgrillianAlertSystem.IsPawnHeldByMedicStop(heldPatient))
-					{
-						ArgrillianAlertSystem.TryLockPatientHeldByMedic(pawn, heldPatient);
-					}
-
-					if (!ArgrillianMedicalState.HoldPatient.hasFired)
-					{
-						holdPatient.Stop(heldPatient);
-					}
-
-					if (heldPatient.Downed)
-					{
-						Building_Bed bed = null;
-						if (!TryGetRescueBedForPatient(pawn, heldPatient, out bed) || bed == null)
-							return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, heldPatient.Position);
-
-						Job rescueJob = JobMaker.MakeJob(JobDefOf.Rescue, heldPatient);
-						rescueJob.count = 1;
-						ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn, heldPatient);
-						return rescueJob;
-					}
-
-					Job tendJob2 = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
-					tendJob2.count = 1;
-					ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn, heldPatient);
-					return tendJob2;
-				}
-
-				if(!medicInReach)
-				{
-					// If we just started tending, keep the medic locked into the tend pipeline
-					// for this transition tick even if distance is temporarily out of range.
-					int tendStickinessTicks2 = 60;
-					bool recentlyTookTendTask2 =
-						ArgrillianMedicalState.MedicTendTaskStickiness.RecentlyTookTendTask(pawn, tendStickinessTicks2);
-
-					if (recentlyTookTendTask2)
-					{
-						Job tendJob2 = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
-						tendJob2.count = 1;
-						ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn, heldPatient);
-						return tendJob2;
-					}
-
-					// Stabilization: if the patient is NOT yet fully tended, do not allow
-					// the medic to flip to escort/combat early due to reach flicker.
-					// This prevents the “stop tending and leave patient standing” transition.
-					if (!patientIsFullyTended)
-					{
-						Job tendJob2 = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
-						tendJob2.count = 1;
-						ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn, heldPatient);
-						return tendJob2;
-					}
-
-					// Hard transition guard:
-					// If the patient is still on the held-transition "Wait" job, do NOT allow
-					// the combat medic to leave the tend pipeline into escort/fighting behavior.
-					// TendPatient will still path/approach, so the medic will "go to" the patient
-					// while respecting held+tending lifecycle.
-					if (heldPatient.CurJob != null && heldPatient.CurJob.def == JobDefOf.Wait)
-					{
-						Job tendJob2 = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
-						tendJob2.count = 1;
-						ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn, heldPatient);
-						return tendJob2;
-					}
-
-					if (ArgrillianSmartLogCache.ShouldLogForPawn("TendRetreatingAllies_combatMedicOutOfReach", pawn, 120))
-					{
-						Log.Message(
-							$"[ArgrillianThreat][TendRetreatingAllies] combatMedicOutOfReach escort medic={pawn.LabelShort} patient={heldPatient.LabelShort} tendEligible=false"
-						);
-					}
-
-					// Otherwise: escort medic toward patient so defense can continue while we close distance.
-					IntVec3 escortTarget2 = heldPatient.Position;
-					return ArgrillianGotoHelper.MakeGotoWithNoChurn(pawn, escortTarget2);
-				}
-
-				// Combat Medic Finalization Process
-				// ----------------------------
-				// Prevent premature unlock if the medic is still actively committed to medical work for this patient.
-				// This is the guard that prevents the patient from regaining job freedom mid-tend,
-				// which is the root cause of "patient tries to Consume and breaks tend".
-				// Keep the patient locked while the medic is in the “tend just starting” window.
-				// CurJob can be null / temporarily non-medical for a tick during job transitions.
-				int tendStickinessTicks = 60;
-
-				// Split “has medical job now” into:
-				// - explicit medical curjob state
-				// - and the stickiness window
-				// so we can prevent unlock/release during the stickiness transition tick(s).
-				bool recentlyTookTendTask =
-					ArgrillianMedicalState.MedicTendTaskStickiness.RecentlyTookTendTask(pawn, tendStickinessTicks);
-
-				bool medicHasMedicalJobNow =
-					(pawn?.CurJob != null &&
-					 ArgillianThreatPatientTuning.JobIsMedicalForPatient(pawn.CurJob, heldPatient)) ||
-					recentlyTookTendTask;
-
-				if (!medicHasMedicalJobNow)
-				{
-					// HARD CONTRACT (retreat interruption):
-					// If patient is still < 80% HP, medic must stay in the tend pipeline.
-					// This prevents the medic from being returned to combat for a transient CurJob-null/non-medical tick.
-					float heldPatientHpPct = 1f;
-					if (heldPatient?.health?.summaryHealth != null)
-						heldPatientHpPct = heldPatient.health.summaryHealth.SummaryHealthPercent;
-
-					if (heldPatientHpPct < 0.80f && !heldPatient.Dead)
-					{
-						// Keep hold pipeline stable.
-						if (!ArgrillianAlertSystem.IsPawnHeldByMedicStop(heldPatient))
-							ArgrillianAlertSystem.TryLockPatientHeldByMedic(pawn, heldPatient);
-
-						if (!ArgrillianMedicalState.HoldPatient.hasFired)
-							holdPatient.Stop(heldPatient);
-
-						Job tendJob2 = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
-						tendJob2.count = 1;
-						ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn, heldPatient);
-						return tendJob2;
-					}
-
-					// Step 4/5: if we are still within the “just started tending” stickiness window,
-					// do NOT unlock/release heldPatient even if the patient is (momentarily) meeting terminal clearance tests.
-					// Continue tend to avoid transient heldPatient release during CurJob transition ticks.
-					if (recentlyTookTendTask)
-					{
-						Job tendJob3 = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
-						tendJob3.count = 1;
-						ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn, heldPatient);
-						return tendJob3;
-					}
-
-					if (patientClearedForCombat)
-					{
-						// Step 4/5: stickiness guard (prevents unlock/release firing during the tend transition window)
-						if (recentlyTookTendTask)
-						{
-							Job tendJobStick = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
-							tendJobStick.count = 1;
-							ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn, heldPatient);
-							return tendJobStick;
-						}
-
-						// Correct unlock ordering:
-						// 1) unlock patient (needs assignment mapping)
-						// 2) then clear assignment mapping
-						ArgrillianAlertSystem.ReleasePatientHeldByMedic(pawn);
-						ArgrillianAlertSystem.ReleaseMedicHold(pawn);
-						holdPatient.Reset();
-
-						return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(heldPatient);
-					}
-
-					if (patientInBedAndFullyTended || ArgrillianAlertSystem.IsPatientTransferedToMedicOrDoctor(heldPatient))
-					{
-						// Step 4/5: stickiness guard (prevents unlock/release firing during the tend transition window)
-						if (recentlyTookTendTask)
-						{
-							Job tendJobStick2 = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
-							tendJobStick2.count = 1;
-							ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn, heldPatient);
-							return tendJobStick2;
-						}
-
-						Log.Message(
-							$"[ArgrillianThreat][TendRetreatingAllies] missionDone unlock medic={pawn.LabelShort} patient={heldPatient.LabelShort}"
-						);
-
-						ArgrillianAlertSystem.ReleasePatientHeldByMedic(pawn);
-						ArgrillianAlertSystem.ReleaseMedicHold(pawn);
-						holdPatient.Reset();
-
-						return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(heldPatient);
-					}
-
-					// Not <80 anymore, but not fully cleared either: continue tending to avoid medic leaving too early.
-					Job tendJob4 = JobMaker.MakeJob(JobDefOf.TendPatient, heldPatient);
-					tendJob4.count = 1;
-					ArgrillianMedicalState.MedicTendTaskStickiness.MarkTask(pawn, heldPatient);
-					return tendJob4;
-				}
-				Log.Message(
-					$"[ArgrillianThreat][TendRetreatingAllies] missionDone unlock medic={pawn.LabelShort} patient={heldPatient.LabelShort}"
-				);
-
-				return new JobGiver_ArgrillianThreatResponse().GiveCombatThreatJob(pawn);
-			}
-			if (ArgrillianSmartLogCache.ShouldLogForPawn("TendRetreatingAllies_TryGiveJobNullGate_DoctorOrMedic", pawn, 180))
-			{
-				Log.Message(
-					$"[ArgrillianThreat][TendRetreatingAllies] TryGiveJob null (gate) pawn={(pawn != null ? pawn.LabelShort : "null")} heldPatient={(heldPatient != null ? heldPatient.LabelShort : "null")} " +
-						$"tendEligible=false retreatingHeldPatient=true"
-				);
-			}
-			return null;
-		}*/
 
 		private bool TryGetRescueBedForPatient(Pawn medic, Pawn patient, out Building_Bed bed)
 		{
