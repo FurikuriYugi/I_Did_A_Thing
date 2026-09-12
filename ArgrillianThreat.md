@@ -129,9 +129,12 @@ namespace ArgrillianThreat
 
 		private static bool IsWaitJob(Verse.AI.Job job)
 		{
+			if (job == null || job.def == null)
+				return false;
+
 			return
-				job != null &&
-				job.def == JobDefOf.Wait;
+				job.def == JobDefOf.Wait ||
+				job.def.defName == "Wait_MaintainPosture";
 		}
 
 		private static bool IsTendJob(Verse.AI.Job job)
@@ -1775,47 +1778,78 @@ namespace ArgrillianThreat
 			return true;
 		}
 
-		public static void ReleasePatientHeldByMedic(Pawn medic)
+		public static void ReleasePatientHeldByMedic(
+	Pawn medic)
 		{
-			if (medic == null) return;
-			if (!medic.Spawned || medic.Dead) return;
-			if (medic.Map == null) return;
+			if (medic == null)
+				return;
 
-			// Prevent the patient from breaking heldPatient during the medic's tend-transition window.
+			if (!medic.Spawned || medic.Dead)
+				return;
+
+			if (medic.Map == null)
+				return;
+
 			const int tendStickinessTicks = 180;
-			if (ArgrillianMedicalState.MedicTendTaskStickiness.RecentlyTookTendTask(medic, tendStickinessTicks))
-				return;
 
-			// If the job system still considers the medic to be actively tending, never release.
-			if (medic.CurJob != null && medic.CurJob.def == JobDefOf.TendPatient)
-				return;
-
-			// HARD tend-danger guard:
-			// If this medic is still assigned to that patient AND patient isn't fully tended,
-			// never remove the held lock (prevents Rest/Consume during tend transition).
-			int mid = medic.thingIDNumber;
-			if (mid < 0) return;
-
-			if (assignedPatientIdByMedicId.TryGetValue(mid, out int pid) && pid >= 0)
+			if (ArgrillianMedicalState.MedicTendTaskStickiness.RecentlyTookTendTask(
+				medic,
+				tendStickinessTicks))
 			{
-				// We only need "are they fully tended yet" to decide whether we may unlock.
-				Pawn patient = ArgrillianAlertSystem.TryGetPatientFromCachedCall(medic.Map, pid);
-				if (patient != null && !patient.Dead && patient.Spawned && patient.Map == medic.Map)
-				{
-					if (patient.Downed)
-						return;
-
-					float hpPct = patient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
-					if (hpPct < 0.999f)
-						return;
-				}
+				return;
 			}
 
-			// If this medic had a mapped assigned patient, unlock that patient by patient id.
-			if (assignedPatientIdByMedicId.TryGetValue(mid, out int pid2) && pid2 >= 0)
-				lockedPatientIds.Remove(pid2);
+			if (medic.CurJob != null &&
+				medic.CurJob.def == JobDefOf.TendPatient)
+			{
+				return;
+			}
 
-			// Also unlock any patient if caller directly removed assignment elsewhere (safety).
+			int medicId = medic.thingIDNumber;
+
+			if (medicId < 0)
+				return;
+
+			if (!assignedPatientIdByMedicId.TryGetValue(
+				medicId,
+				out int patientId))
+			{
+				return;
+			}
+
+			if (patientId < 0)
+			{
+				assignedPatientIdByMedicId.Remove(medicId);
+				return;
+			}
+
+			Pawn patient =
+				ArgrillianAlertSystem.TryGetPatientFromCachedCall(
+					medic.Map,
+					patientId);
+
+			if (patient != null &&
+				!patient.Dead &&
+				patient.Spawned &&
+				patient.Map == medic.Map)
+			{
+				if (patient.Downed)
+					return;
+
+				float hpPct =
+					patient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
+
+				if (hpPct < 0.999f)
+					return;
+			}
+
+			lockedPatientIds.Remove(patientId);
+			assignedPatientIdByMedicId.Remove(medicId);
+
+			Log.Message(
+				$"[ArgrillianThreat] TryLockPatientHeldByMedic RELEASE " +
+				$"medic={medic.Name} patientId={patientId}"
+			);
 		}
 
 		// ArgrillianAlertSystem (add this method anywhere inside the class)
