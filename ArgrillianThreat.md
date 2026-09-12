@@ -8,209 +8,354 @@ namespace ArgrillianThreat
 	[HarmonyPatch(typeof(Pawn_JobTracker), "TryFindAndStartJob")]
 	public static class ArgrillianHeldPatientJobBlocker
 	{
-		private static readonly System.Collections.Generic.Dictionary<int, int> heldBlockLogTickByKey =
-			new System.Collections.Generic.Dictionary<int, int>();
-		private static readonly System.Collections.Generic.HashSet<string> oneShot =
-			new System.Collections.Generic.HashSet<string>();
+		private static readonly Dictionary<int, int> heldBlockLogTickByKey =
+			new Dictionary<int, int>();
+
+		private static readonly HashSet<string> oneShot =
+			new HashSet<string>();
+
 		private const int HeldBlockLogCooldownTicks = 60;
-		private static readonly string HarmonyId = "FurikuriYugi.ArgrillianThreat.HeldPatientJobBlocker";
+
+		private const string HarmonyId =
+			"FurikuriYugi.ArgrillianThreat.HeldPatientJobBlocker";
 
 		static ArgrillianHeldPatientJobBlocker()
 		{
 			try
 			{
-				Log.Message($"[ArgrillianThreat][HeldPatient][HarmonyInit] static ctor firing -> attempting manual patch id={HarmonyId}");
-				var harmony = new HarmonyLib.Harmony(HarmonyId);
+				Log.Message(
+					$"[ArgrillianThreat][HeldPatient][HarmonyInit] " +
+					$"static ctor firing -> attempting manual patch id={HarmonyId}"
+				);
+
+				HarmonyLib.Harmony harmony =
+					new HarmonyLib.Harmony(HarmonyId);
+
 				harmony.PatchAll();
-				Log.Message($"[ArgrillianThreat][HeldPatient][HarmonyInit] PatchAll() called");
+
+				Log.Message(
+					"[ArgrillianThreat][HeldPatient][HarmonyInit] " +
+					"PatchAll() called"
+				);
 			}
-			catch (System.Exception ex)
+			catch (Exception ex)
 			{
-				Log.Message($"[ArgrillianThreat][HeldPatient][HarmonyInit] FAILED ex={ex}");
+				Log.Message(
+					$"[ArgrillianThreat][HeldPatient][HarmonyInit] " +
+					$"FAILED ex={ex}"
+				);
 			}
 		}
 
-		private static void OneShotLog(string key, string msg)
+		private static void OneShotLog(string key, string message)
 		{
 			if (string.IsNullOrEmpty(key))
 			{
-				Log.Message(msg);
+				Log.Message(message);
 				return;
 			}
+
 			if (oneShot.Contains(key))
 				return;
+
 			oneShot.Add(key);
-			Log.Message(msg);
+			Log.Message(message);
 		}
 
-		private static int MakeLogKey(string where, Pawn pawn, Verse.AI.Job curJob, Verse.AI.Job incomingJob)
+		private static int MakeLogKey(
+			string where,
+			Pawn pawn,
+			Verse.AI.Job currentJob,
+			Verse.AI.Job incomingJob)
 		{
-			if (pawn == null) return 0;
+			if (pawn == null)
+				return 0;
 
-			int pid = pawn.thingIDNumber;
-			string curJobDef = "nullCur";
-			if (curJob != null && curJob.def != null)
-				curJobDef = curJob.def.defName;
+			int currentJobId =
+				currentJob?.def?.shortHash ?? 0;
 
-			string incomingJobDef = "nullIn";
-			if (incomingJob != null && incomingJob.def != null)
-				incomingJobDef = incomingJob.def.defName;
+			int incomingJobId =
+				incomingJob?.def?.shortHash ?? 0;
 
 			unchecked
 			{
-				int h =
-					(where != null ? where.GetHashCode() : 0) * 397 ^
-					pid * 17 ^
-					(curJobDef != null ? curJobDef.GetHashCode() : 0) ^
-					(incomingJobDef != null ? incomingJobDef.GetHashCode() : 0);
-				return h;
+				return
+					(pawn.thingIDNumber * 397) ^
+					(where?.GetHashCode() ?? 0) ^
+					(currentJobId * 17) ^
+					incomingJobId;
 			}
 		}
 
-		private static void LogHeldBlock(string where, Pawn pawn, Verse.AI.Job curJob, Verse.AI.Job incomingJob)
+		private static void LogHeldBlock(
+			string where,
+			Pawn pawn,
+			Verse.AI.Job currentJob,
+			Verse.AI.Job incomingJob)
 		{
-			if (pawn == null) return;
-			if (pawn.Map == null) return;
-
-			int now = Verse.Find.TickManager.TicksGame;
-			int logKey = MakeLogKey(where, pawn, curJob, incomingJob);
-
-			if (heldBlockLogTickByKey.TryGetValue(logKey, out int last) && (now - last) < HeldBlockLogCooldownTicks)
+			if (pawn == null)
 				return;
 
-			heldBlockLogTickByKey[logKey] = now;
+			int key =
+				MakeLogKey(
+					where,
+					pawn,
+					currentJob,
+					incomingJob);
 
-			string curJobLabel = "nullCurJob";
-			if (curJob != null && curJob.def != null)
-				curJobLabel = curJob.def.defName;
+			int now = Find.TickManager.TicksGame;
 
-			string incomingJobLabel = "nullIncomingJob";
-			if (incomingJob != null && incomingJob.def != null)
-				incomingJobLabel = incomingJob.def.defName;
+			if (heldBlockLogTickByKey.TryGetValue(key, out int previousTick))
+			{
+				if (now - previousTick < HeldBlockLogCooldownTicks)
+					return;
+			}
+
+			heldBlockLogTickByKey[key] = now;
+
+			string currentJobLabel =
+				currentJob?.def?.defName ?? "null";
+
+			string incomingJobLabel =
+				incomingJob?.def?.defName ?? "null";
 
 			Log.Message(
-				$"[ArgrillianThreat][HeldPatient] BLOCK where={where} patient={pawn.Name} curJob={curJobLabel} incomingJob={incomingJobLabel}"
+				$"[ArgrillianThreat][HeldPatient] BLOCK " +
+				$"where={where} pawn={pawn.Name} " +
+				$"curJob={currentJobLabel} " +
+				$"incomingJob={incomingJobLabel}"
 			);
+		}
+
+		private static bool IsWaitJob(Verse.AI.Job job)
+		{
+			return
+				job != null &&
+				job.def == JobDefOf.Wait;
 		}
 
 		private static bool IsTendJob(Verse.AI.Job job)
 		{
-			if (job == null) return false;
-			if (job.def == null) return false;
-			return job.def == RimWorld.JobDefOf.TendPatient;
+			return
+				job != null &&
+				job.def == JobDefOf.TendPatient;
 		}
 
-		private static Pawn TryExtractPawn(Pawn_JobTracker __instance)
+		private static bool IsRescueJob(Verse.AI.Job job)
 		{
-			if (__instance == null) return null;
+			return
+				job != null &&
+				job.def == JobDefOf.Rescue;
+		}
+
+		private static bool IsHeldMedicalTransitionJob(
+			Verse.AI.Job job)
+		{
+			if (job == null || job.def == null)
+				return false;
+
+			return
+				IsWaitJob(job) ||
+				IsTendJob(job) ||
+				IsRescueJob(job);
+		}
+
+		private static Pawn TryExtractPawn(
+			Pawn_JobTracker instance)
+		{
+			if (instance == null)
+				return null;
+
 			try
 			{
-				var tt = __instance.GetType();
+				Type trackerType = instance.GetType();
 
-				var f = tt.GetField("pawn",
-					System.Reflection.BindingFlags.Instance |
-					System.Reflection.BindingFlags.NonPublic |
-					System.Reflection.BindingFlags.Public);
+				FieldInfo pawnField =
+					trackerType.GetField(
+						"pawn",
+						BindingFlags.Instance |
+						BindingFlags.NonPublic |
+						BindingFlags.Public);
 
-				if (f != null)
-					return f.GetValue(__instance) as Pawn;
+				if (pawnField != null)
+					return pawnField.GetValue(instance) as Pawn;
 
-				var p = tt.GetProperty("Pawn",
-					System.Reflection.BindingFlags.Instance |
-					System.Reflection.BindingFlags.Public |
-					System.Reflection.BindingFlags.NonPublic);
+				PropertyInfo pawnProperty =
+					trackerType.GetProperty(
+						"Pawn",
+						BindingFlags.Instance |
+						BindingFlags.Public |
+						BindingFlags.NonPublic);
 
-				if (p != null)
-					return p.GetValue(__instance, null) as Pawn;
+				if (pawnProperty != null)
+					return pawnProperty.GetValue(instance, null) as Pawn;
 			}
 			catch
 			{
 			}
+
 			return null;
 		}
 
+		private static bool IsHeldControlledPawn(
+			Pawn pawn,
+			out bool isPatient,
+			out bool isOwningMedic)
+		{
+			isPatient = false;
+			isOwningMedic = false;
+
+			if (pawn == null)
+				return false;
+
+			if (pawn.Dead || !pawn.Spawned || pawn.Map == null)
+				return false;
+
+			isPatient =
+				ArgrillianAlertSystem.IsPawnHeldByMedicStop(pawn);
+
+			isOwningMedic =
+				ArgrillianAlertSystem.IsMedicHoldingPatient(pawn);
+
+			return isPatient || isOwningMedic;
+		}
+
+		private static bool IsAllowedJobForHeldPawn(
+			Pawn pawn,
+			Verse.AI.Job job)
+		{
+			if (pawn == null || job == null)
+				return false;
+
+			bool isPatient;
+			bool isOwningMedic;
+
+			if (!IsHeldControlledPawn(
+				pawn,
+				out isPatient,
+				out isOwningMedic))
+			{
+				return true;
+			}
+
+			if (isPatient)
+			{
+				// The patient remains stationary while the medical
+				// ownership transition is active.
+				return
+					IsWaitJob(job) ||
+					IsTendJob(job) ||
+					IsRescueJob(job);
+			}
+
+			if (isOwningMedic)
+			{
+				// The medic remains inside the medical pipeline.
+				// TendPatient supplies its own movement toward the patient.
+				return
+					IsTendJob(job) ||
+					IsRescueJob(job) ||
+					IsWaitJob(job);
+			}
+
+			return false;
+		}
+
 		[HarmonyPrefix]
-		public static bool Prefix_TryFindAndStartJob(Pawn_JobTracker __instance)
+		public static bool Prefix_TryFindAndStartJob(
+			Pawn_JobTracker __instance)
 		{
 			OneShotLog(
 				"PrefixEntered",
-				"[ArgrillianThreat][HeldPatient][PatchTick] Prefix_TryFindAndStartJob ENTERED"
+				"[ArgrillianThreat][HeldPatient][PatchTick] " +
+				"Prefix_TryFindAndStartJob ENTERED"
 			);
 
 			if (__instance == null)
 				return true;
 
-			Pawn pawn = TryExtractPawn(__instance);
-			if (pawn == null)
+			Pawn pawn =
+				TryExtractPawn(__instance);
+
+			if (pawn == null || pawn.Map == null)
 				return true;
 
-			if (pawn.Map == null)
-				return true;
+			bool isPatient;
+			bool isOwningMedic;
 
-			bool heldNow = ArgrillianAlertSystem.IsPawnHeldByMedicStop(pawn);
-			if (!heldNow)
+			if (!IsHeldControlledPawn(
+				pawn,
+				out isPatient,
+				out isOwningMedic))
+			{
 				return true;
+			}
 
-			Verse.AI.Job cur = pawn.CurJob;
+			Verse.AI.Job currentJob =
+				pawn.CurJob;
 
 			OneShotLog(
-				"PrefixHeldNowEntered",
-				$"[ArgrillianThreat][HeldPatient][PatchTick] Prefix_TryFindAndStartJob heldNow=TRUE patient={pawn.LabelShort} curJob={(cur?.def?.defName ?? "null")}"
+				$"HeldEntered_{pawn.thingIDNumber}",
+				$"[ArgrillianThreat][HeldPatient][PatchTick] " +
+				$"held control active pawn={pawn.LabelShort} " +
+				$"role={(isPatient ? "patient" : "owningMedic")} " +
+				$"curJob={(currentJob?.def?.defName ?? "null")}"
 			);
 
-			// Let tending continue.
-			if (IsTendJob(cur))
-				return true;
+			// Do not let TryFindAndStartJob search for an arbitrary job.
+			// The medical job giver and StartJob allowlist are authoritative.
+			LogHeldBlock(
+				"Pawn_JobTracker.TryFindAndStartJob",
+				pawn,
+				currentJob,
+				null);
 
-			// REQUIRED: allow the patient's held Wait job to remain in control while held.
-			if (cur != null && cur.def == JobDefOf.Wait)
-				return true;
-
-			LogHeldBlock("Pawn_JobTracker.TryFindAndStartJob", pawn, cur, null);
 			return false;
 		}
 
-		// Hard second gate: prevent RimWorld from starting the job while held.
 		[HarmonyPatch(typeof(Pawn_JobTracker), "StartJob")]
 		public static class StartJobPatch
 		{
-			private static bool IsWaitJob(Verse.AI.Job job)
-			{
-				if (job == null) return false;
-				if (job.def == null) return false;
-				return job.def == JobDefOf.Wait;
-			}
-
 			[HarmonyPrefix]
 			public static bool Prefix_StartJob(
 				Pawn_JobTracker __instance,
-				Verse.AI.Job newJob
-			)
+				Verse.AI.Job newJob)
 			{
-				if (__instance == null) return true;
+				if (__instance == null)
+					return true;
 
 				OneShotLog(
 					"StartJobPrefixEntered",
-					"[ArgrillianThreat][HeldPatient][PatchTick] Prefix_StartJob ENTERED"
+					"[ArgrillianThreat][HeldPatient][PatchTick] " +
+					"Prefix_StartJob ENTERED"
 				);
 
-				Pawn pawn = ArgrillianHeldPatientJobBlocker.TryExtractPawn(__instance);
-				if (pawn == null) return true;
-				if (pawn.Map == null) return true;
+				Pawn pawn =
+					TryExtractPawn(__instance);
 
-				bool heldNow = ArgrillianAlertSystem.IsPawnHeldByMedicStop(pawn);
-				if (!heldNow)
+				if (pawn == null || pawn.Map == null)
 					return true;
 
-				// If RimWorld is trying to start TendPatient for the held pawn, allow.
-				if (ArgrillianHeldPatientJobBlocker.IsTendJob(newJob))
+				bool isPatient;
+				bool isOwningMedic;
+
+				if (!IsHeldControlledPawn(
+					pawn,
+					out isPatient,
+					out isOwningMedic))
+				{
+					return true;
+				}
+
+				if (IsAllowedJobForHeldPawn(pawn, newJob))
 					return true;
 
-				// Allow the patient's held long-duration wait state so it can actually enter/maintain the held flow.
-				if (IsWaitJob(newJob))
-					return true;
+				LogHeldBlock(
+					"Pawn_JobTracker.StartJob",
+					pawn,
+					pawn.CurJob,
+					newJob);
 
-				LogHeldBlock("Pawn_JobTracker.StartJob", pawn, pawn.CurJob, newJob);
 				return false;
 			}
 		}
@@ -1258,6 +1403,61 @@ namespace ArgrillianThreat
 	// 	- The brain and dispatch center.
 	public static class ArgrillianAlertSystem
 	{
+		public static bool IsMedicHoldingPatient(Pawn medic)
+		{
+			if (medic == null)
+				return false;
+
+			if (medic.Dead || !medic.Spawned || medic.Map == null)
+				return false;
+
+			int medicId = medic.thingIDNumber;
+			if (medicId < 0)
+				return false;
+
+			if (!assignedPatientIdByMedicId.TryGetValue(medicId, out int patientId))
+				return false;
+
+			if (patientId < 0)
+				return false;
+
+			return lockedPatientIds.Contains(patientId);
+		}
+
+		public static bool TryGetHeldPatientForMedic(Pawn medic, out Pawn patient)
+		{
+			patient = null;
+
+			if (medic == null)
+				return false;
+
+			if (medic.Dead || !medic.Spawned || medic.Map == null)
+				return false;
+
+			int medicId = medic.thingIDNumber;
+			if (medicId < 0)
+				return false;
+
+			if (!assignedPatientIdByMedicId.TryGetValue(medicId, out int patientId))
+				return false;
+
+			if (patientId < 0 || !lockedPatientIds.Contains(patientId))
+				return false;
+
+			patient = TryGetPatientFromCachedCall(medic.Map, patientId);
+
+			if (patient == null)
+				return false;
+
+			if (patient.Dead || !patient.Spawned || patient.Map != medic.Map)
+			{
+				patient = null;
+				return false;
+			}
+
+			return true;
+		}
+
 		private sealed class MapCache
 		{
 			public readonly List<Pawn> recipients = new List<Pawn>(64);
@@ -1484,15 +1684,26 @@ namespace ArgrillianThreat
 
 		public static bool TryLockPatientHeldByMedic(Pawn medic, Pawn patient)
 		{
-			if (medic == null || patient == null) return false;
-			if (!medic.Spawned || medic.Dead) return false;
-			if (!patient.Spawned || patient.Dead) return false;
-			if (medic.Map == null || patient.Map == null) return false;
-			if (medic.Map != patient.Map) return false;
+			if (medic == null || patient == null)
+				return false;
 
-			// Role gate: only Doctor / Medic / Combat Medic can set the behavioral lock.
-			var medicComp = medic.GetComp<CompArgrillianMedicSettings>();
-			if (medicComp == null) return false;
+			if (!medic.Spawned || medic.Dead)
+				return false;
+
+			if (!patient.Spawned || patient.Dead)
+				return false;
+
+			if (medic.Map == null || patient.Map == null)
+				return false;
+
+			if (medic.Map != patient.Map)
+				return false;
+
+			CompArgrillianMedicSettings medicComp =
+				medic.GetComp<CompArgrillianMedicSettings>();
+
+			if (medicComp == null)
+				return false;
 
 			bool isAllowed =
 				medicComp.doctor ||
@@ -1502,19 +1713,63 @@ namespace ArgrillianThreat
 			if (!isAllowed)
 			{
 				Log.Message(
-					$"[ArgrillianThreat] TryLockPatientHeldByMedic denied role pawn={medic?.Name} patient={patient?.Name}"
+					$"[ArgrillianThreat] TryLockPatientHeldByMedic denied role " +
+					$"pawn={medic.Name} patient={patient.Name}"
 				);
+
 				return false;
 			}
 
-			int pid = patient.thingIDNumber;
-			if (pid < 0) return false;
+			int medicId = medic.thingIDNumber;
+			int patientId = patient.thingIDNumber;
 
-			lockedPatientIds.Add(pid);
+			if (medicId < 0 || patientId < 0)
+				return false;
 
-			// Log lock activation + current lock state
+			if (assignedPatientIdByMedicId.TryGetValue(
+				medicId,
+				out int existingPatientId))
+			{
+				if (existingPatientId != patientId)
+				{
+					Log.Message(
+						$"[ArgrillianThreat] TryLockPatientHeldByMedic denied " +
+						$"medic already owns another patient " +
+						$"medic={medic.Name} existingPatientId={existingPatientId} " +
+						$"requestedPatientId={patientId}"
+					);
+
+					return false;
+				}
+			}
+
+			foreach (KeyValuePair<int, int> assignment in assignedPatientIdByMedicId)
+			{
+				if (assignment.Key == medicId)
+					continue;
+
+				if (assignment.Value != patientId)
+					continue;
+
+				if (assignment.Key != medicId)
+				{
+					Log.Message(
+						$"[ArgrillianThreat] TryLockPatientHeldByMedic denied " +
+						$"patient already owned patient={patient.Name} " +
+						$"existingMedicId={assignment.Key} requestedMedic={medic.Name}"
+					);
+
+					return false;
+				}
+			}
+
+			assignedPatientIdByMedicId[medicId] = patientId;
+			lockedPatientIds.Add(patientId);
+
 			Log.Message(
-				$"[ArgrillianThreat] TryLockPatientHeldByMedic LOCK pid={pid} medic={medic.Name} patient={patient.Name} combatMedic={medicComp.combatMedic} doctor={medicComp.doctor}"
+				$"[ArgrillianThreat] TryLockPatientHeldByMedic LOCK " +
+				$"pid={patientId} medic={medic.Name} patient={patient.Name} " +
+				$"combatMedic={medicComp.combatMedic} doctor={medicComp.doctor}"
 			);
 
 			return true;
