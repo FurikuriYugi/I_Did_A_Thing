@@ -6714,11 +6714,11 @@ namespace ArgrillianThreat
 				patientStabilityOkForTerminal &&
 				patientIsFullyTended;
 
-			bool patientMedicallyFinished =
+			/*bool patientMedicallyFinished =
 				!heldPatient.Downed &&
 				!patientIsBleedingNow &&
 				patientStabilityOkForTerminal &&
-				patientIsFullyTended;
+				patientIsFullyTended;*/
 
 			bool patientClearedForCombat =
 				patientHP >= 0.8f &&
@@ -6782,6 +6782,10 @@ namespace ArgrillianThreat
 						.GiveCombatThreatJob(pawn);
 				}
 
+				bool medicInReach =
+					pawn.Position.DistanceTo(heldPatient.Position) <=
+					combatTendMaxDistance;
+
 				if (patientClearedForCombat)
 				{
 					Log.Message(
@@ -6800,31 +6804,11 @@ namespace ArgrillianThreat
 						.GiveCombatThreatJob(heldPatient);
 				}
 
-				if (patientMedicallyFinished ||
-				ArgrillianAlertSystem.IsPatientTransferedToMedicOrDoctor(
-					heldPatient))
-				{
-					Log.Message(
-						$"[ArgrillianThreat][TendRetreatingAllies] " +
-						$"medical completion unlock medic={pawn.LabelShort} " +
-						$"patient={heldPatient.LabelShort} " +
-						$"inBed={patientInBed} " +
-						$"combatCapable={IsPawnCombatCapable(heldPatient)} " +
-						$"fullyTended={patientIsFullyTended} " +
-						$"bleeding={patientIsBleedingNow}");
-
-					ReleaseHeldPatientAndWake(
-						pawn,
-						heldPatient);
-
-					holdPatient.Reset();
-
-					return null;
-				}
-
-				bool medicInReach =
-					pawn.Position.DistanceTo(heldPatient.Position) <=
-					combatTendMaxDistance;
+				bool patientMedicallyFinished = !heldPatient.Downed && !patientIsBleedingNow && patientIsFullyTended &&
+					(
+						patientStabilityOkForTerminal ||
+						medicInReach
+					);
 
 				if (medicInReach)
 				{
@@ -6838,7 +6822,13 @@ namespace ArgrillianThreat
 							$"combatMedicInReach medic={pawn.LabelShort} " +
 							$"patient={heldPatient.LabelShort} " +
 							$"patientDowned={heldPatient.Downed} " +
-							$"tendEligible=true");
+							$"tendEligible=true" +
+							$"fullyTended={patientIsFullyTended} " +
+							$"bleeding={patientIsBleedingNow} " +
+							$"stable={patientStabilityOkForTerminal} " +
+							$"stableTicks={stableTicksNow} " +
+							$"requiredStableTicks={requiredStableTicksForTerminal} " +
+							$"medicallyFinished={patientMedicallyFinished}");
 					}
 
 					if (!ArgrillianAlertSystem.IsPawnHeldByMedicStop(
