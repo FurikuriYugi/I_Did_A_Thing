@@ -297,21 +297,39 @@ namespace ArgrillianThreat
 			Verse.AI.Job currentJob =
 				pawn.CurJob;
 
-			OneShotLog(
-				$"HeldEntered_{pawn.thingIDNumber}",
-				$"[ArgrillianThreat][HeldPatient][PatchTick] " +
-				$"held control active pawn={pawn.LabelShort} " +
-				$"role={(isPatient ? "patient" : "owningMedic")} " +
-				$"curJob={(currentJob?.def?.defName ?? "null")}"
-			);
+			if (isOwningMedic)
+			{
+				// The owning medic must be allowed to run the think tree
+				// after TendPatient ends. This is required so
+				// JobGiver_TendRetreatingAllies can execute its terminal
+				// medical-release checks.
+				//
+				// StartJob remains the authority that rejects unrelated
+				// jobs and allows only TendPatient, Rescue, and Wait.
+				OneShotLog(
+					$"HeldMedicTryFindAllowed_{pawn.thingIDNumber}",
+					$"[ArgrillianThreat][HeldPatient][PatchTick] " +
+					$"allow owning medic TryFindAndStartJob " +
+					$"pawn={pawn.LabelShort} " +
+					$"curJob={(currentJob?.def?.defName ?? "null")}"
+				);
 
-			// Do not let TryFindAndStartJob search for an arbitrary job.
-			// The medical job giver and StartJob allowlist are authoritative.
-			LogHeldBlock(
-				"Pawn_JobTracker.TryFindAndStartJob",
-				pawn,
-				currentJob,
-				null);
+				return true;
+			}
+
+			// The held patient must not search for arbitrary jobs.
+			// Patient-side Wait, TendPatient, and Rescue transitions are
+			// controlled through StartJob and the medical pipeline.
+			if (isPatient)
+			{
+				LogHeldBlock(
+					"Pawn_JobTracker.TryFindAndStartJob",
+					pawn,
+					currentJob,
+					null);
+
+				return false;
+			}
 
 			return false;
 		}
