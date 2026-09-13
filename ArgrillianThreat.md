@@ -6695,9 +6695,15 @@ namespace ArgrillianThreat
 						continue;
 					}
 
-					// Severity can remain above zero after tending.
-					// Only an injury that is still currently tendable means
-					// the medical assignment is unfinished.
+					// Only actual injuries can represent unfinished
+					// TendPatient work. Do not treat missing body parts,
+					// scars, implants, diseases, or other tendable hediff
+					// definitions as unfinished treatment.
+					if (!(hediff is Hediff_Injury))
+					{
+						continue;
+					}
+
 					if (hediff.def.tendable &&
 						hediff.TendableNow())
 					{
