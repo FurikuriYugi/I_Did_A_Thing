@@ -6707,6 +6707,10 @@ namespace ArgrillianThreat
 				}
 			}
 
+			bool medicInReach =
+					pawn.Position.DistanceTo(heldPatient.Position) <=
+					combatTendMaxDistance;
+
 			bool patientInBedAndFullyTended =
 				patientInBed &&
 				!heldPatient.Downed &&
@@ -6714,11 +6718,11 @@ namespace ArgrillianThreat
 				patientStabilityOkForTerminal &&
 				patientIsFullyTended;
 
-			/*bool patientMedicallyFinished =
-				!heldPatient.Downed &&
-				!patientIsBleedingNow &&
-				patientStabilityOkForTerminal &&
-				patientIsFullyTended;*/
+			bool patientMedicallyFinished = !heldPatient.Downed && !patientIsBleedingNow && patientIsFullyTended &&
+				(
+					patientStabilityOkForTerminal ||
+					medicInReach
+				);
 
 			bool patientClearedForCombat =
 				patientHP >= 0.8f &&
@@ -6782,10 +6786,6 @@ namespace ArgrillianThreat
 						.GiveCombatThreatJob(pawn);
 				}
 
-				bool medicInReach =
-					pawn.Position.DistanceTo(heldPatient.Position) <=
-					combatTendMaxDistance;
-
 				if (patientClearedForCombat)
 				{
 					Log.Message(
@@ -6804,11 +6804,28 @@ namespace ArgrillianThreat
 						.GiveCombatThreatJob(heldPatient);
 				}
 
-				bool patientMedicallyFinished = !heldPatient.Downed && !patientIsBleedingNow && patientIsFullyTended &&
-					(
-						patientStabilityOkForTerminal ||
-						medicInReach
-					);
+				if (patientMedicallyFinished &&
+				!IsPawnCombatCapable(heldPatient))
+				{
+					Log.Message(
+						$"[ArgrillianThreat][TendRetreatingAllies] " +
+						$"medical completion unlock medic={pawn.LabelShort} " +
+						$"patient={heldPatient.LabelShort} " +
+						$"patientHP={patientHP:F2} " +
+						$"fullyTended={patientIsFullyTended} " +
+						$"bleeding={patientIsBleedingNow} " +
+						$"stable={patientStabilityOkForTerminal} " +
+						$"stableTicks={stableTicksNow} " +
+						$"requiredStableTicks={requiredStableTicksForTerminal}");
+
+					ReleaseHeldPatientAndWake(
+						pawn,
+						heldPatient);
+
+					holdPatient.Reset();
+
+					return null;
+				}
 
 				if (medicInReach)
 				{
