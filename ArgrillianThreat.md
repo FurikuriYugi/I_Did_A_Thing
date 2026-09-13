@@ -6441,6 +6441,45 @@ namespace ArgrillianThreat
 			RescueBedCache.Remove(patient.thingIDNumber);
 		}
 
+		private static void ReleaseHeldPatientAndWake(
+		Pawn medic,
+		Pawn patient)
+		{
+			if (medic == null)
+				return;
+
+			ArgrillianAlertSystem.CompletePatientHeldByMedic(medic);
+
+			if (patient == null ||
+				patient.Dead ||
+				!patient.Spawned ||
+				patient.jobs == null)
+			{
+				return;
+			}
+
+			Job currentJob = patient.CurJob;
+
+			if (currentJob == null ||
+				currentJob.def == null)
+			{
+				return;
+			}
+
+			bool isHeldWaitJob =
+				currentJob.def == JobDefOf.Wait ||
+				currentJob.def.defName == "Wait_MaintainPosture";
+
+			if (!isHeldWaitJob)
+				return;
+
+			// Ownership has already been removed above, so the held-job
+			// blocker will no longer reject the patient's next job.
+			patient.jobs.EndCurrentJob(
+				JobCondition.Succeeded,
+				true);
+		}
+
 		protected override Job TryGiveJob(Pawn pawn)
 		{
 			ArgrillianAlertSystem.NotifyPawnSelfState(pawn);
@@ -6631,10 +6670,18 @@ namespace ArgrillianThreat
 				{
 					Hediff hediff = hediffs[i];
 
-					if (hediff == null || hediff.def == null)
+					if (hediff == null ||
+						hediff.def == null ||
+						hediff.Severity <= 0f)
+					{
 						continue;
+					}
 
-					if (hediff.def.tendable && hediff.Severity > 0f)
+					// Severity can remain above zero after tending.
+					// Only an injury that is still currently tendable means
+					// the medical assignment is unfinished.
+					if (hediff.def.tendable &&
+						hediff.TendableNow())
 					{
 						patientIsFullyTended = false;
 						break;
@@ -6719,23 +6766,39 @@ namespace ArgrillianThreat
 
 				if (patientClearedForCombat)
 				{
-					ArgrillianAlertSystem.CompletePatientHeldByMedic(pawn);
+					Log.Message(
+						$"[ArgrillianThreat][TendRetreatingAllies] " +
+						$"combat medical completion unlock medic={pawn.LabelShort} " +
+						$"patient={heldPatient.LabelShort} " +
+						$"patientHP={patientHP:F2}");
+
+					ReleaseHeldPatientAndWake(
+						pawn,
+						heldPatient);
+
 					holdPatient.Reset();
 
 					return new JobGiver_ArgrillianThreatResponse()
 						.GiveCombatThreatJob(heldPatient);
 				}
 
-				if (patientMedicallyFinished || ArgrillianAlertSystem.IsPatientTransferedToMedicOrDoctor(heldPatient))
+				if (patientMedicallyFinished ||
+				ArgrillianAlertSystem.IsPatientTransferedToMedicOrDoctor(
+					heldPatient))
 				{
 					Log.Message(
 						$"[ArgrillianThreat][TendRetreatingAllies] " +
 						$"medical completion unlock medic={pawn.LabelShort} " +
 						$"patient={heldPatient.LabelShort} " +
 						$"inBed={patientInBed} " +
-						$"combatCapable={IsPawnCombatCapable(heldPatient)}");
+						$"combatCapable={IsPawnCombatCapable(heldPatient)} " +
+						$"fullyTended={patientIsFullyTended} " +
+						$"bleeding={patientIsBleedingNow}");
 
-					ArgrillianAlertSystem.CompletePatientHeldByMedic(pawn);
+					ReleaseHeldPatientAndWake(
+						pawn,
+						heldPatient);
+
 					holdPatient.Reset();
 
 					return null;
