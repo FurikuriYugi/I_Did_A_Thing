@@ -6676,7 +6676,7 @@ namespace ArgrillianThreat
 			bool patientStabilityOkForTerminal =
 				stableTicksNow >= requiredStableTicksForTerminal;
 
-			bool patientIsFullyTended = true;
+			/*bool patientIsFullyTended = true;
 
 			if (heldHealth != null &&
 				heldHediffSet != null &&
@@ -6743,7 +6743,87 @@ namespace ArgrillianThreat
 						break;
 					}
 				}
+			}*/
+
+			bool patientIsFullyTended = true;
+			int unfinishedHediffCount = 0;
+			string unfinishedHediffDefs = string.Empty;
+
+			if (heldHealth != null &&
+				heldHediffSet != null &&
+				heldHediffSet.hediffs != null)
+			{
+				var hediffs = heldHediffSet.hediffs;
+
+				for (int i = 0; i < hediffs.Count; i++)
+				{
+					Hediff hediff = hediffs[i];
+
+					if (hediff == null ||
+						hediff.def == null ||
+						hediff.Severity <= 0f)
+					{
+						continue;
+					}
+
+					bool isInjury =
+						hediff is Hediff_Injury;
+
+					bool defTendable =
+						hediff.def.tendable;
+
+					bool isPermanent =
+						isInjury &&
+						HediffUtility.IsPermanent(hediff);
+
+					bool isTended =
+						isInjury &&
+						HediffUtility.IsTended(hediff);
+
+					bool tendableNow =
+						isInjury &&
+						hediff.TendableNow();
+
+					bool unfinishedTreatment =
+						isInjury &&
+						defTendable &&
+						!isPermanent &&
+						!isTended;
+
+					Log.Message(
+						$"[ArgrillianThreat][TendDiagnostic] " +
+						$"medic={pawn.LabelShort} " +
+						$"patient={heldPatient.LabelShort} " +
+						$"hediffType={hediff.GetType().FullName} " +
+						$"hediffDef={hediff.def.defName} " +
+						$"severity={hediff.Severity:F4} " +
+						$"isInjury={isInjury} " +
+						$"defTendable={defTendable} " +
+						$"permanent={isPermanent} " +
+						$"isTended={isTended} " +
+						$"tendableNow={tendableNow} " +
+						$"unfinishedTreatment={unfinishedTreatment}");
+
+					if (unfinishedTreatment)
+					{
+						patientIsFullyTended = false;
+						unfinishedHediffCount++;
+
+						if (unfinishedHediffDefs.Length > 0)
+							unfinishedHediffDefs += ",";
+
+						unfinishedHediffDefs += hediff.def.defName;
+					}
+				}
 			}
+
+			Log.Message(
+				$"[ArgrillianThreat][TendDiagnosticSummary] " +
+				$"medic={pawn.LabelShort} " +
+				$"patient={heldPatient.LabelShort} " +
+				$"patientFullyTended={patientIsFullyTended} " +
+				$"unfinishedHediffCount={unfinishedHediffCount} " +
+				$"unfinishedHediffDefs={unfinishedHediffDefs}");
 
 			bool medicInReach =
 					pawn.Position.DistanceTo(heldPatient.Position) <=
