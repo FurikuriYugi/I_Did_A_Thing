@@ -6849,6 +6849,35 @@ namespace ArgrillianThreat
 				patientIsFullyTended &&
 				IsPawnCombatCapable(heldPatient);
 
+			if (ArgrillianSmartLogCache.ShouldLogForPawn(
+				"TendTerminalGate",
+				pawn,
+				30))
+			{
+				Log.Message(
+					$"[ArgrillianThreat][TendTerminalGate] " +
+					$"medic={pawn.LabelShort} " +
+					$"patient={heldPatient?.LabelShort ?? "null"} " +
+					$"medicCurJob={pawn.CurJob?.def?.defName ?? "null"} " +
+					$"patientCurJob={heldPatient?.CurJob?.def?.defName ?? "null"} " +
+					$"medicInReach={medicInReach} " +
+					$"patientInBed={patientInBed} " +
+					$"patientDowned={heldPatient?.Downed ?? false} " +
+					$"patientHP={patientHP:F2} " +
+					$"bleeding={patientIsBleedingNow} " +
+					$"stable={patientStabilityOkForTerminal} " +
+					$"stableTicks={stableTicksNow} " +
+					$"requiredStableTicks={requiredStableTicksForTerminal} " +
+					$"fullyTended={patientIsFullyTended} " +
+					$"medicallyFinished={patientMedicallyFinished} " +
+					$"combatCapable={IsPawnCombatCapable(heldPatient)} " +
+					$"clearedForCombat={patientClearedForCombat} " +
+					$"medicOwnsPatient=" +
+						ArgrillianAlertSystem.IsMedicHoldingPatient(pawn) + " " +
+					$"patientHeldByMedic=" +
+						ArgrillianAlertSystem.IsPawnHeldByMedicStop(heldPatient));
+			}
+
 			if (medicComp.doctor)
 			{
 				if (ArgrillianSmartLogCache.ShouldLogForPawn(
