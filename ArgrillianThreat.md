@@ -6695,28 +6695,50 @@ namespace ArgrillianThreat
 						continue;
 					}
 
-					// Only actual injuries can represent unfinished
-					// TendPatient work. Do not treat missing body parts,
-					// scars, implants, diseases, or other tendable hediff
-					// definitions as unfinished treatment.
+					// Only injuries can represent unfinished TendPatient work.
+					// Non-injury hediffs, missing parts, scars, implants, and
+					// diseases must not keep the medic-owned transition active.
 					if (!(hediff is Hediff_Injury))
-					{
 						continue;
-					}
 
-					if (hediff.def.tendable &&
-						hediff.TendableNow())
+					bool defTendable =
+						hediff.def.tendable;
+
+					bool isPermanent =
+						HediffUtility.IsPermanent(hediff);
+
+					bool isTended =
+						HediffUtility.IsTended(hediff);
+
+					bool tendableNow =
+						hediff.TendableNow();
+
+					bool unfinishedTreatment =
+						defTendable &&
+						!isPermanent &&
+						!isTended;
+
+					if (ArgrillianSmartLogCache.ShouldLogForPawn(
+						"TendDiagnostic",
+						heldPatient,
+						120))
 					{
 						Log.Message(
-						$"[ArgrillianThreat][TendDiagnostic] " +
-						$"medic={pawn.LabelShort} " +
-						$"patient={heldPatient.LabelShort} " +
-						$"hediffType={hediff.GetType().FullName} " +
-						$"hediffDef={hediff.def.defName} " +
-						$"severity={hediff.Severity:F4} " +
-						$"defTendable={hediff.def.tendable} " +
-						$"tendableNow={hediff.TendableNow()}");
-						
+							$"[ArgrillianThreat][TendDiagnostic] " +
+							$"medic={pawn.LabelShort} " +
+							$"patient={heldPatient.LabelShort} " +
+							$"hediffType={hediff.GetType().FullName} " +
+							$"hediffDef={hediff.def.defName} " +
+							$"severity={hediff.Severity:F4} " +
+							$"defTendable={defTendable} " +
+							$"permanent={isPermanent} " +
+							$"isTended={isTended} " +
+							$"tendableNow={tendableNow} " +
+							$"unfinishedTreatment={unfinishedTreatment}");
+					}
+
+					if (unfinishedTreatment)
+					{
 						patientIsFullyTended = false;
 						break;
 					}
