@@ -6707,6 +6707,16 @@ namespace ArgrillianThreat
 					if (hediff.def.tendable &&
 						hediff.TendableNow())
 					{
+						Log.Message(
+						$"[ArgrillianThreat][TendDiagnostic] " +
+						$"medic={pawn.LabelShort} " +
+						$"patient={heldPatient.LabelShort} " +
+						$"hediffType={hediff.GetType().FullName} " +
+						$"hediffDef={hediff.def.defName} " +
+						$"severity={hediff.Severity:F4} " +
+						$"defTendable={hediff.def.tendable} " +
+						$"tendableNow={hediff.TendableNow()}");
+						
 						patientIsFullyTended = false;
 						break;
 					}
