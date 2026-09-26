@@ -1420,331 +1420,6 @@ namespace ArgrillianThreat
 		}
 	}
 
-	public static class ArgrillianTendLifecycleDiagnostics
-	{
-		private sealed class TendSnapshot
-		{
-			public Pawn medic;
-			public Pawn patient;
-			public int startTick;
-			public string medicJobBefore;
-			public string patientJobBefore;
-		}
-
-		private static readonly Dictionary<JobDriver_TendPatient, TendSnapshot> activeTends =
-			new Dictionary<JobDriver_TendPatient, TendSnapshot>();
-
-		private static string JobName(Job job)
-		{
-			return job?.def?.defName ?? "null";
-		}
-
-		private static string PawnName(Pawn pawn)
-		{
-			return pawn?.LabelShort ?? "null";
-		}
-
-		private static Pawn TryGetPatient(JobDriver_TendPatient driver)
-		{
-			if (driver == null || driver.job == null)
-				return null;
-
-			if (driver.job.targetA.IsValid &&
-				driver.job.targetA.Thing is Pawn targetA)
-			{
-				return targetA;
-			}
-
-			if (driver.job.targetB.IsValid &&
-				driver.job.targetB.Thing is Pawn targetB)
-			{
-				return targetB;
-			}
-
-			if (driver.job.targetC.IsValid &&
-				driver.job.targetC.Thing is Pawn targetC)
-			{
-				return targetC;
-			}
-
-			return null;
-		}
-
-		private static void LogHediffSnapshot(
-			string prefix,
-			Pawn medic,
-			Pawn patient,
-			int tick)
-		{
-			if (patient?.health?.hediffSet?.hediffs == null)
-			{
-				Log.Message(
-					$"[ArgrillianThreat][{prefix}] " +
-					$"tick={tick} " +
-					$"medic={PawnName(medic)} " +
-					$"patient={PawnName(patient)} " +
-					$"hediffSet=null");
-
-				return;
-			}
-
-			var hediffs = patient.health.hediffSet.hediffs;
-
-			for (int i = 0; i < hediffs.Count; i++)
-			{
-				Hediff hediff = hediffs[i];
-
-				if (hediff == null || hediff.def == null)
-					continue;
-
-				bool isInjury = hediff is Hediff_Injury;
-				bool defTendable = hediff.def.tendable;
-				bool permanent =
-					isInjury &&
-					HediffUtility.IsPermanent(hediff);
-
-				bool isTended =
-					isInjury &&
-					HediffUtility.IsTended(hediff);
-
-				bool tendableNow =
-					isInjury &&
-					hediff.TendableNow();
-
-				Log.Message(
-					$"[ArgrillianThreat][{prefix}] " +
-					$"tick={tick} " +
-					$"medic={PawnName(medic)} " +
-					$"patient={PawnName(patient)} " +
-					$"hediffType={hediff.GetType().FullName} " +
-					$"hediffDef={hediff.def.defName} " +
-					$"severity={hediff.Severity:F4} " +
-					$"isInjury={isInjury} " +
-					$"defTendable={defTendable} " +
-					$"permanent={permanent} " +
-					$"isTended={isTended} " +
-					$"tendableNow={tendableNow}");
-			}
-		}
-
-		public static void Prefix_TendPatientCleanup(
-			JobDriver_TendPatient driver)
-		{
-			if (driver == null || driver.pawn == null)
-				return;
-
-			Pawn medic = driver.pawn;
-			Pawn patient = TryGetPatient(driver);
-
-			int tick =
-				Find.TickManager != null
-					? Find.TickManager.TicksGame
-					: -1;
-
-			activeTends[driver] = new TendSnapshot
-			{
-				medic = medic,
-				patient = patient,
-				startTick = tick,
-				medicJobBefore = JobName(medic.CurJob),
-				patientJobBefore = JobName(patient?.CurJob)
-			};
-
-			Log.Message(
-				$"[ArgrillianThreat][TendJobEnd] BEGIN " +
-				$"tick={tick} " +
-				$"medic={PawnName(medic)} " +
-				$"patient={PawnName(patient)} " +
-				$"medicCurJob={JobName(medic.CurJob)} " +
-				$"patientCurJob={JobName(patient?.CurJob)}");
-
-			LogHediffSnapshot(
-				"TendLifecycleHediffBefore",
-				medic,
-				patient,
-				tick);
-		}
-
-		public static void Postfix_TendPatientCleanup(
-			JobDriver_TendPatient driver,
-			JobCondition condition)
-		{
-			if (driver == null)
-				return;
-
-			int tick =
-				Find.TickManager != null
-					? Find.TickManager.TicksGame
-					: -1;
-
-			if (!activeTends.TryGetValue(
-				driver,
-				out TendSnapshot snapshot))
-			{
-				snapshot = new TendSnapshot
-				{
-					medic = driver.pawn,
-					patient = TryGetPatient(driver),
-					startTick = tick,
-					medicJobBefore = "unknown",
-					patientJobBefore = "unknown"
-				};
-			}
-
-			Pawn medic = snapshot.medic;
-			Pawn patient = snapshot.patient;
-
-			Log.Message(
-				$"[ArgrillianThreat][TendJobEnd] AFTER " +
-				$"tick={tick} " +
-				$"condition={condition} " +
-				$"medic={PawnName(medic)} " +
-				$"patient={PawnName(patient)} " +
-				$"medicJobBefore={snapshot.medicJobBefore} " +
-				$"patientJobBefore={snapshot.patientJobBefore} " +
-				$"medicCurJob={JobName(medic?.CurJob)} " +
-				$"patientCurJob={JobName(patient?.CurJob)}");
-
-			LogHediffSnapshot(
-				"TendLifecycleHediffAfter",
-				medic,
-				patient,
-				tick);
-
-			int unfinishedCount = 0;
-			string unfinishedDefs = string.Empty;
-
-			if (patient?.health?.hediffSet?.hediffs != null)
-			{
-				var hediffs = patient.health.hediffSet.hediffs;
-
-				for (int i = 0; i < hediffs.Count; i++)
-				{
-					Hediff hediff = hediffs[i];
-
-					if (hediff == null ||
-						hediff.def == null ||
-						hediff.Severity <= 0f)
-					{
-						continue;
-					}
-
-					bool isInjury = hediff is Hediff_Injury;
-					bool permanent =
-						isInjury &&
-						HediffUtility.IsPermanent(hediff);
-
-					bool isTended =
-						isInjury &&
-						HediffUtility.IsTended(hediff);
-
-					bool unfinishedTreatment =
-						isInjury &&
-						hediff.def.tendable &&
-						!permanent &&
-						!isTended;
-
-					if (!unfinishedTreatment)
-						continue;
-
-					unfinishedCount++;
-
-					if (unfinishedDefs.Length > 0)
-						unfinishedDefs += ",";
-
-					unfinishedDefs += hediff.def.defName;
-				}
-			}
-
-			Log.Message(
-				$"[ArgrillianThreat][TendLifecycleSummary] " +
-				$"tick={tick} " +
-				$"condition={condition} " +
-				$"medic={PawnName(medic)} " +
-				$"patient={PawnName(patient)} " +
-				$"patientDowned={patient?.Downed ?? false} " +
-				$"patientHP={patient?.health?.summaryHealth?.SummaryHealthPercent ?? -1f:F2} " +
-				$"patientBleeding=" +
-					(patient?.health?.hediffSet?.HasHediff(HediffDefOf.BloodLoss) ?? false) + " " +
-				$"unfinishedHediffCount={unfinishedCount} " +
-				$"unfinishedHediffDefs={unfinishedDefs} " +
-				$"medicCurJob={JobName(medic?.CurJob)} " +
-				$"patientCurJob={JobName(patient?.CurJob)}");
-
-			activeTends.Remove(driver);
-		}
-
-		public static void LogBeforeTerminalGate(
-			Pawn medic,
-			Pawn patient,
-			bool medicInReach,
-			bool patientInBed,
-			bool patientDowned,
-			float patientHP,
-			bool bleeding,
-			bool stable,
-			int stableTicks,
-			int requiredStableTicks,
-			bool fullyTended,
-			bool medicallyFinished,
-			bool combatCapable,
-			bool patientClearedForCombat,
-			bool medicOwnsPatient,
-			bool patientHeldByMedic)
-		{
-			int tick =
-				Find.TickManager != null
-					? Find.TickManager.TicksGame
-					: -1;
-
-			Log.Message(
-				$"[ArgrillianThreat][TendLifecycle] " +
-				$"phase=TryGiveJob.BeforeTerminalGate " +
-				$"tick={tick} " +
-				$"medic={PawnName(medic)} " +
-				$"patient={PawnName(patient)} " +
-				$"medicCurJob={JobName(medic?.CurJob)} " +
-				$"patientCurJob={JobName(patient?.CurJob)} " +
-				$"medicInReach={medicInReach} " +
-				$"patientInBed={patientInBed} " +
-				$"patientDowned={patientDowned} " +
-				$"patientHP={patientHP:F2} " +
-				$"bleeding={bleeding} " +
-				$"stable={stable} " +
-				$"stableTicks={stableTicks} " +
-				$"requiredStableTicks={requiredStableTicks} " +
-				$"fullyTended={fullyTended} " +
-				$"medicallyFinished={medicallyFinished} " +
-				$"combatCapable={combatCapable} " +
-				$"patientClearedForCombat={patientClearedForCombat} " +
-				$"medicOwnsPatient={medicOwnsPatient} " +
-				$"patientHeldByMedic={patientHeldByMedic}");
-		}
-	}
-
-	[HarmonyPatch(typeof(JobDriver_TendPatient), "Cleanup")]
-	public static class ArgrillianTendPatientCleanupPatch
-	{
-		[HarmonyPrefix]
-		public static void Prefix(
-			JobDriver_TendPatient __instance)
-		{
-			ArgrillianTendLifecycleDiagnostics
-				.Prefix_TendPatientCleanup(__instance);
-		}
-
-		[HarmonyPostfix]
-		public static void Postfix(
-			JobDriver_TendPatient __instance,
-			JobCondition condition)
-		{
-			ArgrillianTendLifecycleDiagnostics
-				.Postfix_TendPatientCleanup(
-					__instance,
-					condition);
-		}
-	}
-
 	// NEW: Event Driven Alert System.
 	// 	- The brain and dispatch center.
 	public static class ArgrillianAlertSystem
@@ -6788,53 +6463,16 @@ namespace ArgrillianThreat
 		Pawn medic,
 		Pawn patient)
 		{
-			int tick =
-				Find.TickManager != null
-					? Find.TickManager.TicksGame
-					: -1;
+			if (medic == null)
+				return;
 
-			Log.Message(
-				$"[ArgrillianThreat][MedicalRelease] BEGIN " +
-				$"tick={tick} " +
-				$"medic={medic?.LabelShort ?? "null"} " +
-				$"patient={patient?.LabelShort ?? "null"} " +
-				$"medicCurJob={medic?.CurJob?.def?.defName ?? "null"} " +
-				$"patientCurJob={patient?.CurJob?.def?.defName ?? "null"} " +
-				$"medicOwnsBefore=" +
-					(medic != null &&
-					 ArgrillianAlertSystem.IsMedicHoldingPatient(medic)) + " " +
-				$"patientHeldBefore=" +
-					(patient != null &&
-					 ArgrillianAlertSystem.IsPawnHeldByMedicStop(patient)));
-
-			if (medic != null)
-			{
-				ArgrillianAlertSystem.CompletePatientHeldByMedic(medic);
-			}
-
-			Log.Message(
-				$"[ArgrillianThreat][MedicalRelease] OWNERSHIP_REMOVED " +
-				$"tick={tick} " +
-				$"medic={medic?.LabelShort ?? "null"} " +
-				$"patient={patient?.LabelShort ?? "null"} " +
-				$"medicOwnsAfter=" +
-					(medic != null &&
-					 ArgrillianAlertSystem.IsMedicHoldingPatient(medic)) + " " +
-				$"patientHeldAfter=" +
-					(patient != null &&
-					 ArgrillianAlertSystem.IsPawnHeldByMedicStop(patient)));
+			ArgrillianAlertSystem.CompletePatientHeldByMedic(medic);
 
 			if (patient == null ||
 				patient.Dead ||
 				!patient.Spawned ||
 				patient.jobs == null)
 			{
-				Log.Message(
-					$"[ArgrillianThreat][MedicalRelease] COMPLETE " +
-					$"tick={tick} " +
-					$"medicCurJob={medic?.CurJob?.def?.defName ?? "null"} " +
-					$"patientCurJob={patient?.CurJob?.def?.defName ?? "null"}");
-
 				return;
 			}
 
@@ -6843,12 +6481,6 @@ namespace ArgrillianThreat
 			if (currentJob == null ||
 				currentJob.def == null)
 			{
-				Log.Message(
-					$"[ArgrillianThreat][MedicalRelease] COMPLETE " +
-					$"tick={tick} " +
-					$"medicCurJob={medic?.CurJob?.def?.defName ?? "null"} " +
-					$"patientCurJob=null");
-
 				return;
 			}
 
@@ -6856,25 +6488,14 @@ namespace ArgrillianThreat
 				currentJob.def == JobDefOf.Wait ||
 				currentJob.def.defName == "Wait_MaintainPosture";
 
-			if (isHeldWaitJob)
-			{
-				Log.Message(
-					$"[ArgrillianThreat][MedicalRelease] " +
-					$"INTERRUPTING_PATIENT_WAIT " +
-					$"tick={tick} " +
-					$"patient={patient.LabelShort} " +
-					$"patientJob={currentJob.def.defName}");
+			if (!isHeldWaitJob)
+				return;
 
-				patient.jobs.EndCurrentJob(
-					JobCondition.Succeeded,
-					true);
-			}
-
-			Log.Message(
-				$"[ArgrillianThreat][MedicalRelease] COMPLETE " +
-				$"tick={tick} " +
-				$"medicCurJob={medic?.CurJob?.def?.defName ?? "null"} " +
-				$"patientCurJob={patient.CurJob?.def?.defName ?? "null"}");
+			// Ownership has already been removed above, so the held-job
+			// blocker will no longer reject the patient's next job.
+			patient.jobs.EndCurrentJob(
+				JobCondition.Succeeded,
+				true);
 		}
 
 		protected override Job TryGiveJob(Pawn pawn)
@@ -7329,24 +6950,6 @@ namespace ArgrillianThreat
 					return new JobGiver_ArgrillianThreatResponse()
 						.GiveCombatThreatJob(heldPatient);
 				}
-
-				ArgrillianTendLifecycleDiagnostics.LogBeforeTerminalGate(
-					pawn,
-					heldPatient,
-					medicInReach,
-					patientInBed,
-					heldPatient.Downed,
-					patientHP,
-					patientIsBleedingNow,
-					patientStabilityOkForTerminal,
-					stableTicksNow,
-					requiredStableTicksForTerminal,
-					patientIsFullyTended,
-					patientMedicallyFinished,
-					IsPawnCombatCapable(heldPatient),
-					patientClearedForCombat,
-					ArgrillianAlertSystem.IsMedicHoldingPatient(pawn),
-					ArgrillianAlertSystem.IsPawnHeldByMedicStop(heldPatient));
 
 				if (patientMedicallyFinished &&
 				!IsPawnCombatCapable(heldPatient))
