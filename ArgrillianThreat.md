@@ -6745,7 +6745,7 @@ namespace ArgrillianThreat
 				}
 			}*/
 
-			bool patientIsFullyTended = true;
+			/*bool patientIsFullyTended = true;
 			int unfinishedHediffCount = 0;
 			string unfinishedHediffDefs = string.Empty;
 
@@ -6823,11 +6823,139 @@ namespace ArgrillianThreat
 				$"patient={heldPatient.LabelShort} " +
 				$"patientFullyTended={patientIsFullyTended} " +
 				$"unfinishedHediffCount={unfinishedHediffCount} " +
-				$"unfinishedHediffDefs={unfinishedHediffDefs}");
+				$"unfinishedHediffDefs={unfinishedHediffDefs}");*/
+
+			bool patientIsFullyTended = true;
+			int unfinishedHediffCount = 0;
+			string unfinishedHediffDefs = string.Empty;
+
+			if (heldHealth != null &&
+				heldHediffSet != null &&
+				heldHediffSet.hediffs != null)
+			{
+				var hediffs = heldHediffSet.hediffs;
+
+				for (int i = 0; i < hediffs.Count; i++)
+				{
+					Hediff hediff = hediffs[i];
+
+					if (hediff == null ||
+						hediff.def == null ||
+						hediff.Severity <= 0f)
+					{
+						continue;
+					}
+
+					bool isInjury =
+						hediff is Hediff_Injury;
+
+					bool defTendable =
+						hediff.def.tendable;
+
+					bool isPermanent =
+						isInjury &&
+						HediffUtility.IsPermanent(hediff);
+
+					bool isTended =
+						isInjury &&
+						HediffUtility.IsTended(hediff);
+
+					bool tendableNow =
+						isInjury &&
+						hediff.TendableNow();
+
+					bool unfinishedTreatment =
+						isInjury &&
+						defTendable &&
+						!isPermanent &&
+						!isTended;
+
+					string bodyPartDef =
+						hediff.Part?.def?.defName ?? "null";
+
+					string bodyPartLabel =
+						hediff.Part?.Label ?? "null";
+
+					string bodyPartRecord =
+						hediff.Part?.ToString() ?? "null";
+
+					string currentJobDef =
+						pawn.CurJob?.def?.defName ?? "null";
+
+					string currentJobTargetA =
+						pawn.CurJob?.targetA.IsValid == true
+							? pawn.CurJob.targetA.ToString()
+							: "invalid";
+
+					string currentJobTargetB =
+						pawn.CurJob?.targetB.IsValid == true
+							? pawn.CurJob.targetB.ToString()
+							: "invalid";
+
+					string currentJobTargetC =
+						pawn.CurJob?.targetC.IsValid == true
+							? pawn.CurJob.targetC.ToString()
+							: "invalid";
+
+					Pawn currentJobPatient =
+						ArgillianThreatPatientTuning.GetPatientFromJob(
+							pawn.CurJob);
+
+					bool currentJobTargetsHeldPatient =
+						currentJobPatient == heldPatient;
+
+					Log.Message(
+						$"[ArgrillianThreat][TendDiagnostic] " +
+						$"medic={pawn.LabelShort} " +
+						$"patient={heldPatient.LabelShort} " +
+						$"hediffType={hediff.GetType().FullName} " +
+						$"hediffDef={hediff.def.defName} " +
+						$"severity={hediff.Severity:F4} " +
+						$"isInjury={isInjury} " +
+						$"defTendable={defTendable} " +
+						$"permanent={isPermanent} " +
+						$"isTended={isTended} " +
+						$"tendableNow={tendableNow} " +
+						$"unfinishedTreatment={unfinishedTreatment} " +
+						$"bodyPartDef={bodyPartDef} " +
+						$"bodyPartLabel={bodyPartLabel} " +
+						$"bodyPartRecord={bodyPartRecord} " +
+						$"medicCurJob={currentJobDef} " +
+						$"jobTargetA={currentJobTargetA} " +
+						$"jobTargetB={currentJobTargetB} " +
+						$"jobTargetC={currentJobTargetC} " +
+						$"jobPatient=" +
+							$"{currentJobPatient?.LabelShort ?? "null"} " +
+						$"jobTargetsHeldPatient=" +
+							$"{currentJobTargetsHeldPatient}");
+
+					if (unfinishedTreatment)
+					{
+						patientIsFullyTended = false;
+						unfinishedHediffCount++;
+
+						if (unfinishedHediffDefs.Length > 0)
+							unfinishedHediffDefs += ",";
+
+						unfinishedHediffDefs += hediff.def.defName;
+					}
+				}
+			}
+
+			Log.Message(
+				$"[ArgrillianThreat][TendDiagnosticSummary] " +
+				$"medic={pawn.LabelShort} " +
+				$"patient={heldPatient.LabelShort} " +
+				$"patientFullyTended={patientIsFullyTended} " +
+				$"unfinishedHediffCount={unfinishedHediffCount} " +
+				$"unfinishedHediffDefs={unfinishedHediffDefs} " +
+				$"medicCurJob={pawn.CurJob?.def?.defName ?? "null"} " +
+				$"medicJobPatient=" + 
+				$"{ArgillianThreatPatientTuning.GetPatientFromJob(pawn.CurJob)?.LabelShort ?? "null"}");
 
 			bool medicInReach =
-					pawn.Position.DistanceTo(heldPatient.Position) <=
-					combatTendMaxDistance;
+				pawn.Position.DistanceTo(heldPatient.Position) <=
+				combatTendMaxDistance;
 
 			bool patientInBedAndFullyTended =
 				patientInBed &&
