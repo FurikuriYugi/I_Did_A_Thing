@@ -1796,6 +1796,11 @@ namespace ArgrillianThreat
 			return true;
 		}
 
+		// medicId -> direct runtime patient reference.
+		// This resolves active ownership independently of PatientCall TTL.
+		private static readonly Dictionary<int, Pawn> assignedPatientByMedicId =
+			new Dictionary<int, Pawn>();
+
 		public static void ReleasePatientHeldByMedic(
 		Pawn medic)
 		{
@@ -6705,6 +6710,32 @@ namespace ArgrillianThreat
 					ArgrillianAlertSystem.IsPawnHeldByMedicStop(patient));
 		}
 
+		private static bool HasActivelyBleedingInjury(Pawn patient)
+		{
+			if (patient?.health?.hediffSet?.hediffs == null)
+				return false;
+
+			List<Hediff> hediffs =
+				patient.health.hediffSet.hediffs;
+
+			for (int i = 0; i < hediffs.Count; i++)
+			{
+				Hediff_Injury injury =
+					hediffs[i] as Hediff_Injury;
+
+				if (injury == null)
+					continue;
+
+				if (injury.Severity <= 0f)
+					continue;
+
+				if (injury.BleedRate > 0f)
+					return true;
+			}
+
+			return false;
+		}
+
 		protected override Job TryGiveJob(Pawn pawn)
 		{
 			ArgrillianAlertSystem.NotifyPawnSelfState(pawn);
@@ -6868,9 +6899,12 @@ namespace ArgrillianThreat
 
 			bool patientInBed = heldPatient.InBed();
 
-			bool patientIsBleedingNow =
+			/*bool patientIsBleedingNow =
 				heldHediffSet != null &&
-				heldHediffSet.HasHediff(HediffDefOf.BloodLoss);
+				heldHediffSet.HasHediff(HediffDefOf.BloodLoss);*/
+
+			bool patientIsBleedingNow =
+				HasActivelyBleedingInjury(heldPatient);
 
 			int stableTicksNow =
 				GetPatientStableTicksForTend(heldPatient);
