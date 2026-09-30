@@ -387,27 +387,57 @@ namespace ArgrillianThreat
 	// -----------------------------
 	public static class ArgrillianSmartLogCache
 	{
-		private static readonly Dictionary<int, int> lastLogTickByKey = new Dictionary<int, int>();
+		// Development switch.
+		// false = suppress cooldown-controlled diagnostic logging.
+		// true = allow cooldown-controlled diagnostic logging.
+		public static bool Enabled = false;
+
+		private static readonly Dictionary<int, int> lastLogTickByKey =
+			new Dictionary<int, int>();
+
 		private static int lastNow = -1;
-		private static int Now => Find.TickManager.TicksGame;
+
+		private static int Now =>
+			Find.TickManager.TicksGame;
+
+		public static void SetEnabled(bool enabled)
+		{
+			Enabled = enabled;
+
+			if (!enabled)
+			{
+				lastLogTickByKey.Clear();
+				lastNow = -1;
+			}
+		}
 
 		private static void ClearIfTimeWentBack()
 		{
 			int now = Now;
+
 			if (lastNow != -1 && now < lastNow)
 				lastLogTickByKey.Clear();
+
 			lastNow = now;
 		}
 
-		public static bool ShouldLog(int logKey, int cooldownTicks)
+		public static bool ShouldLog(
+			int logKey,
+			int cooldownTicks)
 		{
+			if (!Enabled)
+				return false;
+
 			if (cooldownTicks <= 0)
 				return true;
 
 			ClearIfTimeWentBack();
 
 			int now = Now;
-			if (lastLogTickByKey.TryGetValue(logKey, out int last))
+
+			if (lastLogTickByKey.TryGetValue(
+				logKey,
+				out int last))
 			{
 				if (now - last < cooldownTicks)
 					return false;
@@ -417,9 +447,12 @@ namespace ArgrillianThreat
 			return true;
 		}
 
-		public static bool ShouldLogForPawn(string tag, Pawn pawn, int cooldownTicks)
+		public static bool ShouldLogForPawn(
+			string tag,
+			Pawn pawn,
+			int cooldownTicks)
 		{
-			if (pawn == null)
+			if (!Enabled || pawn == null)
 				return false;
 
 			unchecked
@@ -429,7 +462,9 @@ namespace ArgrillianThreat
 					pawn.thingIDNumber * 17 ^
 					(cooldownTicks * 3);
 
-				return ShouldLog(key, cooldownTicks);
+				return ShouldLog(
+					key,
+					cooldownTicks);
 			}
 		}
 	}
