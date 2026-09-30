@@ -1703,7 +1703,9 @@ namespace ArgrillianThreat
 			return lockedPatientIds.Contains(pid);
 		}
 
-		public static bool TryLockPatientHeldByMedic(Pawn medic, Pawn patient)
+		public static bool TryLockPatientHeldByMedic(
+		Pawn medic,
+		Pawn patient)
 		{
 			if (medic == null || patient == null)
 				return false;
@@ -1772,19 +1774,17 @@ namespace ArgrillianThreat
 				if (assignment.Value != patientId)
 					continue;
 
-				if (assignment.Key != medicId)
-				{
-					Log.Message(
-						$"[ArgrillianThreat] TryLockPatientHeldByMedic denied " +
-						$"patient already owned patient={patient.Name} " +
-						$"existingMedicId={assignment.Key} requestedMedic={medic.Name}"
-					);
+				Log.Message(
+					$"[ArgrillianThreat] TryLockPatientHeldByMedic denied " +
+					$"patient already owned patient={patient.Name} " +
+					$"existingMedicId={assignment.Key} requestedMedic={medic.Name}"
+				);
 
-					return false;
-				}
+				return false;
 			}
 
 			assignedPatientIdByMedicId[medicId] = patientId;
+			assignedPatientByMedicId[medicId] = patient;
 			lockedPatientIds.Add(patientId);
 
 			Log.Message(
@@ -1797,7 +1797,7 @@ namespace ArgrillianThreat
 		}
 
 		public static void ReleasePatientHeldByMedic(
-	Pawn medic)
+		Pawn medic)
 		{
 			if (medic == null)
 				return;
@@ -1837,31 +1837,57 @@ namespace ArgrillianThreat
 
 			if (patientId < 0)
 			{
+				assignedPatientByMedicId.Remove(medicId);
 				assignedPatientIdByMedicId.Remove(medicId);
 				return;
 			}
 
+			// Resolve from active ownership first. Do not release merely because
+			// the PatientCall entry expired.
 			Pawn patient =
-				ArgrillianAlertSystem.TryGetPatientFromCachedCall(
-					medic.Map,
+				TryGetAssignedPatientReference(
+					medic,
 					patientId);
 
-			if (patient != null &&
-				!patient.Dead &&
-				patient.Spawned &&
-				patient.Map == medic.Map)
+			if (patient == null)
 			{
-				if (patient.Downed)
-					return;
+				patient =
+					TryGetPatientFromCachedCall(
+						medic.Map,
+						patientId);
 
-				float hpPct =
-					patient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
-
-				if (hpPct < 0.999f)
-					return;
+				if (patient != null &&
+					!patient.Dead &&
+					patient.Spawned &&
+					patient.Map == medic.Map)
+				{
+					assignedPatientByMedicId[medicId] = patient;
+				}
 			}
 
+			// An unresolved owned patient is not proof that the patient is safe.
+			// Preserve ownership until the medical lifecycle explicitly releases it.
+			if (patient == null)
+				return;
+
+			if (patient.Dead ||
+				!patient.Spawned ||
+				patient.Map != medic.Map)
+			{
+				return;
+			}
+
+			if (patient.Downed)
+				return;
+
+			float hpPct =
+				patient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
+
+			if (hpPct < 0.999f)
+				return;
+
 			lockedPatientIds.Remove(patientId);
+			assignedPatientByMedicId.Remove(medicId);
 			assignedPatientIdByMedicId.Remove(medicId);
 
 			Log.Message(
@@ -1916,19 +1942,50 @@ namespace ArgrillianThreat
 
 		public static Pawn GetHeldPatientForMedic(Pawn medic)
 		{
-			if (medic == null) return null;
-			if (!medic.Spawned || medic.Dead || medic.Map == null) return null;
+			if (medic == null)
+				return null;
+
+			if (!medic.Spawned || medic.Dead || medic.Map == null)
+				return null;
 
 			int medicId = medic.thingIDNumber;
 
-			// Assignment cache is owned by alert system.
-			// Resolve patient via cached call.
-			if (assignedPatientIdByMedicId.TryGetValue(medicId, out int patientId))
+			if (!assignedPatientIdByMedicId.TryGetValue(
+				medicId,
+				out int patientId))
 			{
-				return TryGetPatientFromCachedCall(medic.Map, patientId);
+				return null;
 			}
 
-			return null;
+			// Existing ownership must resolve independently of PatientCall TTL.
+			Pawn assignedPatient =
+				TryGetAssignedPatientReference(
+					medic,
+					patientId);
+
+			if (assignedPatient != null)
+				return assignedPatient;
+
+			// Compatibility fallback for assignments created before the direct
+			// runtime reference was populated.
+			Pawn cachedPatient =
+				TryGetPatientFromCachedCall(
+					medic.Map,
+					patientId);
+
+			if (cachedPatient == null)
+				return null;
+
+			if (cachedPatient.Dead ||
+				!cachedPatient.Spawned ||
+				cachedPatient.Map != medic.Map)
+			{
+				return null;
+			}
+
+			assignedPatientByMedicId[medicId] = cachedPatient;
+
+			return cachedPatient;
 		}
 
 		// 5) Update ComputePatientSeverity so ranking works with injured
@@ -2327,125 +2384,114 @@ namespace ArgrillianThreat
 		// - nobody else currently holds that same patient.
 		//
 		// Returns true if accepted; false otherwise.
-		public static bool TryReserveMedicForPatient(Pawn medic, Pawn patient)
+		public static bool TryReserveMedicForPatient(
+		Pawn medic,
+		Pawn patient)
 		{
-			if (medic == null || patient == null) return false;
-			if (medic.Dead || patient.Dead) return false;
-			if (medic.Map == null || patient.Map == null) return false;
-			if (medic.Map != patient.Map) return false;
-			if (!medic.Spawned || !patient.Spawned) return false;
+			if (medic == null || patient == null)
+				return false;
 
-			// ROLE GATE: only Doctor / Medic / Combat Medic can mutate held-patient assignment state.
-			var medicComp = medic.GetComp<CompArgrillianMedicSettings>();
-			if (medicComp == null) return false;
+			if (medic.Dead || patient.Dead)
+				return false;
+
+			if (medic.Map == null || patient.Map == null)
+				return false;
+
+			if (medic.Map != patient.Map)
+				return false;
+
+			if (!medic.Spawned || !patient.Spawned)
+				return false;
+
+			CompArgrillianMedicSettings medicComp =
+				medic.GetComp<CompArgrillianMedicSettings>();
+
+			if (medicComp == null)
+				return false;
 
 			bool isAllowedCaller =
-				(medicComp.doctor) ||
+				medicComp.doctor ||
 				(medicComp.isMedic && !medicComp.combatMedic) ||
 				(medicComp.isMedic && medicComp.combatMedic);
 
-			if (!isAllowedCaller) return false;
+			if (!isAllowedCaller)
+				return false;
 
 			int medicId = medic.thingIDNumber;
 			int patientId = patient.thingIDNumber;
 
-			// Ensure the patient is one of the active cached calls.
-			Pawn cached = TryGetPatientFromCachedCall(medic.Map, patientId);
-			if (cached == null) return false;
-
-			// Enforce “at most one medic assigned to a given patient” using ONLY alert-system cache.
-			foreach (var kvp in assignedPatientIdByMedicId)
-			{
-				int otherMedicId = kvp.Key;
-				int otherPatientId = kvp.Value;
-
-				if (otherPatientId != patientId) continue;
-
-				// If it's the same medic, treat as success (idempotent).
-				if (otherMedicId == medicId)
-					return true;
-
-				return false;
-			}
-
-			// Optional idempotency: if this medic already has this same patient, accept.
-			if (assignedPatientIdByMedicId.TryGetValue(medicId, out int existingPatientId))
+			// Existing ownership is authoritative and must not depend on
+			// whether the PatientCall entry is still within its TTL.
+			if (assignedPatientIdByMedicId.TryGetValue(
+				medicId,
+				out int existingPatientId))
 			{
 				if (existingPatientId == patientId)
+				{
+					assignedPatientByMedicId[medicId] = patient;
 					return true;
+				}
 
-				// Do not overwrite another patient without a release path succeeding deterministically.
 				return false;
 			}
 
+			// Enforce one medic per patient.
+			foreach (KeyValuePair<int, int> assignment in assignedPatientIdByMedicId)
+			{
+				if (assignment.Value != patientId)
+					continue;
+
+				return false;
+			}
+
+			// This cache check applies only to acquiring a new patient.
+			Pawn cached =
+				TryGetPatientFromCachedCall(
+					medic.Map,
+					patientId);
+
+			if (cached == null)
+				return false;
+
 			assignedPatientIdByMedicId[medicId] = patientId;
+			assignedPatientByMedicId[medicId] = patient;
+
 			return true;
 		}
 
-		public static void ReleaseMedicHold(Pawn medic)
-		{
-			if (medic == null) return;
-			if (medic.Dead) return;
-			if (medic.Map == null) return;
-			if (!medic.Spawned) return;
-
-			// Stronger guard:
-			// In your repro, the medic begins tending, enters a transient non-tend tick (wait/job transition),
-			// and the patient then regains job freedom long enough to start "Consume meal" and break tend.
-			// So we keep the held mapping longer before allowing unlock/release.
-			const int tendStickinessTicks = 180;
-
-			if (ArgrillianMedicalState.MedicTendTaskStickiness.RecentlyTookTendTask(medic, tendStickinessTicks))
-				return;
-
-			// Also block release if the job system still currently considers us tending this tick.
-			if (medic.CurJob != null && medic.CurJob.def == JobDefOf.TendPatient)
-				return;
-
-			// HARD tend-danger guard:
-			// If the medic is still assigned to a patient and that patient is not yet fully tended
-			// (or is downed), never release/clear held mapping.
-			int mid = medic.thingIDNumber;
-			if (mid >= 0 && assignedPatientIdByMedicId.TryGetValue(mid, out int pid) && pid >= 0)
-			{
-				Pawn patient = ArgrillianAlertSystem.TryGetPatientFromCachedCall(medic.Map, pid);
-				if (patient != null && !patient.Dead && patient.Spawned && patient.Map == medic.Map)
-				{
-					// "Downed" => keep held until rescue-downed is handled by your tending/rescue logic.
-					if (patient.Downed)
-						return;
-
-					float hpPct = patient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
-
-					// Not fully healed => keep held, preventing patient from starting Rest/Consume mid-tend.
-					// Use a slightly strict threshold to avoid float jitter breaking held too early.
-					if (hpPct < 0.999f)
-						return;
-				}
-			}
-
-			// ROLE GATE: only Doctor / Medic / Combat Medic can mutate held-patient assignment state.
-			var medicComp = medic.GetComp<CompArgrillianMedicSettings>();
-			if (medicComp == null) return;
-
-			bool isAllowedCaller =
-				(medicComp.doctor) ||
-				(medicComp.isMedic && !medicComp.combatMedic) ||
-				(medicComp.isMedic && medicComp.combatMedic);
-
-			if (!isAllowedCaller) return;
-
-			if (mid < 0) return;
-
-			assignedPatientIdByMedicId.Remove(mid);
-		}
-
-		public static void CompletePatientHeldByMedic(Pawn medic)
+		public static void ReleaseMedicHold(
+		Pawn medic)
 		{
 			if (medic == null)
 				return;
 
+			if (medic.Dead)
+				return;
+
+			if (medic.Map == null)
+				return;
+
+			if (!medic.Spawned)
+				return;
+
+			const int tendStickinessTicks = 180;
+
+			if (ArgrillianMedicalState.MedicTendTaskStickiness
+				.RecentlyTookTendTask(
+					medic,
+					tendStickinessTicks))
+			{
+				return;
+			}
+
+			if (medic.CurJob != null &&
+				medic.CurJob.def == JobDefOf.TendPatient)
+			{
+				return;
+			}
+
 			int medicId = medic.thingIDNumber;
+
 			if (medicId < 0)
 				return;
 
@@ -2456,6 +2502,70 @@ namespace ArgrillianThreat
 				return;
 			}
 
+			if (patientId >= 0)
+			{
+				Pawn patient =
+					TryGetAssignedPatientReference(
+						medic,
+						patientId);
+
+				if (patient == null)
+				{
+					patient =
+						TryGetPatientFromCachedCall(
+							medic.Map,
+							patientId);
+
+					if (patient != null &&
+						!patient.Dead &&
+						patient.Spawned &&
+						patient.Map == medic.Map)
+					{
+						assignedPatientByMedicId[medicId] = patient;
+					}
+				}
+
+				// Never release an unresolved active assignment.
+				if (patient == null)
+					return;
+
+				if (patient.Downed)
+					return;
+
+				float hpPct =
+					patient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
+
+				if (hpPct < 0.999f)
+					return;
+			}
+
+			assignedPatientByMedicId.Remove(medicId);
+			assignedPatientIdByMedicId.Remove(medicId);
+
+			if (patientId >= 0)
+				lockedPatientIds.Remove(patientId);
+		}
+
+		public static void CompletePatientHeldByMedic(
+		Pawn medic)
+		{
+			if (medic == null)
+				return;
+
+			int medicId = medic.thingIDNumber;
+
+			if (medicId < 0)
+				return;
+
+			if (!assignedPatientIdByMedicId.TryGetValue(
+				medicId,
+				out int patientId))
+			{
+				assignedPatientByMedicId.Remove(medicId);
+				return;
+			}
+
+			assignedPatientByMedicId.Remove(medicId);
 			assignedPatientIdByMedicId.Remove(medicId);
 
 			if (patientId >= 0)
@@ -2465,6 +2575,41 @@ namespace ArgrillianThreat
 				$"[ArgrillianThreat] CompletePatientHeldByMedic RELEASE " +
 				$"medic={medic.LabelShort} patientId={patientId}"
 			);
+		}
+
+		private static Pawn TryGetAssignedPatientReference(
+		Pawn medic,
+		int patientId)
+		{
+			if (medic == null)
+				return null;
+
+			if (patientId < 0)
+				return null;
+
+			if (!assignedPatientByMedicId.TryGetValue(
+				medic.thingIDNumber,
+				out Pawn patient))
+			{
+				return null;
+			}
+
+			if (patient == null)
+				return null;
+
+			if (patient.thingIDNumber != patientId)
+				return null;
+
+			if (patient.Dead)
+				return null;
+
+			if (!patient.Spawned)
+				return null;
+
+			if (patient.Map != medic.Map)
+				return null;
+
+			return patient;
 		}
 
 		// ----------------------------
@@ -7178,7 +7323,7 @@ namespace ArgrillianThreat
 						$"stable={patientStabilityOkForTerminal} " +
 						$"stableTicks={stableTicksNow} " +
 						$"requiredStableTicks={requiredStableTicksForTerminal}");
-					
+
 					Log.Message(
 						$"[ArgrillianThreat][TendRetreatingAllies] " +
 						$"medical completion unlock medic={pawn.LabelShort} " +
