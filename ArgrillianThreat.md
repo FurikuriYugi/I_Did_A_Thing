@@ -469,6 +469,22 @@ namespace ArgrillianThreat
 		}
 	}
 
+	public static class ArgrillianThreatLog
+	{
+		public static void Message(string message)
+		{
+			if (!ArgrillianSmartLogCache.Enabled)
+				return;
+
+			Log.Message(message);
+		}
+
+		public static void Always(string message)
+		{
+			Log.Message(message);
+		}
+	}
+
 	public static class ArgrillianGizmoHelpers
 	{
 		public static Command_Toggle Toggle(
@@ -1770,7 +1786,7 @@ namespace ArgrillianThreat
 
 			if (!isAllowed)
 			{
-				Log.Message(
+				ArgrillianThreatLog.Message(
 					$"[ArgrillianThreat] TryLockPatientHeldByMedic denied role " +
 					$"pawn={medic.Name} patient={patient.Name}"
 				);
@@ -1790,7 +1806,7 @@ namespace ArgrillianThreat
 			{
 				if (existingPatientId != patientId)
 				{
-					Log.Message(
+					ArgrillianThreatLog.Message(
 						$"[ArgrillianThreat] TryLockPatientHeldByMedic denied " +
 						$"medic already owns another patient " +
 						$"medic={medic.Name} existingPatientId={existingPatientId} " +
@@ -1809,7 +1825,7 @@ namespace ArgrillianThreat
 				if (assignment.Value != patientId)
 					continue;
 
-				Log.Message(
+				ArgrillianThreatLog.Message(
 					$"[ArgrillianThreat] TryLockPatientHeldByMedic denied " +
 					$"patient already owned patient={patient.Name} " +
 					$"existingMedicId={assignment.Key} requestedMedic={medic.Name}"
@@ -1822,7 +1838,7 @@ namespace ArgrillianThreat
 			assignedPatientByMedicId[medicId] = patient;
 			lockedPatientIds.Add(patientId);
 
-			Log.Message(
+			ArgrillianThreatLog.Message(
 				$"[ArgrillianThreat] TryLockPatientHeldByMedic LOCK " +
 				$"pid={patientId} medic={medic.Name} patient={patient.Name} " +
 				$"combatMedic={medicComp.combatMedic} doctor={medicComp.doctor}"
@@ -1930,7 +1946,7 @@ namespace ArgrillianThreat
 			assignedPatientByMedicId.Remove(medicId);
 			assignedPatientIdByMedicId.Remove(medicId);
 
-			Log.Message(
+			ArgrillianThreatLog.Message(
 				$"[ArgrillianThreat] TryLockPatientHeldByMedic RELEASE " +
 				$"medic={medic.Name} patientId={patientId}"
 			);
@@ -2611,7 +2627,7 @@ namespace ArgrillianThreat
 			if (patientId >= 0)
 				lockedPatientIds.Remove(patientId);
 
-			Log.Message(
+			ArgrillianThreatLog.Message(
 				$"[ArgrillianThreat] CompletePatientHeldByMedic RELEASE " +
 				$"medic={medic.LabelShort} patientId={patientId}"
 			);
@@ -4681,7 +4697,7 @@ namespace ArgrillianThreat
 				bool losActuallyBroken = false;
 				string reason = "noCandidateOrNoValidLOSBreak";
 
-				Log.Message(
+				ArgrillianThreatLog.Message(
 					$"[ArgrillianThreat][RetreatLOS] patient={pawn.LabelShort} hostile={hostile?.LabelShort ?? "null"} " +
 					$"chosenCell=({bestCell.x},{bestCell.y},{bestCell.z}) " +
 					$"scanParams={scanRange:0.##} effRadius={effectiveRadius} " +
@@ -4698,7 +4714,7 @@ namespace ArgrillianThreat
 
 				string reason = lockIn ? "losBreak_locked" : "losBreak";
 
-				Log.Message(
+				ArgrillianThreatLog.Message(
 					$"[ArgrillianThreat][RetreatLOS] patient={pawn.LabelShort} hostile={hostile?.LabelShort ?? "null"} " +
 					$"chosenCell=({bestCell.x},{bestCell.y},{bestCell.z}) " +
 					$"scanParams={scanRange:0.##} effRadius={effectiveRadius} " +
@@ -4712,7 +4728,7 @@ namespace ArgrillianThreat
 			{
 				string reason = "bestCellDidNotActuallyBreakLOS";
 
-				Log.Message(
+				ArgrillianThreatLog.Message(
 					$"[ArgrillianThreat][RetreatLOS] patient={pawn.LabelShort} hostile={hostile?.LabelShort ?? "null"} " +
 					$"chosenCell=({bestCell.x},{bestCell.y},{bestCell.z}) " +
 					$"scanParams={scanRange:0.##} effRadius={effectiveRadius} " +
@@ -5399,7 +5415,7 @@ namespace ArgrillianThreat
 				if (!loggedThreatSettingsGizmosOnce && sw.Elapsed.TotalMilliseconds >= thresholdMs)
 				{
 					loggedThreatSettingsGizmosOnce = true;
-					Log.Message($"[ArgrillianThreat] CompGetGizmosExtra(ThreatSettings) slow: {sw.Elapsed.TotalMilliseconds:0.00} ms parent={(parent != null ? parent.ToString() : "null")}");
+					ArgrillianThreatLog.Message($"[ArgrillianThreat] CompGetGizmosExtra(ThreatSettings) slow: {sw.Elapsed.TotalMilliseconds:0.00} ms parent={(parent != null ? parent.ToString() : "null")}");
 				}
 			}
 		}
@@ -5610,7 +5626,7 @@ namespace ArgrillianThreat
 				if (!loggedMedicGizmosOnce && sw.Elapsed.TotalMilliseconds >= thresholdMs)
 				{
 					loggedMedicGizmosOnce = true;
-					Log.Message($"[ArgrillianThreat] CompGetGizmosExtra(MedicSettings) slow: {sw.Elapsed.TotalMilliseconds:0.00} ms parent={(parent != null ? parent.ToString() : "null")}");
+					ArgrillianThreatLog.Message($"[ArgrillianThreat] CompGetGizmosExtra(MedicSettings) slow: {sw.Elapsed.TotalMilliseconds:0.00} ms parent={(parent != null ? parent.ToString() : "null")}");
 				}
 			}
 		}
@@ -5827,7 +5843,7 @@ namespace ArgrillianThreat
 			{
 				if (ArgrillianSmartLogCache.ShouldLogForPawn("RetreatGate_stopFightingIfInjured", p, 300))
 				{
-					Log.Message(
+					ArgrillianThreatLog.Message(
 						$"[ArgrillianThreat][RetreatGate] stopFightingIfInjured: pawn={p.LabelShort} " +
 						$"hpPct={hpPct:0.00} threshold={combatMedicInjuredHPPercentThreshold:0.00} " +
 						$"stopFromMedicHP={stopFromMedicHP} stopFromPatientCalls={stopFromPatientCalls} result={stop}"
@@ -6597,7 +6613,7 @@ namespace ArgrillianThreat
 			}
 			catch (System.Exception ex)
 			{
-				Log.Message($"[JobGiver_TendRetreatingAllies] GetWhoReserved invoke failed: bed={thing} mi={mi.Name} ex={ex.GetType().Name}: {ex.Message}");
+				ArgrillianThreatLog.Message($"[JobGiver_TendRetreatingAllies] GetWhoReserved invoke failed: bed={thing} mi={mi.Name} ex={ex.GetType().Name}: {ex.Message}");
 				return null;
 			}
 		}
@@ -6658,7 +6674,7 @@ namespace ArgrillianThreat
 				patient != null &&
 				ArgrillianAlertSystem.IsPawnHeldByMedicStop(patient);
 
-			Log.Message(
+			ArgrillianThreatLog.Message(
 				$"[ArgrillianThreat][MedicalRelease] BEGIN " +
 				$"medic={medic.LabelShort} " +
 				$"patient={patient?.LabelShort ?? "null"} " +
@@ -6678,7 +6694,7 @@ namespace ArgrillianThreat
 				patient != null &&
 				ArgrillianAlertSystem.IsPawnHeldByMedicStop(patient);
 
-			Log.Message(
+			ArgrillianThreatLog.Message(
 				$"[ArgrillianThreat][MedicalRelease] OWNERSHIP_REMOVED " +
 				$"medic={medic.LabelShort} " +
 				$"patient={patient?.LabelShort ?? "null"} " +
@@ -6690,7 +6706,7 @@ namespace ArgrillianThreat
 				!patient.Spawned ||
 				patient.jobs == null)
 			{
-				Log.Message(
+				ArgrillianThreatLog.Message(
 					$"[ArgrillianThreat][MedicalRelease] COMPLETE " +
 					$"medic={medic.LabelShort} " +
 					$"patient={patient?.LabelShort ?? "null"} " +
@@ -6705,7 +6721,7 @@ namespace ArgrillianThreat
 			if (currentJob == null ||
 				currentJob.def == null)
 			{
-				Log.Message(
+				ArgrillianThreatLog.Message(
 					$"[ArgrillianThreat][MedicalRelease] COMPLETE " +
 					$"medic={medic.LabelShort} " +
 					$"patient={patient.LabelShort} " +
@@ -6721,7 +6737,7 @@ namespace ArgrillianThreat
 
 			if (isHeldWaitJob)
 			{
-				Log.Message(
+				ArgrillianThreatLog.Message(
 					$"[ArgrillianThreat][MedicalRelease] " +
 					$"INTERRUPTING_PATIENT_WAIT " +
 					$"medic={medic.LabelShort} " +
@@ -6733,7 +6749,7 @@ namespace ArgrillianThreat
 					true);
 			}
 
-			Log.Message(
+			ArgrillianThreatLog.Message(
 				$"[ArgrillianThreat][MedicalRelease] COMPLETE " +
 				$"medic={medic.LabelShort} " +
 				$"patient={patient.LabelShort} " +
@@ -6873,7 +6889,7 @@ namespace ArgrillianThreat
 						pawn,
 						180))
 					{
-						Log.Message(
+						ArgrillianThreatLog.Message(
 							$"[ArgrillianThreat][TendRetreatingAllies] " +
 							$"TryGiveJob null (gate) pawn={pawn.LabelShort} " +
 							$"heldPatient=null tendEligible=false " +
@@ -6999,7 +7015,7 @@ namespace ArgrillianThreat
 						heldPatient,
 						120))
 					{
-						Log.Message(
+						ArgrillianThreatLog.Message(
 							$"[ArgrillianThreat][TendDiagnostic] " +
 							$"medic={pawn.LabelShort} " +
 							$"patient={heldPatient.LabelShort} " +
@@ -7066,7 +7082,7 @@ namespace ArgrillianThreat
 						!isPermanent &&
 						!isTended;
 
-					Log.Message(
+					ArgrillianThreatLog.Message(
 						$"[ArgrillianThreat][TendDiagnostic] " +
 						$"medic={pawn.LabelShort} " +
 						$"patient={heldPatient.LabelShort} " +
@@ -7093,7 +7109,7 @@ namespace ArgrillianThreat
 				}
 			}
 
-			Log.Message(
+			ArgrillianThreatLog.Message(
 				$"[ArgrillianThreat][TendDiagnosticSummary] " +
 				$"medic={pawn.LabelShort} " +
 				$"patient={heldPatient.LabelShort} " +
@@ -7180,7 +7196,7 @@ namespace ArgrillianThreat
 					bool currentJobTargetsHeldPatient =
 						currentJobPatient == heldPatient;
 
-					Log.Message(
+					ArgrillianThreatLog.Message(
 						$"[ArgrillianThreat][TendDiagnostic] " +
 						$"medic={pawn.LabelShort} " +
 						$"patient={heldPatient.LabelShort} " +
@@ -7242,7 +7258,7 @@ namespace ArgrillianThreat
 				patientIsFullyTended &&
 				IsPawnCombatCapable(heldPatient);
 
-			Log.Message(
+			ArgrillianThreatLog.Message(
 				$"[ArgrillianThreat][TendLifecycle] " +
 				$"phase=TryGiveJob.BeforeTerminalGate " +
 				$"medic={pawn.LabelShort} " +
@@ -7272,7 +7288,7 @@ namespace ArgrillianThreat
 				pawn,
 				30))
 			{
-				Log.Message(
+				ArgrillianThreatLog.Message(
 					$"[ArgrillianThreat][TendTerminalGate] " +
 					$"medic={pawn.LabelShort} " +
 					$"patient={heldPatient?.LabelShort ?? "null"} " +
@@ -7303,7 +7319,7 @@ namespace ArgrillianThreat
 					pawn,
 					180))
 				{
-					Log.Message(
+					ArgrillianThreatLog.Message(
 						$"[ArgrillianThreat][TendRetreatingAllies] " +
 						$"TryGiveJob null (doctor) pawn={pawn.LabelShort} " +
 						$"heldPatient={heldPatient.LabelShort}");
@@ -7319,7 +7335,7 @@ namespace ArgrillianThreat
 					pawn,
 					180))
 				{
-					Log.Message(
+					ArgrillianThreatLog.Message(
 						$"[ArgrillianThreat][TendRetreatingAllies] " +
 						$"TryGiveJob null (medic) pawn={pawn.LabelShort} " +
 						$"heldPatient={heldPatient.LabelShort}");
@@ -7353,7 +7369,7 @@ namespace ArgrillianThreat
 
 				if (patientClearedForCombat)
 				{
-					Log.Message(
+					ArgrillianThreatLog.Message(
 						$"[ArgrillianThreat][MedicalRelease] BRANCH=COMBAT " +
 						$"medic={pawn.LabelShort} " +
 						$"patient={heldPatient.LabelShort} " +
@@ -7362,7 +7378,7 @@ namespace ArgrillianThreat
 						$"bleeding={patientIsBleedingNow} " +
 						$"stable={patientStabilityOkForTerminal}");
 
-					Log.Message(
+					ArgrillianThreatLog.Message(
 						$"[ArgrillianThreat][TendRetreatingAllies] " +
 						$"combat medical completion unlock medic={pawn.LabelShort} " +
 						$"patient={heldPatient.LabelShort} " +
@@ -7381,7 +7397,7 @@ namespace ArgrillianThreat
 				if (patientMedicallyFinished &&
 				!IsPawnCombatCapable(heldPatient))
 				{
-					Log.Message(
+					ArgrillianThreatLog.Message(
 						$"[ArgrillianThreat][MedicalRelease] " +
 						$"BRANCH=NONCOMBAT_MEDICAL " +
 						$"medic={pawn.LabelShort} " +
@@ -7393,7 +7409,7 @@ namespace ArgrillianThreat
 						$"stableTicks={stableTicksNow} " +
 						$"requiredStableTicks={requiredStableTicksForTerminal}");
 
-					Log.Message(
+					ArgrillianThreatLog.Message(
 						$"[ArgrillianThreat][TendRetreatingAllies] " +
 						$"medical completion unlock medic={pawn.LabelShort} " +
 						$"patient={heldPatient.LabelShort} " +
@@ -7420,7 +7436,7 @@ namespace ArgrillianThreat
 						pawn,
 						120))
 					{
-						Log.Message(
+						ArgrillianThreatLog.Message(
 							$"[ArgrillianThreat][TendRetreatingAllies] " +
 							$"combatMedicInReach medic={pawn.LabelShort} " +
 							$"patient={heldPatient.LabelShort} " +
@@ -7504,7 +7520,7 @@ namespace ArgrillianThreat
 					pawn,
 					120))
 				{
-					Log.Message(
+					ArgrillianThreatLog.Message(
 						$"[ArgrillianThreat][TendRetreatingAllies] " +
 						$"combatMedicOutOfReach medical medic={pawn.LabelShort} " +
 						$"patient={heldPatient.LabelShort} " +
@@ -7629,7 +7645,7 @@ namespace ArgrillianThreat
 					ArgrillianAlertSystem.IsPatientTransferedToMedicOrDoctor(
 						heldPatient))
 				{
-					Log.Message(
+					ArgrillianThreatLog.Message(
 						$"[ArgrillianThreat][TendRetreatingAllies] " +
 						$"missionDone unlock medic={pawn.LabelShort} " +
 						$"patient={heldPatient.LabelShort}");
@@ -7656,7 +7672,7 @@ namespace ArgrillianThreat
 				return fallbackTendJob;
 			}
 
-			Log.Message(
+			ArgrillianThreatLog.Message(
 				$"[ArgrillianThreat][TendRetreatingAllies] " +
 				$"missionDone unlock medic={pawn.LabelShort} " +
 				$"patient={heldPatient.LabelShort}");
