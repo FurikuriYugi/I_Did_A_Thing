@@ -23,7 +23,7 @@ namespace ArgrillianThreat
 		{
 			try
 			{
-				Log.Message(
+				ArgrillianThreatLog.Message(
 					$"[ArgrillianThreat][HeldPatient][HarmonyInit] " +
 					$"static ctor firing -> attempting manual patch id={HarmonyId}"
 				);
@@ -33,14 +33,14 @@ namespace ArgrillianThreat
 
 				harmony.PatchAll();
 
-				Log.Message(
+				ArgrillianThreatLog.Message(
 					"[ArgrillianThreat][HeldPatient][HarmonyInit] " +
 					"PatchAll() called"
 				);
 			}
 			catch (Exception ex)
 			{
-				Log.Message(
+				ArgrillianThreatLog.Message(
 					$"[ArgrillianThreat][HeldPatient][HarmonyInit] " +
 					$"FAILED ex={ex}"
 				);
@@ -51,7 +51,7 @@ namespace ArgrillianThreat
 		{
 			if (string.IsNullOrEmpty(key))
 			{
-				Log.Message(message);
+				ArgrillianThreatLog.Message(message);
 				return;
 			}
 
@@ -59,7 +59,7 @@ namespace ArgrillianThreat
 				return;
 
 			oneShot.Add(key);
-			Log.Message(message);
+			ArgrillianThreatLog.Message(message);
 		}
 
 		private static int MakeLogKey(
@@ -119,7 +119,7 @@ namespace ArgrillianThreat
 			string incomingJobLabel =
 				incomingJob?.def?.defName ?? "null";
 
-			Log.Message(
+			ArgrillianThreatLog.Message(
 				$"[ArgrillianThreat][HeldPatient] BLOCK " +
 				$"where={where} pawn={pawn.Name} " +
 				$"curJob={currentJobLabel} " +
