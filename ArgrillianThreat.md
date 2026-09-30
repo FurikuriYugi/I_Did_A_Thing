@@ -6460,19 +6460,58 @@ namespace ArgrillianThreat
 		}
 
 		private static void ReleaseHeldPatientAndWake(
-		Pawn medic,
-		Pawn patient)
+	Pawn medic,
+	Pawn patient)
 		{
 			if (medic == null)
 				return;
 
+			bool medicOwnedBefore =
+				ArgrillianAlertSystem.IsMedicHoldingPatient(medic);
+
+			bool patientHeldBefore =
+				patient != null &&
+				ArgrillianAlertSystem.IsPawnHeldByMedicStop(patient);
+
+			Log.Message(
+				$"[ArgrillianThreat][MedicalRelease] BEGIN " +
+				$"medic={medic.LabelShort} " +
+				$"patient={patient?.LabelShort ?? "null"} " +
+				$"medicOwnedBefore={medicOwnedBefore} " +
+				$"patientHeldBefore={patientHeldBefore} " +
+				$"medicCurJob={medic.CurJob?.def?.defName ?? "null"} " +
+				$"patientCurJob={patient?.CurJob?.def?.defName ?? "null"}");
+
+			// Remove medical ownership first. The held-job blocker must be
+			// disabled before interrupting the patient's held Wait job.
 			ArgrillianAlertSystem.CompletePatientHeldByMedic(medic);
+
+			bool medicOwnedAfter =
+				ArgrillianAlertSystem.IsMedicHoldingPatient(medic);
+
+			bool patientHeldAfter =
+				patient != null &&
+				ArgrillianAlertSystem.IsPawnHeldByMedicStop(patient);
+
+			Log.Message(
+				$"[ArgrillianThreat][MedicalRelease] OWNERSHIP_REMOVED " +
+				$"medic={medic.LabelShort} " +
+				$"patient={patient?.LabelShort ?? "null"} " +
+				$"medicOwnedAfter={medicOwnedAfter} " +
+				$"patientHeldAfter={patientHeldAfter}");
 
 			if (patient == null ||
 				patient.Dead ||
 				!patient.Spawned ||
 				patient.jobs == null)
 			{
+				Log.Message(
+					$"[ArgrillianThreat][MedicalRelease] COMPLETE " +
+					$"medic={medic.LabelShort} " +
+					$"patient={patient?.LabelShort ?? "null"} " +
+					$"medicCurJob={medic.CurJob?.def?.defName ?? "null"} " +
+					$"patientCurJob={patient?.CurJob?.def?.defName ?? "null"}");
+
 				return;
 			}
 
@@ -6481,6 +6520,13 @@ namespace ArgrillianThreat
 			if (currentJob == null ||
 				currentJob.def == null)
 			{
+				Log.Message(
+					$"[ArgrillianThreat][MedicalRelease] COMPLETE " +
+					$"medic={medic.LabelShort} " +
+					$"patient={patient.LabelShort} " +
+					$"medicCurJob={medic.CurJob?.def?.defName ?? "null"} " +
+					$"patientCurJob=null");
+
 				return;
 			}
 
@@ -6488,14 +6534,30 @@ namespace ArgrillianThreat
 				currentJob.def == JobDefOf.Wait ||
 				currentJob.def.defName == "Wait_MaintainPosture";
 
-			if (!isHeldWaitJob)
-				return;
+			if (isHeldWaitJob)
+			{
+				Log.Message(
+					$"[ArgrillianThreat][MedicalRelease] " +
+					$"INTERRUPTING_PATIENT_WAIT " +
+					$"medic={medic.LabelShort} " +
+					$"patient={patient.LabelShort} " +
+					$"patientJob={currentJob.def.defName}");
 
-			// Ownership has already been removed above, so the held-job
-			// blocker will no longer reject the patient's next job.
-			patient.jobs.EndCurrentJob(
-				JobCondition.Succeeded,
-				true);
+				patient.jobs.EndCurrentJob(
+					JobCondition.Succeeded,
+					true);
+			}
+
+			Log.Message(
+				$"[ArgrillianThreat][MedicalRelease] COMPLETE " +
+				$"medic={medic.LabelShort} " +
+				$"patient={patient.LabelShort} " +
+				$"medicCurJob={medic.CurJob?.def?.defName ?? "null"} " +
+				$"patientCurJob={patient.CurJob?.def?.defName ?? "null"} " +
+				$"medicOwnedAfter=" +
+					ArgrillianAlertSystem.IsMedicHoldingPatient(medic) +
+				$"patientHeldAfter=" +
+					ArgrillianAlertSystem.IsPawnHeldByMedicStop(patient));
 		}
 
 		protected override Job TryGiveJob(Pawn pawn)
@@ -6942,17 +7004,6 @@ namespace ArgrillianThreat
 				}
 			}
 
-			Log.Message(
-				$"[ArgrillianThreat][TendDiagnosticSummary] " +
-				$"medic={pawn.LabelShort} " +
-				$"patient={heldPatient.LabelShort} " +
-				$"patientFullyTended={patientIsFullyTended} " +
-				$"unfinishedHediffCount={unfinishedHediffCount} " +
-				$"unfinishedHediffDefs={unfinishedHediffDefs} " +
-				$"medicCurJob={pawn.CurJob?.def?.defName ?? "null"} " +
-				$"medicJobPatient=" + 
-				$"{ArgillianThreatPatientTuning.GetPatientFromJob(pawn.CurJob)?.LabelShort ?? "null"}");
-
 			bool medicInReach =
 				pawn.Position.DistanceTo(heldPatient.Position) <=
 				combatTendMaxDistance;
@@ -6976,6 +7027,31 @@ namespace ArgrillianThreat
 				!patientIsBleedingNow &&
 				patientIsFullyTended &&
 				IsPawnCombatCapable(heldPatient);
+
+			Log.Message(
+				$"[ArgrillianThreat][TendLifecycle] " +
+				$"phase=TryGiveJob.BeforeTerminalGate " +
+				$"medic={pawn.LabelShort} " +
+				$"patient={heldPatient.LabelShort} " +
+				$"medicCurJob={pawn.CurJob?.def?.defName ?? "null"} " +
+				$"patientCurJob={heldPatient.CurJob?.def?.defName ?? "null"} " +
+				$"medicInReach=" +
+					(pawn.Position.DistanceTo(heldPatient.Position) <=
+						combatTendMaxDistance) +
+				$"patientDowned={heldPatient.Downed} " +
+				$"patientHP={patientHP:F2} " +
+				$"bleeding={patientIsBleedingNow} " +
+				$"stable={patientStabilityOkForTerminal} " +
+				$"stableTicks={stableTicksNow} " +
+				$"requiredStableTicks={requiredStableTicksForTerminal} " +
+				$"fullyTended={patientIsFullyTended} " +
+				$"medicallyFinished={patientMedicallyFinished} " +
+				$"combatCapable={IsPawnCombatCapable(heldPatient)} " +
+				$"clearedForCombat={patientClearedForCombat} " +
+				$"medicOwnsPatient=" +
+					ArgrillianAlertSystem.IsMedicHoldingPatient(pawn) +
+				$" patientHeldByMedic=" +
+					ArgrillianAlertSystem.IsPawnHeldByMedicStop(heldPatient));
 
 			if (ArgrillianSmartLogCache.ShouldLogForPawn(
 				"TendTerminalGate",
