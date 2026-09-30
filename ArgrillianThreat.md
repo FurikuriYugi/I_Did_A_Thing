@@ -567,10 +567,6 @@ namespace ArgrillianThreat
 			if (def == JobDefOf.HaulToCell) return true;
 			if (def == JobDefOf.HaulToContainer) return true;
 
-			// Many mods reuse/extend tending pipeline with other defs that still target the patient.
-			// Add your custom job defs here if needed (paste their JobDef names and I’ll wire them in).
-			// if (def.defName == "YourMod_YourCustomTendJob") return true;
-
 			return false;
 		}
 
@@ -797,7 +793,6 @@ namespace ArgrillianThreat
 			}
 		}
 
-		// --- NEW: prevent Goto job churn / "Giggles started 10 jobs in one tick" ---
 		public static Job KeepIfSameGoto(Pawn pawn, IntVec3 targetCell)
 		{
 			if (pawn?.CurJob == null) return null;
@@ -839,7 +834,6 @@ namespace ArgrillianThreat
 
 	public static class ArgrillianThreatState
 	{
-		// --- JITTER FIX: combat commitment + repath cooldown ---
 		public static class CombatCommit
 		{
 			private struct Commit
@@ -1471,7 +1465,7 @@ namespace ArgrillianThreat
 		}
 	}
 
-	// NEW: Event Driven Alert System.
+	// Event Driven Alert System.
 	// 	- The brain and dispatch center.
 	public static class ArgrillianAlertSystem
 	{
@@ -1719,7 +1713,7 @@ namespace ArgrillianThreat
 			// TTL is enforced via expiryTick derived from lastUpdateTick each cleanup.
 			public int expiryTick;
 
-			// NEW: ACK + suppression state so callers stop spamming for the same pawn
+			// ACK + suppression state so callers stop spamming for the same pawn
 			// unless their status has worsened.
 			//
 			// “callerOrObserver” is a pawn; we key ack suppression by caller thingIDNumber.
@@ -1729,7 +1723,7 @@ namespace ArgrillianThreat
 			public PatientCallSeverity lastAckSeverity = PatientCallSeverity.Injured;
 		}
 
-		// NEW: how long we suppress duplicate calls from the same caller for the same patient
+		// How long we suppress duplicate calls from the same caller for the same patient
 		// when nothing has worsened.
 		private const int PatientCallAckSuppressTicks = 140;
 
@@ -1952,7 +1946,6 @@ namespace ArgrillianThreat
 			);
 		}
 
-		// ArgrillianAlertSystem (add this method anywhere inside the class)
 		public static bool IsPawnAssignedPatient(Pawn patient)
 		{
 			if (patient == null) return false;
@@ -2171,7 +2164,7 @@ namespace ArgrillianThreat
 
 				entry.expiryTick = now + ttl;
 
-				// NEW: initial ACK for the caller/observer that triggered this first call
+				// Initial ACK for the caller/observer that triggered this first call
 				// (caller can be null in some trigger paths; guard it).
 				if (callerOrObserver != null && !callerOrObserver.Dead && callerOrObserver.Spawned)
 				{
@@ -2185,7 +2178,7 @@ namespace ArgrillianThreat
 			}
 
 			// -----------------------
-			// NEW: ACK + suppression
+			// ACK + suppression
 			// -----------------------
 			// If the same caller repeats the same-or-weaker severity without worsening,
 			// suppress by early-exit (but still keep TTL fresh on the patient entry).
@@ -2233,13 +2226,11 @@ namespace ArgrillianThreat
 			bool fireEscalatedNow = (prevSev != PatientCallSeverity.Fire) && (entry.severity == PatientCallSeverity.Fire);
 			bool upgradedThisCall = (newSev > prevSev) && fireEscalatedNow;
 
-			// NEW FIRE ESCALATION ROUTING (no map scans, no heldPatient/job churn):
+			// FIRE ESCALATION ROUTING (no map scans, no heldPatient/job churn):
 			// If this patient is already reserved/held by a medic, keep that same medic on-duty
 			// and force them into the non-available dedicated lane for this escalation.
 			if (upgradedThisCall)
 			{
-				// OLD (legacy): medicIdByPatientId.TryGetValue(patientId, out int heldMedicId)
-				// NEW (alert-system only): resolve from assignedPatientIdByMedicId
 				if (TryGetAssignedMedicIdForPatient(patient.Map, patientId, out int heldMedicId))
 				{
 					availabilityByMedicId[heldMedicId] = false;
@@ -2259,7 +2250,7 @@ namespace ArgrillianThreat
 				}
 			}
 
-			// NEW: always update ACK when we accept a call (including worsening).
+			// Always update ACK when we accept a call (including worsening).
 			// This is the “alert system replies to the pawns that call” in a cache sense:
 			// the caller can consult the entry (via existing cached-call helpers) to stop re-calling.
 			if (callerOrObserver != null && !callerOrObserver.Dead && callerOrObserver.Spawned && callerId >= 0)
@@ -2697,7 +2688,7 @@ namespace ArgrillianThreat
 
 		// Call this from the pawn's "self-state" evaluation (once per relevant update, e.g., Think/CompTick).
 		// It will publish PatientCall on transition into downed or bleeding.
-		// 3) Extend NotifyPawnSelfState transition trigger
+		// Extend NotifyPawnSelfState transition trigger
 		public static void NotifyPawnSelfState(Pawn pawn)
 		{
 			if (pawn == null) return;
@@ -2712,7 +2703,7 @@ namespace ArgrillianThreat
 			// Existing state for downed/bleeding
 			byte cur = ComputeDownBleedState(pawn);
 
-			// NEW: extend state with “injured” bit (low HP but not downed/bleeding)
+			// Extend state with “injured” bit (low HP but not downed/bleeding)
 			// We'll use bit 4 as an injured marker to keep existing bits intact.
 			bool isInjuredLowHP =
 				!pawn.Downed
@@ -2721,7 +2712,7 @@ namespace ArgrillianThreat
 
 			if (isInjuredLowHP) cur |= 4;
 
-			// NEW: extend state with “fire” bit (burning)
+			// Extend state with “fire” bit (burning)
 			bool isBurningNow = JobGiver_TendRetreatingAllies.IsPawnBurningNow(pawn);
 			if (isBurningNow) cur |= 8;
 
@@ -2731,10 +2722,10 @@ namespace ArgrillianThreat
 			bool enteredDowned = ((cur & 1) != 0) && ((prev & 1) == 0);
 			bool enteredBleeding = ((cur & 2) != 0) && ((prev & 2) == 0);
 
-			// NEW: publish when we enter injured-low-HP state
+			// Publish when we enter injured-low-HP state
 			bool enteredInjured = ((cur & 4) != 0) && ((prev & 4) == 0);
 
-			// NEW: publish/refresh when we enter burning state (fire escalation)
+			// Publish/refresh when we enter burning state (fire escalation)
 			bool enteredFire = ((cur & 8) != 0) && ((prev & 8) == 0);
 
 			if (enteredDowned || enteredBleeding || enteredInjured || enteredFire)
@@ -2751,7 +2742,7 @@ namespace ArgrillianThreat
 
 		// Call this from the observer-state evaluation where you already know "observer sees target downed/bleeding".
 		// This version does NOT require the observer to track previous state; it just publishes as a call.
-		// 4) Extend NotifyObserverSeesInjury publishing trigger
+		// Extend NotifyObserverSeesInjury publishing trigger
 		public static void NotifyObserverSeesInjury(Pawn observer, Pawn target)
 		{
 			if (target == null) return;
@@ -2761,14 +2752,14 @@ namespace ArgrillianThreat
 			bool isDowned = target.Downed;
 			bool isBleeding = target.health?.hediffSet != null && target.health.hediffSet.HasHediff(HediffDefOf.BloodLoss);
 
-			// NEW: low-HP injured (non-downed, non-bleeding)
+			// Low-HP injured (non-downed, non-bleeding)
 			float hpPct = target.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
 			bool isInjuredLowHP =
 				!isDowned
 				&& !isBleeding
 				&& hpPct <= PatientInjuredHPPercentThreshold;
 
-			// NEW: burning/on fire
+			// Burning/on fire
 			bool isBurning = JobGiver_TendRetreatingAllies.IsPawnBurningNow(target);
 
 			if (!isDowned && !isBleeding && !isInjuredLowHP && !isBurning)
@@ -3147,11 +3138,11 @@ namespace ArgrillianThreat
 		}
 
 		// ======================
-		// ArgrillianAlertSystem: medic completion contract (NEW)
+		// ArgrillianAlertSystem: medic completion contract
 		// ======================
 
 		// ----------------------------
-		// Medic assignment + completion reporting (NEW)
+		// Medic assignment + completion reporting
 		// ----------------------------
 		public enum MedicJobStage : byte
 		{
@@ -3261,9 +3252,9 @@ namespace ArgrillianThreat
 		// - acknowledge/keep medic dedicated until terminal completion
 		// - update cached PatientCallEntry severity/resolution (no job churn)
 		// - release medic hold + free medic for next assignment only when terminal condition is met
-		// NEW: reserve a non-combat medical caregiver (doctor or non-combat medic) for the escorted patient
+		// Reserve a non-combat medical caregiver (doctor or non-combat medic) for the escorted patient
 		// so the combat medic can safely release.
-		// ==== EDIT 1: ArgrillianAlertSystem — make reservation attempt return success ====
+		// ==== ArgrillianAlertSystem — make reservation attempt return success ====
 		private static bool TryReserveNonCombatMedicOrDoctorForEscortedPatient(Pawn patient)
 		{
 			if (patient == null) return false;
@@ -3420,7 +3411,6 @@ namespace ArgrillianThreat
 		}
 
 		// ==== EDIT 1: ArgrillianAlertSystem — add cached severity accessor ====
-		// File: ArgrillianThreat.md (inside ArgrillianAlertSystem)
 
 		public enum PatientCallSeverityPublic : byte
 		{
@@ -3492,7 +3482,6 @@ namespace ArgrillianThreat
 		public bool IsRanged { get; init; }
 	}
 
-	// Alert: This class is marked for removal.
 	public static class ArgrillianThreatTargeting
 	{
 		/// <summary>
@@ -3598,7 +3587,7 @@ namespace ArgrillianThreat
 					if (other.Dead)
 						continue;
 
-					// NEW: acquisition-level downed filter to prevent fight-mode anchors/hovering.
+					// Acquisition-level downed filter to prevent fight-mode anchors/hovering.
 					if (other.Downed && !allowFinishOff)
 						continue;
 
@@ -3710,7 +3699,7 @@ namespace ArgrillianThreat
 					if (other.Dead)
 						continue;
 
-					// NEW: acquisition-level downed filter.
+					// Acquisition-level downed filter.
 					if (other.Downed && !allowFinishOff)
 						continue;
 
@@ -3805,7 +3794,7 @@ namespace ArgrillianThreat
 
 	public static class ArgrillianThreatExecution
 	{
-		// -------- NEW: Injured stop-attacking gate --------
+		// -------- Injured stop-attacking gate --------
 		private static bool IsInjuredPatientOrInjuredMedicStopAttacking(Pawn pawn, float retreatMinHealthPercent)
 		{
 			if (pawn == null || pawn.Dead || pawn.Map == null) return false;
@@ -4051,7 +4040,7 @@ namespace ArgrillianThreat
 			ArgrillianThreatState.CombatLock.MarkSeen(pawn, hostile);
 			ArgrillianThreatState.ThreatTickCache.MarkNow(pawn);
 
-			// NEW gate (combat-only): downed-hostile orbit suppression respects FinishOff, but does not
+			// Gate (combat-only): downed-hostile orbit suppression respects FinishOff, but does not
 			// branch into any medic/patient/held logic.
 			if (!skipAggressiveStart && hostile != null && hostile.Downed && !isRanged)
 			{
@@ -5684,13 +5673,13 @@ namespace ArgrillianThreat
 		//private float combatMedicAidHPPercentThreshold = 0.75f;        // ally injured enough to trigger medic aid
 		private float combatMedicAidMinRange = 25f;
 
-		// --- NEW: injury thresholds for combat medics / patients ---
+		// --- Injury thresholds for combat medics / patients ---
 		public static float combatMedicInjuredHPPercentThreshold = 0.85f;   // injured enough to stop engaging
 
 		private float combatMedicAssistEngageDistanceMultiplier = 1.6f; // immediate threat heuristic
 		private float immediateThreatScanRadius = 35f;                  // immediate threat heuristic
 
-		// NEW: patient TEND override tuning
+		// Patient TEND override tuning
 		//private int tendOverrideMinStableTicks = 10; // small buffer to reduce “fight vs tend” tug-of-war
 		private float GetDesiredCombatDistance(Pawn pawn, Pawn hostile, bool pursueAdvance)
 		{
@@ -5990,7 +5979,7 @@ namespace ArgrillianThreat
 
 		protected override Job TryGiveJob(Pawn pawn)
 		{
-			// NEW: publish PatientCalls when this pawn enters downed/bleeding states
+			// Publish PatientCalls when this pawn enters downed/bleeding states
 			// (edge/transition coalescing is handled inside NotifyPawnSelfState).
 			ArgrillianAlertSystem.NotifyPawnSelfState(pawn);
 			// Medic gating: non-combat medics don't do threat response.
@@ -6418,7 +6407,7 @@ namespace ArgrillianThreat
 
 			bool finalUseImmediateHardGate = shouldRetreat || wantsPatientRetreat;
 
-			// NEW: if we have no LOS and we're not in immediate threat,
+			// If we have no LOS and we're not in immediate threat,
 			// don't keep planning fight-mode movement (prevents "keep chasing after enemies are gone").
 			if (!finalUseImmediateHardGate)
 			{
@@ -6474,7 +6463,7 @@ namespace ArgrillianThreat
 	{
 		public float searchRadius = 70f;
 
-		// NEW: give combat medics a higher/earlier stop-tending threshold for their assigned patient
+		// Give combat medics a higher/earlier stop-tending threshold for their assigned patient
 		public float combatMedicInjuredHPPercentThreshold = 0.85f;
 
 		// How close combat medics try to be
@@ -6482,7 +6471,7 @@ namespace ArgrillianThreat
 
 		public float hospitalBedMaxDist = 70f;
 
-		// NEW: require stability for tending
+		// Require stability for tending
 		public int patientStableTicksRequired = 18;
 
 		private CompArgrillianMedicSettings Settings(Pawn pawn) => pawn?.GetComp<CompArgrillianMedicSettings>();
@@ -6950,10 +6939,6 @@ namespace ArgrillianThreat
 
 			bool patientInBed = heldPatient.InBed();
 
-			/*bool patientIsBleedingNow =
-				heldHediffSet != null &&
-				heldHediffSet.HasHediff(HediffDefOf.BloodLoss);*/
-
 			bool patientIsBleedingNow =
 				HasActivelyBleedingInjury(heldPatient);
 
@@ -6967,155 +6952,6 @@ namespace ArgrillianThreat
 
 			bool patientStabilityOkForTerminal =
 				stableTicksNow >= requiredStableTicksForTerminal;
-
-			/*bool patientIsFullyTended = true;
-
-			if (heldHealth != null &&
-				heldHediffSet != null &&
-				heldHediffSet.hediffs != null)
-			{
-				var hediffs = heldHediffSet.hediffs;
-
-				for (int i = 0; i < hediffs.Count; i++)
-				{
-					Hediff hediff = hediffs[i];
-
-					if (hediff == null ||
-						hediff.def == null ||
-						hediff.Severity <= 0f)
-					{
-						continue;
-					}
-
-					// Only injuries can represent unfinished TendPatient work.
-					// Non-injury hediffs, missing parts, scars, implants, and
-					// diseases must not keep the medic-owned transition active.
-					if (!(hediff is Hediff_Injury))
-						continue;
-
-					bool defTendable =
-						hediff.def.tendable;
-
-					bool isPermanent =
-						HediffUtility.IsPermanent(hediff);
-
-					bool isTended =
-						HediffUtility.IsTended(hediff);
-
-					bool tendableNow =
-						hediff.TendableNow();
-
-					bool unfinishedTreatment =
-						defTendable &&
-						!isPermanent &&
-						!isTended;
-
-					if (ArgrillianSmartLogCache.ShouldLogForPawn(
-						"TendDiagnostic",
-						heldPatient,
-						120))
-					{
-						ArgrillianThreatLog.Message(
-							$"[ArgrillianThreat][TendDiagnostic] " +
-							$"medic={pawn.LabelShort} " +
-							$"patient={heldPatient.LabelShort} " +
-							$"hediffType={hediff.GetType().FullName} " +
-							$"hediffDef={hediff.def.defName} " +
-							$"severity={hediff.Severity:F4} " +
-							$"defTendable={defTendable} " +
-							$"permanent={isPermanent} " +
-							$"isTended={isTended} " +
-							$"tendableNow={tendableNow} " +
-							$"unfinishedTreatment={unfinishedTreatment}");
-					}
-
-					if (unfinishedTreatment)
-					{
-						patientIsFullyTended = false;
-						break;
-					}
-				}
-			}*/
-
-			/*bool patientIsFullyTended = true;
-			int unfinishedHediffCount = 0;
-			string unfinishedHediffDefs = string.Empty;
-
-			if (heldHealth != null &&
-				heldHediffSet != null &&
-				heldHediffSet.hediffs != null)
-			{
-				var hediffs = heldHediffSet.hediffs;
-
-				for (int i = 0; i < hediffs.Count; i++)
-				{
-					Hediff hediff = hediffs[i];
-
-					if (hediff == null ||
-						hediff.def == null ||
-						hediff.Severity <= 0f)
-					{
-						continue;
-					}
-
-					bool isInjury =
-						hediff is Hediff_Injury;
-
-					bool defTendable =
-						hediff.def.tendable;
-
-					bool isPermanent =
-						isInjury &&
-						HediffUtility.IsPermanent(hediff);
-
-					bool isTended =
-						isInjury &&
-						HediffUtility.IsTended(hediff);
-
-					bool tendableNow =
-						isInjury &&
-						hediff.TendableNow();
-
-					bool unfinishedTreatment =
-						isInjury &&
-						defTendable &&
-						!isPermanent &&
-						!isTended;
-
-					ArgrillianThreatLog.Message(
-						$"[ArgrillianThreat][TendDiagnostic] " +
-						$"medic={pawn.LabelShort} " +
-						$"patient={heldPatient.LabelShort} " +
-						$"hediffType={hediff.GetType().FullName} " +
-						$"hediffDef={hediff.def.defName} " +
-						$"severity={hediff.Severity:F4} " +
-						$"isInjury={isInjury} " +
-						$"defTendable={defTendable} " +
-						$"permanent={isPermanent} " +
-						$"isTended={isTended} " +
-						$"tendableNow={tendableNow} " +
-						$"unfinishedTreatment={unfinishedTreatment}");
-
-					if (unfinishedTreatment)
-					{
-						patientIsFullyTended = false;
-						unfinishedHediffCount++;
-
-						if (unfinishedHediffDefs.Length > 0)
-							unfinishedHediffDefs += ",";
-
-						unfinishedHediffDefs += hediff.def.defName;
-					}
-				}
-			}
-
-			ArgrillianThreatLog.Message(
-				$"[ArgrillianThreat][TendDiagnosticSummary] " +
-				$"medic={pawn.LabelShort} " +
-				$"patient={heldPatient.LabelShort} " +
-				$"patientFullyTended={patientIsFullyTended} " +
-				$"unfinishedHediffCount={unfinishedHediffCount} " +
-				$"unfinishedHediffDefs={unfinishedHediffDefs}");*/
 
 			bool patientIsFullyTended = true;
 			int unfinishedHediffCount = 0;
@@ -7640,22 +7476,6 @@ namespace ArgrillianThreat
 
 					return tendJob;
 				}
-
-				/*if (patientInBedAndFullyTended ||
-					ArgrillianAlertSystem.IsPatientTransferedToMedicOrDoctor(
-						heldPatient))
-				{
-					ArgrillianThreatLog.Message(
-						$"[ArgrillianThreat][TendRetreatingAllies] " +
-						$"missionDone unlock medic={pawn.LabelShort} " +
-						$"patient={heldPatient.LabelShort}");
-
-					ArgrillianAlertSystem.CompletePatientHeldByMedic(pawn);
-					holdPatient.Reset();
-
-					return new JobGiver_ArgrillianThreatResponse()
-						.GiveCombatThreatJob(heldPatient);
-				}*/
 
 				Job fallbackTendJob =
 					JobMaker.MakeJob(
