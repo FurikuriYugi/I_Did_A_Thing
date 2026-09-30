@@ -7140,6 +7140,15 @@ namespace ArgrillianThreat
 				if (patientClearedForCombat)
 				{
 					Log.Message(
+						$"[ArgrillianThreat][MedicalRelease] BRANCH=COMBAT " +
+						$"medic={pawn.LabelShort} " +
+						$"patient={heldPatient.LabelShort} " +
+						$"patientHP={patientHP:F2} " +
+						$"fullyTended={patientIsFullyTended} " +
+						$"bleeding={patientIsBleedingNow} " +
+						$"stable={patientStabilityOkForTerminal}");
+
+					Log.Message(
 						$"[ArgrillianThreat][TendRetreatingAllies] " +
 						$"combat medical completion unlock medic={pawn.LabelShort} " +
 						$"patient={heldPatient.LabelShort} " +
@@ -7158,6 +7167,18 @@ namespace ArgrillianThreat
 				if (patientMedicallyFinished &&
 				!IsPawnCombatCapable(heldPatient))
 				{
+					Log.Message(
+						$"[ArgrillianThreat][MedicalRelease] " +
+						$"BRANCH=NONCOMBAT_MEDICAL " +
+						$"medic={pawn.LabelShort} " +
+						$"patient={heldPatient.LabelShort} " +
+						$"patientHP={patientHP:F2} " +
+						$"fullyTended={patientIsFullyTended} " +
+						$"bleeding={patientIsBleedingNow} " +
+						$"stable={patientStabilityOkForTerminal} " +
+						$"stableTicks={stableTicksNow} " +
+						$"requiredStableTicks={requiredStableTicksForTerminal}");
+					
 					Log.Message(
 						$"[ArgrillianThreat][TendRetreatingAllies] " +
 						$"medical completion unlock medic={pawn.LabelShort} " +
