@@ -224,8 +224,8 @@ namespace ArgrillianThreat
 		}
 
 		private static bool IsAllowedJobForHeldPawn(
-			Pawn pawn,
-			Verse.AI.Job job)
+	Pawn pawn,
+	Verse.AI.Job job)
 		{
 			if (pawn == null || job == null)
 				return false;
@@ -243,22 +243,36 @@ namespace ArgrillianThreat
 
 			if (isPatient)
 			{
-				// The patient remains stationary while the medical
-				// ownership transition is active.
+				// The patient may remain in the medical transition Wait state.
+				if (IsWaitJob(job))
+					return true;
+
+				// Any medical job accepted for the patient must actually target
+				// this patient.
 				return
-					IsWaitJob(job) ||
-					IsTendJob(job) ||
-					IsRescueJob(job);
+					ArgillianThreatPatientTuning.JobIsMedicalForPatient(
+						job,
+						pawn);
 			}
 
 			if (isOwningMedic)
 			{
-				// The medic remains inside the medical pipeline.
-				// TendPatient supplies its own movement toward the patient.
+				// The owning medic may remain in the medical transition Wait state.
+				if (IsWaitJob(job))
+					return true;
+
+				Pawn heldPatient =
+					ArgrillianAlertSystem.GetHeldPatientForMedic(pawn);
+
+				if (heldPatient == null)
+					return false;
+
+				// TendPatient and Rescue must target the patient currently owned
+				// by this medic.
 				return
-					IsTendJob(job) ||
-					IsRescueJob(job) ||
-					IsWaitJob(job);
+					ArgillianThreatPatientTuning.JobIsMedicalForPatient(
+						job,
+						heldPatient);
 			}
 
 			return false;
@@ -2003,28 +2017,53 @@ namespace ArgrillianThreat
 
 			return cachedPatient;
 		}
-
-		// 5) Update ComputePatientSeverity so ranking works with injured
+		
 		private static PatientCallSeverity ComputePatientSeverity(Pawn patient)
 		{
-			if (patient == null) return PatientCallSeverity.Injured;
+			if (patient == null)
+				return PatientCallSeverity.Injured;
 
 			if (JobGiver_TendRetreatingAllies.IsPawnBurningNow(patient))
 				return PatientCallSeverity.Fire;
 
-			if (patient.Downed) return PatientCallSeverity.Downed;
+			bool activelyBleeding = false;
 
-			bool bleeding =
-				patient.health?.hediffSet != null
-				&& patient.health.hediffSet.HasHediff(HediffDefOf.BloodLoss);
+			if (patient.health?.hediffSet?.hediffs != null)
+			{
+				List<Hediff> hediffs =
+					patient.health.hediffSet.hediffs;
 
-			if (bleeding) return PatientCallSeverity.Bleed;
+				for (int i = 0; i < hediffs.Count; i++)
+				{
+					Hediff_Injury injury =
+						hediffs[i] as Hediff_Injury;
 
-			float hpPct = patient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
+					if (injury == null)
+						continue;
+
+					if (injury.Severity <= 0f)
+						continue;
+
+					if (injury.BleedRate > 0f)
+					{
+						activelyBleeding = true;
+						break;
+					}
+				}
+			}
+
+			if (activelyBleeding)
+				return PatientCallSeverity.Bleed;
+
+			if (patient.Downed)
+				return PatientCallSeverity.Downed;
+
+			float hpPct =
+				patient.health?.summaryHealth?.SummaryHealthPercent ?? 1f;
+
 			if (hpPct <= PatientInjuredHPPercentThreshold)
 				return PatientCallSeverity.Injured;
 
-			// Default fallback: not really eligible; treat as injured-low priority
 			return PatientCallSeverity.Injured;
 		}
 
