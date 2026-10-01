@@ -243,12 +243,9 @@ namespace ArgrillianThreat
 
 			if (isPatient)
 			{
-				// The patient may remain in the medical transition Wait state.
 				if (IsWaitJob(job))
 					return true;
 
-				// Any medical job accepted for the patient must actually target
-				// this patient.
 				return
 					ArgillianThreatPatientTuning.JobIsMedicalForPatient(
 						job,
@@ -257,18 +254,16 @@ namespace ArgrillianThreat
 
 			if (isOwningMedic)
 			{
-				// The owning medic may remain in the medical transition Wait state.
 				if (IsWaitJob(job))
 					return true;
 
 				Pawn heldPatient =
-					ArgrillianAlertSystem.GetHeldPatientForMedic(pawn);
+					ArgrillianAlertSystem.GetHeldPatientForMedic(
+						pawn);
 
 				if (heldPatient == null)
 					return false;
 
-				// TendPatient and Rescue must target the patient currently owned
-				// by this medic.
 				return
 					ArgillianThreatPatientTuning.JobIsMedicalForPatient(
 						job,
@@ -2017,7 +2012,7 @@ namespace ArgrillianThreat
 
 			return cachedPatient;
 		}
-		
+
 		private static PatientCallSeverity ComputePatientSeverity(Pawn patient)
 		{
 			if (patient == null)
@@ -2508,6 +2503,194 @@ namespace ArgrillianThreat
 
 			assignedPatientIdByMedicId[medicId] = patientId;
 			assignedPatientByMedicId[medicId] = patient;
+
+			return true;
+		}
+
+		public static bool TrySwitchPatientHeldByMedicForEmergency(
+	Pawn medic,
+	Pawn emergencyPatient)
+		{
+			if (medic == null || emergencyPatient == null)
+				return false;
+
+			if (medic.Dead ||
+				!medic.Spawned ||
+				medic.Map == null)
+			{
+				return false;
+			}
+
+			if (emergencyPatient.Dead ||
+				!emergencyPatient.Spawned ||
+				emergencyPatient.Map != medic.Map)
+			{
+				return false;
+			}
+
+			int medicId = medic.thingIDNumber;
+
+			if (medicId < 0)
+				return false;
+
+			if (!assignedPatientIdByMedicId.TryGetValue(
+				medicId,
+				out int currentPatientId))
+			{
+				return false;
+			}
+
+			if (currentPatientId < 0)
+				return false;
+
+			Pawn currentPatient =
+				TryGetAssignedPatientReference(
+					medic,
+					currentPatientId);
+
+			if (currentPatient == null)
+			{
+				currentPatient =
+					TryGetPatientFromCachedCall(
+						medic.Map,
+						currentPatientId);
+			}
+
+			if (currentPatient == null ||
+				currentPatient == emergencyPatient ||
+				currentPatient.Dead ||
+				!currentPatient.Spawned ||
+				currentPatient.Map != medic.Map)
+			{
+				return false;
+			}
+
+			PatientCallEntry emergencyCall =
+				TryGetPatientCallEntry(
+					medic.Map,
+					emergencyPatient.thingIDNumber);
+
+			if (emergencyCall == null)
+				return false;
+
+			if (!IsPatientSafeToAbandonForEmergency(
+				currentPatient))
+			{
+				return false;
+			}
+
+			PatientCallSeverity currentSeverity =
+				ComputePatientSeverity(currentPatient);
+
+			if (emergencyCall.severity <= currentSeverity)
+			{
+				return false;
+			}
+
+			foreach (KeyValuePair<int, int> assignment
+				in assignedPatientIdByMedicId)
+			{
+				if (assignment.Key == medicId)
+					continue;
+
+				if (assignment.Value == emergencyPatient.thingIDNumber)
+					return false;
+			}
+
+			// Stop the medic's current medical job before replacing ownership.
+			if (medic.CurJob != null &&
+				ArgillianThreatPatientTuning.JobIsMedicalForPatient(
+					medic.CurJob,
+					currentPatient))
+			{
+				medic.jobs?.EndCurrentJob(
+					JobCondition.InterruptForced,
+					true);
+			}
+
+			// Wake the previous patient if it was being held in the long Wait job.
+			if (currentPatient.CurJob != null &&
+				(
+					currentPatient.CurJob.def == JobDefOf.Wait ||
+					currentPatient.CurJob.def?.defName ==
+						"Wait_MaintainPosture"
+				))
+			{
+				currentPatient.jobs?.EndCurrentJob(
+					JobCondition.InterruptForced,
+					true);
+			}
+
+			lockedPatientIds.Remove(
+				currentPatient.thingIDNumber);
+
+			assignedPatientIdByMedicId[medicId] =
+				emergencyPatient.thingIDNumber;
+
+			assignedPatientByMedicId[medicId] =
+				emergencyPatient;
+
+			lockedPatientIds.Add(
+				emergencyPatient.thingIDNumber);
+
+			ArgrillianThreatLog.Message(
+				$"[ArgrillianThreat][MedicalSwitch] " +
+				$"medic={medic.LabelShort} " +
+				$"oldPatient={currentPatient.LabelShort} " +
+				$"oldSeverity={currentSeverity} " +
+				$"newPatient={emergencyPatient.LabelShort} " +
+				$"newSeverity={emergencyCall.severity}");
+
+			return true;
+		}
+
+		private static bool IsPatientSafeToAbandonForEmergency(
+			Pawn patient)
+		{
+			if (patient == null ||
+				patient.Dead ||
+				!patient.Spawned ||
+				patient.Map == null)
+			{
+				return false;
+			}
+
+			if (patient.Downed)
+				return false;
+
+			if (JobGiver_TendRetreatingAllies.IsPawnBurningNow(
+				patient))
+			{
+				return false;
+			}
+
+			if (patient.health?.capacities == null ||
+				!patient.health.capacities.CapableOf(
+					PawnCapacityDefOf.Moving))
+			{
+				return false;
+			}
+
+			if (patient.health?.hediffSet?.hediffs == null)
+				return true;
+
+			List<Hediff> hediffs =
+				patient.health.hediffSet.hediffs;
+
+			for (int i = 0; i < hediffs.Count; i++)
+			{
+				Hediff_Injury injury =
+					hediffs[i] as Hediff_Injury;
+
+				if (injury == null)
+					continue;
+
+				if (injury.Severity <= 0f)
+					continue;
+
+				if (injury.BleedRate > 0f)
+					return false;
+			}
 
 			return true;
 		}
@@ -6892,6 +7075,22 @@ namespace ArgrillianThreat
 					}
 
 					return null;
+				}
+			}
+
+			Pawn emergencyPatient = ArgrillianAlertSystem.GetBestPatientFromCalls(pawn, combatTendMaxDistance);
+			
+			if (emergencyPatient != null &&
+				emergencyPatient != heldPatient)
+			{
+				if (ArgrillianAlertSystem
+					.TrySwitchPatientHeldByMedicForEmergency(
+						pawn,
+						emergencyPatient))
+				{
+					heldPatient =
+						ArgrillianAlertSystem.GetHeldPatientForMedic(
+							pawn);
 				}
 			}
 
