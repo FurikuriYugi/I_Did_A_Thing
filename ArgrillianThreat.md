@@ -2583,9 +2583,7 @@ namespace ArgrillianThreat
 				ComputePatientSeverity(currentPatient);
 
 			if (emergencyCall.severity <= currentSeverity)
-			{
 				return false;
-			}
 
 			foreach (KeyValuePair<int, int> assignment
 				in assignedPatientIdByMedicId)
@@ -2593,34 +2591,22 @@ namespace ArgrillianThreat
 				if (assignment.Key == medicId)
 					continue;
 
-				if (assignment.Value == emergencyPatient.thingIDNumber)
+				if (assignment.Value ==
+					emergencyPatient.thingIDNumber)
+				{
 					return false;
+				}
 			}
 
-			// Stop the medic's current medical job before replacing ownership.
-			if (medic.CurJob != null &&
-				ArgillianThreatPatientTuning.JobIsMedicalForPatient(
-					medic.CurJob,
-					currentPatient))
-			{
-				medic.jobs?.EndCurrentJob(
-					JobCondition.InterruptForced,
-					true);
-			}
+			Job medicCurrentJob =
+				medic.CurJob;
 
-			// Wake the previous patient if it was being held in the long Wait job.
-			if (currentPatient.CurJob != null &&
-				(
-					currentPatient.CurJob.def == JobDefOf.Wait ||
-					currentPatient.CurJob.def?.defName ==
-						"Wait_MaintainPosture"
-				))
-			{
-				currentPatient.jobs?.EndCurrentJob(
-					JobCondition.InterruptForced,
-					true);
-			}
+			Job patientCurrentJob =
+				currentPatient.CurJob;
 
+			// Transfer ownership before interrupting either pawn.
+			// This prevents the held-patient blocker from rejecting the
+			// immediate job-search triggered by EndCurrentJob.
 			lockedPatientIds.Remove(
 				currentPatient.thingIDNumber);
 
@@ -2632,6 +2618,32 @@ namespace ArgrillianThreat
 
 			lockedPatientIds.Add(
 				emergencyPatient.thingIDNumber);
+
+			// Interrupt the medic's old medical job only after the new
+			// ownership is authoritative.
+			if (medicCurrentJob != null &&
+				ArgillianThreatPatientTuning.JobIsMedicalForPatient(
+					medicCurrentJob,
+					currentPatient))
+			{
+				medic.jobs?.EndCurrentJob(
+					JobCondition.InterruptForced,
+					true);
+			}
+
+			// Wake the previous patient only after its old ownership has
+			// been removed.
+			if (patientCurrentJob != null &&
+				(
+					patientCurrentJob.def == JobDefOf.Wait ||
+					patientCurrentJob.def?.defName ==
+						"Wait_MaintainPosture"
+				))
+			{
+				currentPatient.jobs?.EndCurrentJob(
+					JobCondition.InterruptForced,
+					true);
+			}
 
 			ArgrillianThreatLog.Message(
 				$"[ArgrillianThreat][MedicalSwitch] " +
