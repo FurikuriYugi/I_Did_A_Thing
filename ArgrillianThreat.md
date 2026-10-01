@@ -555,39 +555,6 @@ namespace ArgrillianThreat
 			return ArgillianThreatPatientTuning.GetPatientFromJob(j) == patient;
 		}
 
-		private static bool IsPatientServiceJob(JobDef def)
-		{
-			if (def == null) return false;
-
-			// Core
-			if (def == JobDefOf.TendPatient) return true;
-			if (def == JobDefOf.Rescue) return true;
-
-			// Moving injured pawns
-			if (def == JobDefOf.HaulToCell) return true;
-			if (def == JobDefOf.HaulToContainer) return true;
-
-			return false;
-		}
-
-		private static bool JobTargetsIncludePawn(Job job, Pawn pawn)
-		{
-			if (job == null || pawn == null) return false;
-
-			// For jobs targeting the patient pawn directly:
-			if (job.targetA == pawn) return true;
-			if (job.targetB == pawn) return true;
-			if (job.targetC == pawn) return true;
-
-			// Some jobs use Thing targets (and pawns are Things). In that case, direct == may fail depending on context.
-			// But targetA/targetB/targetC should still be Pawn objects if they point at the pawn.
-			if (job.targetA.HasThing && job.targetA.Thing == pawn) return true;
-			if (job.targetB.HasThing && job.targetB.Thing == pawn) return true;
-			if (job.targetC.HasThing && job.targetC.Thing == pawn) return true;
-
-			return false;
-		}
-
 		public static Pawn GetPatientFromJob(Job j)
 		{
 			if (j == null) return null;
