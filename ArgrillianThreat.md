@@ -399,7 +399,7 @@ namespace ArgrillianThreat
 		// Development switch.
 		// false = suppress cooldown-controlled diagnostic logging.
 		// true = allow cooldown-controlled diagnostic logging.
-		public static bool Enabled = false;
+		public static bool Enabled = true;
 
 		private static readonly Dictionary<int, int> lastLogTickByKey =
 			new Dictionary<int, int>();
