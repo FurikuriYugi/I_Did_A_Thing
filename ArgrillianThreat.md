@@ -5308,12 +5308,11 @@ namespace ArgrillianThreat
 
 		private static bool loggedThreatSettingsGizmosOnce;
 
-		public void ExposeData()
+		public override void PostExposeData()
 		{
 			Scribe_Values.Look(ref pursueAdvance, "pursueAdvance", true);
 			Scribe_Values.Look(ref guardFellowPawns, "guardFellowPawns", true);
 			Scribe_Values.Look(ref squadMode, "squadMode", false);
-
 			Scribe_Values.Look(ref finishOff, "finishOff", false);
 			Scribe_Values.Look(ref huntHumans, "huntHumans", false);
 		}
@@ -5587,8 +5586,9 @@ namespace ArgrillianThreat
 			}
 		}
 
-		public void ExposeData()
+		public override void PostExposeData()
 		{
+			Scribe_Values.Look(ref doctor, "doctor", false);
 			Scribe_Values.Look(ref isMedic, "isMedic", false);
 			Scribe_Values.Look(ref combatMedic, "combatMedic", false);
 			Scribe_Values.Look(ref assignedPawnThingID, "assignedPawnThingID", -1);
