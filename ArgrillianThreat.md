@@ -7282,7 +7282,8 @@ namespace ArgrillianThreat
 						Job rescueJob =
 							JobMaker.MakeJob(
 								JobDefOf.Rescue,
-								heldPatient);
+								heldPatient,
+								bed);
 
 						rescueJob.count = 1;
 
@@ -7344,7 +7345,8 @@ namespace ArgrillianThreat
 						Job rescueJob =
 							JobMaker.MakeJob(
 								JobDefOf.Rescue,
-								heldPatient);
+								heldPatient,
+								rescueBed);
 
 						rescueJob.count = 1;
 
